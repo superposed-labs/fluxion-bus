@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-13",
+  "note": "Official monthly subscription list prices, USD, keyed by provider then by the plan name the quota probe reports in account_label (matched case-insensitively). Used ONLY for the display-only 'API-equivalent value ≈ N× plan price' framing in the Stats panel — it never affects the token cost estimate (those rates live in model_prices.json). Unlike per-token API prices these consumer plan tiers are public and stable, so this rarely changes; an unrecognised label resolves to null (the UI omits the comparison rather than show a wrong number). Companion to model_prices.json; same human-reviewed update discipline.",
+  "plans": {
+    "claude": {
+      "free": 0,
+      "pro": 20,
+      "max": 100,
+      "max-5x": 100,
+      "max-20x": 200,
+      "max20x": 200,
+      "team": 30
+    },
+    "codex": {
+      "free": 0,
+      "plus": 20,
+      "pro": 200,
+      "team": 30,
+      "business": 30
+    },
+    "antigravity": {
+      "google ai free": 0,
+      "google ai pro": 20,
+      "google ai ultra": 250
+    }
+  }
+}

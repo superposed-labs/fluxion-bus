@@ -1,0 +1,34 @@
+# Fluxion web console — systemd user service (OPTIONAL).
+#
+# The scheduler fires tasks on its own; run the web interface only if you want to manage
+# schedules and watch task/run history in the browser. Localhost-only by
+# default — to expose on the LAN, append `--host 0.0.0.0` to ExecStart and set
+# FLUXION_UI_TOKEN in .env.
+#
+# Install (replace __FLUXION_REPO__ with the absolute path to your checkout):
+#   sed 's#__FLUXION_REPO__#'"$PWD"'#g' deploy/systemd/fluxion-web.service \
+#     > ~/.config/systemd/user/fluxion-web.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now fluxion-web
+#
+# To clean up previous versions:
+#   systemctl --user disable --now fluxion-ui
+#   rm ~/.config/systemd/user/fluxion-ui.service
+
+[Unit]
+Description=Fluxion web console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__FLUXION_REPO__
+Environment=FLUXION_ENV_FILE=__FLUXION_REPO__/.env
+Environment=FLUXION_WORKSPACE_ROOT=__FLUXION_REPO__
+Environment=FLUXION_DATA_DIR=__FLUXION_REPO__/data
+ExecStart=__FLUXION_REPO__/.venv/bin/fluxion-web --port 8765
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

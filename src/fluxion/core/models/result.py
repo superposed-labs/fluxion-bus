@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+
+@dataclass
+class ExecutionResult:
+    success: bool
+    summary: str
+    stdout: str
+    stderr: str
+    exit_code: int
+    artifacts: list[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    # Structured file operations parsed from the executor stream (create / edit /
+    # overwrite / add / update / delete), used to build a best-effort revert
+    # ChangeSet without a workspace snapshot under revert_capture="structured".
+    file_operations: list[dict] = field(default_factory=list)
+    diff_summary: str = ""
+    change_set_file: str = ""
+    log_file: str = ""
+    executor_session_id: str = ""
+    duration_sec: float = 0.0
+    finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # True when the executor returned early (answer ready) while the underlying
+    # process is still doing post-answer housekeeping (Antigravity flushes its
+    # SQLite trajectory DB and any pending file writes during this tail). The
+    # engine must defer the change report (changed_files / change_set /
+    # diff_summary) until the executor signals true completion, otherwise it reads
+    # an incomplete trajectory / half-written tree. Antigravity-only; claude/codex
+    # run to completion before returning and finalize synchronously.
+    pending_finalization: bool = False

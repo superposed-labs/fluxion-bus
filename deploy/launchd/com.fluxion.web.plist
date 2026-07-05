@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fluxion web console — macOS launchd user agent (OPTIONAL).
+
+  The scheduler fires tasks on its own; run the console only if you want to manage
+  schedules and watch task/run history in the browser. Localhost-only by
+  default. To expose on the LAN, add --host 0.0.0.0 below and set
+  FLUXION_UI_TOKEN in .env.
+
+  Install (replace __FLUXION_REPO__ with the absolute path to your checkout):
+    sed 's#__FLUXION_REPO__#'"$PWD"'#g' deploy/launchd/com.fluxion.web.plist \
+      > ~/Library/LaunchAgents/com.fluxion.web.plist
+    launchctl load -w ~/Library/LaunchAgents/com.fluxion.web.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fluxion.web</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__FLUXION_REPO__/.venv/bin/fluxion-web</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FLUXION_ENV_FILE</key>
+    <string>__FLUXION_REPO__/.env</string>
+    <key>FLUXION_WORKSPACE_ROOT</key>
+    <string>__FLUXION_REPO__</string>
+    <key>FLUXION_DATA_DIR</key>
+    <string>__FLUXION_REPO__/data</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__FLUXION_REPO__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__FLUXION_REPO__/data/logs/ui.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__FLUXION_REPO__/data/logs/ui.err.log</string>
+</dict>
+</plist>

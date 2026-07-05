@@ -1,0 +1,9 @@
+# Generated hero renders — regenerate with ./export.sh. Do not commit binaries;
+# publish the mp4 as a GitHub asset (Release, or drag-drop into the README) and
+# reference its user-attachments URL instead.
+out/
+
+# Isolated Playwright dependencies for local rendering
+node_modules/
+package.json
+package-lock.json

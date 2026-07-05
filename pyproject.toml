@@ -1,0 +1,74 @@
+[project]
+name = "fluxion"
+version = "1.0.0"
+description = "Local-first AI gateway and agent hub — run Slack tasks through Codex, Claude, or Antigravity with a web observation deck and MCP sub-agent support"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+  "slack-bolt>=1.20.1",
+  "slack-sdk>=3.33.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "websockets>=13.0",
+  "lark-oapi>=1.4",
+  "mcp[cli]>=1.13.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.15"]
+
+[project.urls]
+Homepage = "https://github.com/superposed-labs/fluxion-bus"
+Repository = "https://github.com/superposed-labs/fluxion-bus"
+Issues = "https://github.com/superposed-labs/fluxion-bus/issues"
+
+[project.scripts]
+fluxion = "fluxion.cli.main:main"
+fluxion-sub = "fluxion.cli.sub:main"
+fluxion-web = "fluxion.web.server:main"
+fluxion-mcp = "fluxion.mcp_server:main"
+fluxion-usage = "fluxion.cli.usage:main"
+fluxion-detect = "fluxion.cli.detect:main"
+fluxion-scheduler = "fluxion.scheduler.cli:main"
+fluxion-gateway = "fluxion.gateway:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Conservative starter set: pyflakes (F), pycodestyle errors (E), import
+# sorting (I), pyupgrade (UP), and flake8-bugbear (B). Expand over time.
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+  "E501",  # line length is handled by the formatter, not enforced as a lint
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+# Re-export shims: these __init__.py files deliberately import the package's
+# public surface (and some internals tests patch by path) for back-compat.
+"src/fluxion/usage/history/__init__.py" = ["F401"]
+"src/fluxion/usage/probes/__init__.py" = ["F401"]
+"src/fluxion/mcp_server/__init__.py" = ["F401"]
+
+[build-system]
+# setuptools >= 77 is required for the PEP 639 `license`/`license-files` keys.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"fluxion.web" = ["static/**/*"]
+"fluxion" = ["locales/*.json"]

@@ -1,0 +1,29 @@
+# Fluxion scheduler — systemd user service.
+#
+# Install (replace __FLUXION_REPO__ with the absolute path to your checkout):
+#   sed 's#__FLUXION_REPO__#'"$PWD"'#g' deploy/systemd/fluxion-scheduler.service \
+#     > ~/.config/systemd/user/fluxion-scheduler.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now fluxion-scheduler
+#   # keep it running after logout:
+#   loginctl enable-linger "$USER"
+#
+# Logs:  journalctl --user -u fluxion-scheduler -f
+
+[Unit]
+Description=Fluxion scheduler daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__FLUXION_REPO__
+Environment=FLUXION_ENV_FILE=__FLUXION_REPO__/.env
+Environment=FLUXION_WORKSPACE_ROOT=__FLUXION_REPO__
+Environment=FLUXION_DATA_DIR=__FLUXION_REPO__/data
+ExecStart=__FLUXION_REPO__/.venv/bin/fluxion-scheduler
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

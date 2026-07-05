@@ -1,0 +1,268 @@
+/* ── Detail pane ───────────────────────────────────────────────────── */
+.detail-head {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-0);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.detail-crumb {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  display: flex; align-items: center; gap: 6px;
+}
+.detail-crumb b { color: var(--fg-1); font-weight: 500; }
+.detail-crumb .sep { color: var(--fg-3); }
+.detail-title {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--fg-0);
+  line-height: 1.35;
+}
+.detail-meta {
+  display: flex; flex-wrap: wrap; gap: 18px;
+  align-items: center;
+}
+.dm {
+  display: flex; flex-direction: column; gap: 1px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.dm-lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-3); font-weight: 600; font-family: var(--font-sans); }
+.dm-val { color: var(--fg-0); font-variant-numeric: tabular-nums; }
+.dm-val.copy { cursor: default; }
+.dm-val.copy:hover { color: var(--accent); }
+
+/* Status badge */
+.statusbadge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+.statusbadge .ind {
+  width: 7px; height: 7px; border-radius: 50%;
+}
+.statusbadge[data-st="RECEIVED"]  { background: var(--st-received-bg); color: var(--st-received); }
+.statusbadge[data-st="RECEIVED"]  .ind { background: var(--st-received); }
+.statusbadge[data-st="VALIDATED"] { background: var(--st-validated-bg); color: var(--st-validated); }
+.statusbadge[data-st="VALIDATED"] .ind { background: var(--st-validated); }
+.statusbadge[data-st="QUEUED"]    { background: var(--st-queued-bg); color: var(--st-queued); }
+.statusbadge[data-st="QUEUED"]    .ind { background: var(--st-queued); }
+.statusbadge[data-st="RUNNING"]   { background: var(--st-running-bg); color: var(--st-running); }
+.statusbadge[data-st="RUNNING"]   .ind { background: var(--st-running); box-shadow: 0 0 0 3px var(--st-running-bg); animation: pulse 1.6s ease-in-out infinite; }
+.statusbadge[data-st="RETRYING"]  { background: var(--st-retrying-bg); color: var(--st-retrying); }
+.statusbadge[data-st="RETRYING"]  .ind { background: var(--st-retrying); box-shadow: 0 0 0 3px var(--st-retrying-bg); animation: pulse 1.6s ease-in-out infinite; }
+.statusbadge[data-st="RETURNED"]  { background: var(--st-returned-bg); color: var(--st-returned); }
+.statusbadge[data-st="RETURNED"]  .ind { background: var(--st-returned); }
+.statusbadge[data-st="FAILED"]    { background: var(--st-failed-bg); color: var(--st-failed); }
+.statusbadge[data-st="FAILED"]    .ind { background: var(--st-failed); }
+.statusbadge[data-st="CANCELED"]  { background: var(--st-canceled-bg); color: var(--st-canceled); }
+.statusbadge[data-st="CANCELED"]  .ind { background: var(--st-canceled); }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  padding: 0 12px;
+  gap: 0;
+}
+.tab {
+  padding: 9px 14px;
+  font-size: 12px;
+  color: var(--fg-2);
+  border: 0;
+  background: transparent;
+  cursor: default;
+  position: relative;
+  display: flex; align-items: center; gap: 7px;
+  font-weight: 500;
+}
+.tab:hover { color: var(--fg-0); }
+.tab.on { color: var(--fg-0); }
+.tab.on::after {
+  content: "";
+  position: absolute;
+  left: 8px; right: 8px; bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.tab .num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-3);
+  background: var(--bg-2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-variant-numeric: tabular-nums;
+}
+.tab.on .num { color: var(--fg-1); background: var(--bg-3); }
+
+.tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-0);
+}
+
+/* Canceled task row — fade */
+.task-row[data-row-st="CANCELED"] .task-summary,
+.task-row[data-row-st="CANCELED"] .task-head { color: var(--fg-2); }
+.task-row[data-row-st="CANCELED"] .task-summary { text-decoration: line-through; text-decoration-color: var(--fg-3); }
+
+/* Console (stdout/stderr) */
+.console {
+  padding: 14px 16px 80px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+.console .ln {
+  display: grid;
+  grid-template-columns: 38px 60px 1fr;
+  gap: 14px;
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.console .ln .gut {
+  color: var(--fg-3);
+  opacity: 0.55;
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  padding-top: 1px;
+}
+.console .ln .ts {
+  color: var(--fg-3);
+  font-size: 10.5px;
+  padding-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.console .ln.lvl-info    { color: var(--fg-1); }
+.console .ln.lvl-debug   { color: var(--fg-3); }
+.console .ln.lvl-warn    { color: var(--console-warn); }
+.console .ln.lvl-error   { color: var(--st-fail); }
+.console .ln.lvl-tool    { color: var(--ex-antigravity); }
+.console .ln.lvl-out .body { color: var(--fg-0); }
+.console .ln.lvl-cmd     { color: var(--accent); }
+.console .ln.lvl-cmd .body::before { content: "$ "; color: var(--fg-3); }
+
+.console .ln .body code {
+  background: var(--bg-1);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+.console .caret {
+  display: inline-block;
+  width: 7px; height: 13px;
+  background: var(--accent);
+  vertical-align: -2px;
+  animation: caret 1.05s steps(2) infinite;
+  margin-left: 1px;
+}
+@keyframes caret { 50% { opacity: 0; } }
+
+/* Diff */
+.diff {
+  padding: 0;
+}
+.diff-file {
+  border-bottom: 1px solid var(--line-soft);
+}
+.diff-file-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg-1);
+  position: sticky; top: 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  z-index: 1;
+}
+.diff-file-head .path { color: var(--fg-0); }
+.diff-file-head .stat { color: var(--fg-3); display: flex; gap: 10px; align-items: center; }
+.diff-file-head .stat .add { color: var(--st-ok); }
+.diff-file-head .stat .del { color: var(--st-fail); }
+.diff-hunk {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.diff-hunk .h {
+  display: grid;
+  grid-template-columns: 38px 38px 1fr;
+  border-bottom: 1px solid transparent;
+}
+.diff-hunk .h.add    { background: var(--st-ok-bg); }
+.diff-hunk .h.del    { background: var(--st-fail-bg); }
+.diff-hunk .h.hunk   { background: var(--bg-1); color: var(--fg-3); }
+.diff-hunk .h .gn { text-align: right; padding: 0 10px 0 8px; color: var(--fg-3); font-size: 10.5px; user-select: none; font-variant-numeric: tabular-nums; }
+.diff-hunk .h .ln { padding: 0 18px 0 4px; color: var(--fg-1); white-space: pre; overflow-x: auto; }
+.diff-hunk .h.add .ln  { color: var(--fg-0); }
+.diff-hunk .h.add .ln::before { content: "+"; color: var(--st-ok); padding-right: 8px; }
+.diff-hunk .h.del .ln::before { content: "-"; color: var(--st-fail); padding-right: 8px; }
+.diff-hunk .h.ctx .ln::before { content: " "; padding-right: 8px; }
+
+/* Files */
+.files {
+  padding: 10px 0;
+}
+.file-row {
+  display: grid;
+  grid-template-columns: 18px 1fr 80px 50px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 18px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.file-row:hover { background: var(--bg-1); }
+.file-row .icon {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  display: grid; place-items: center;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.file-row .icon[data-op="M"] { background: var(--op-mod-bg); color: var(--op-mod-fg); }
+.file-row .icon[data-op="A"] { background: var(--st-ok-bg); color: var(--st-ok); }
+.file-row .icon[data-op="D"] { background: var(--st-fail-bg); color: var(--st-fail); }
+.file-row .icon[data-op="R"] { background: var(--op-ren-bg); color: var(--op-ren-fg); }
+.file-row .path { color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row .changes {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.file-row .changes .add { color: var(--st-ok); }
+.file-row .changes .del { color: var(--st-fail); }
+.file-row .bar {
+  display: flex; gap: 1px; align-items: center;
+  font-family: var(--font-mono); font-size: 10px;
+}
+.file-row .bar i { width: 4px; height: 8px; border-radius: 1px; display: block; }
+
+/* Empty state */
+.empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--fg-3);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+.empty .mark { font-family: var(--font-mono); font-size: 11px; opacity: 0.6; margin-top: 8px; }

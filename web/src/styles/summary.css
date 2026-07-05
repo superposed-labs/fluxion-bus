@@ -1,0 +1,180 @@
+/* ── Summary tab ───────────────────────────────────────────────────── */
+.summary {
+  padding: 18px 22px 60px;
+  max-width: 920px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.sum-prose {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg-0);
+  text-wrap: pretty;
+}
+.sum-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1300px) { .sum-grid { grid-template-columns: repeat(2, 1fr); } }
+.sum-tile {
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  border-radius: 8px;
+  padding: 11px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.sum-tile .lbl {
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+}
+.sum-tile .val {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--fg-0);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.sum-tile .val em { color: var(--fg-3); font-style: normal; font-size: 13px; padding-left: 4px; font-weight: 400; }
+.sum-tile .val .add { color: var(--st-returned); }
+.sum-tile .val .del { color: var(--st-failed); }
+.sum-tile .sub { font-size: 11px; color: var(--fg-2); }
+
+.sum-section-h {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Lifecycle dots */
+.lifecycle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.lcstep {
+  flex: 1;
+  padding: 10px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: relative;
+  border-right: 1px solid var(--line-soft);
+}
+.lcstep:last-child { border-right: 0; }
+.lcstep .lc-lbl {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.lcstep .lc-lbl::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--bg-3);
+}
+.lcstep[data-on="1"] .lc-lbl { color: var(--fg-1); }
+.lcstep[data-on="1"] .lc-lbl::before { background: var(--accent); }
+.lcstep[data-on="1"][data-end="ok"]   .lc-lbl::before { background: var(--st-returned); }
+.lcstep[data-on="1"][data-end="fail"] .lc-lbl::before { background: var(--st-failed); }
+.lcstep[data-on="1"][data-end="cancel"] .lc-lbl::before { background: var(--st-canceled); }
+.lcstep .lc-time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums;
+}
+.lcstep[data-on="0"] .lc-time { color: var(--fg-3); }
+
+/* Artifacts + file lists inside summary */
+.sum-list {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.sum-list-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.sum-list-row:first-child { border-top: 0; }
+.sum-list-row:hover { background: var(--bg-2); }
+.sum-list-row .icon {
+  width: 16px; height: 16px;
+  border-radius: 3px;
+  display: grid; place-items: center;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.sum-list-row .icon[data-op="M"] { background: var(--op-mod-bg); color: var(--op-mod-fg); }
+.sum-list-row .icon[data-op="A"] { background: var(--st-returned-bg); color: var(--st-returned); }
+.sum-list-row .icon[data-op="D"] { background: var(--st-failed-bg); color: var(--st-failed); }
+.sum-list-row .icon[data-op="R"] { background: var(--op-ren-bg); color: var(--op-ren-fg); }
+.sum-list-row .icon[data-kind="report"]  { background: var(--report-bg); color: var(--st-validated); }
+.sum-list-row .icon[data-kind="trace"]   { background: var(--st-running-bg); color: var(--st-running); }
+.sum-list-row .icon[data-kind="log"]     { background: var(--bg-3); color: var(--fg-2); }
+.sum-list-row .icon[data-kind="doc"]     { background: var(--accent-faint); color: var(--accent); }
+.sum-list-row .icon[data-kind="note"]    { background: var(--accent-faint); color: var(--accent); }
+.sum-list-row .path { color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sum-list-row .size { color: var(--fg-3); font-size: 11px; }
+.sum-list-row .changes { font-size: 11px; font-variant-numeric: tabular-nums; }
+.sum-list-row .changes .add { color: var(--st-returned); }
+.sum-list-row .changes .del { color: var(--st-failed); margin-left: 6px; }
+
+.kvbox {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--bg-1);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.kvbox .k { color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-sans); font-weight: 600; }
+.kvbox .v { color: var(--fg-0); }
+.kvbox .copy { color: var(--fg-3); font-size: 10px; padding-left: 12px; cursor: default; }
+.kvbox .copy:hover { color: var(--accent); }
+
+/* ── Top-bar view switch (Tasks / Stats) ───────────────────────────── */
+.tb-views { display: flex; gap: 2px; padding: 2px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 8px; }
+.tb-view {
+  appearance: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 6px;
+  background: transparent; color: var(--fg-2); font-family: var(--font-sans);
+  font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tb-view:hover { color: var(--fg-0); }
+.tb-view.on {
+  background: var(--bg-3);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), inset 0 0 0 1px var(--accent-line);
+}

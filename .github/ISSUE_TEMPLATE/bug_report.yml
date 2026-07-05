@@ -1,0 +1,96 @@
+name: 🐞 Bug report
+description: Report a problem with Fluxion
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        ⚠️ **Do not paste secrets.** Redact tokens, API keys, and `.env` values
+        before submitting — never include real Slack/Telegram/WeChat/LINE
+        credentials or provider tokens.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go through [Security Advisories](https://github.com/superposed-labs/fluxion-bus/security/advisories/new)).
+          required: true
+        - label: I'm on a recent commit of `main` (Fluxion ships as a rolling release).
+          required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - MCP server / sub-agent delegation
+        - Messaging gateway (Slack / Telegram / WeChat / LINE / QQ / Feishu)
+        - Web console (fluxion-web)
+        - Scheduler
+        - Quota & usage monitoring
+        - macOS desktop app
+        - CLI / installation
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: executor
+    attributes:
+      label: Executor involved (if any)
+      options:
+        - Not applicable
+        - Codex
+        - Claude Code
+        - Antigravity
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Fluxion version / commit
+      description: Output of `git rev-parse --short HEAD`, or the desktop app version.
+      placeholder: "e.g. 1.0.0 or a1b2c3d"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / hardware
+      placeholder: "e.g. macOS 15.5, Apple Silicon (M3)"
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Install method
+      placeholder: "DMG / CLI (pip) / from source"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant log output. **Redact tokens and secrets first.**
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,44 @@
+# Changelog
+
+All notable changes to Fluxion are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Fluxion ships from `main` as a rolling release; tagged versions mark notable
+milestones.
+
+## [Unreleased]
+
+## [1.0.0] - 2026-07-06
+
+Initial open-source release.
+
+### Added
+
+- **Cross-provider delegation** — a local MCP server that lets your primary
+  agent delegate scoped subtasks to Codex, Claude Code, or Antigravity while
+  preserving sessions and reporting progress and results.
+- **MCP sub-agent tools** — `run_subagent`, `list_projects`,
+  `list_agent_models`, `get_task_status`, `get_task_result`,
+  `cancel_subagent_run`, and `revert_subagent_run`, backed by a project registry
+  and a per-workspace authorization policy (trusted roots, write allow-list,
+  deny-list).
+- **Messaging gateway** — drive tasks from chat over Slack, Telegram, WeChat,
+  LINE, QQ, and Feishu, with fail-closed per-channel allow-lists.
+- **Web observation deck** (`fluxion-web`) — browser console for task summaries,
+  logs, artifacts, and file-change review; loopback-only by default and
+  token-gated (`FLUXION_UI_TOKEN`) when bound to a non-loopback address.
+- **Scheduler** — run recurring and one-off tasks on a schedule.
+- **Quota & usage monitoring** — reads provider-reported 5h/weekly quota
+  windows, detects and notifies on resets, and can automatically issue a minimal
+  call after a reset to start the next rolling window immediately.
+- **macOS desktop app** — a menu-bar app that supervises the gateway and
+  services, with a notch UI and localized preferences.
+- **Change tracking & revert** — records file changes per run for review and
+  recovery.
+- **Trilingual documentation** — English, 简体中文, and 日本語 READMEs plus a
+  `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
+  usage statistics).
+
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/superposed-labs/fluxion-bus/releases/tag/v1.0.0

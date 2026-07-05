@@ -1,0 +1,110 @@
+name: macOS App Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Fluxion.app
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          if [ -z "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" ]; then
+            echo "No Developer ID certificate configured; skipping certificate import."
+            exit 0
+          fi
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Package app
+        env:
+          FLUXION_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ -n "$FLUXION_CODESIGN_IDENTITY" ] \
+            && [ -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" ] \
+            && [ -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" ] \
+            && [ -n "$APPLE_ID" ] \
+            && [ -n "$APPLE_TEAM_ID" ] \
+            && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+            export FLUXION_NOTARIZE=1
+          else
+            echo "::warning::Developer ID signing/notarization secrets are incomplete; building an ad-hoc test artifact."
+            export FLUXION_CODESIGN_IDENTITY=
+            export FLUXION_NOTARIZE=0
+          fi
+          scripts/package-macos-app.sh
+
+      - name: Checksums
+        run: |
+          shasum -a 256 dist/macos/Fluxion.dmg dist/macos/Fluxion.app.zip \
+            | tee dist/macos/SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxion-macos-app
+          path: |
+            dist/macos/Fluxion.dmg
+            dist/macos/Fluxion.app.zip
+            dist/macos/SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/macos/Fluxion.dmg
+            dist/macos/Fluxion.app.zip
+            dist/macos/SHA256SUMS
+
+      - name: Delete signing keychain
+        if: ${{ always() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/app-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" || true
+          fi

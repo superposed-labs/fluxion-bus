@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "updated_at": "2026-07-01",
+  "note": "Estimated API rates, USD per 1M tokens. cw = cache-write 5-minute TTL (Anthropic ~1.25x input), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI/Google have no per-token cache-write fee, so cw=cw1h=in there. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and the cache-write is split by the 1h/5m token breakdown the transcript records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; Fluxion selects `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for GPT-5.4/5.5 family, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch. This file is the seed for a future standalone pricing repo.",
+  "models": {
+    "claude-fable-5": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-06-10", "observed": "2026-06-13", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Fable 5)" }
+      ]
+    },
+    "claude-mythos-5": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Mythos 5, limited availability) — same rate card as Fable 5" }
+      ]
+    },
+    "claude-opus-4": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2025-01-01", "observed": "2026-06-13", "in": 15.0, "out": 75.0, "cw": 18.75, "cw1h": 30.0, "cr": 1.5, "source": "Anthropic docs (Opus 4, deprecated) — exact short-id match; dated build ids may not hit this and fall to the opus family ($5/$25)" }
+      ]
+    },
+    "claude-opus-4-1": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2025-01-01", "observed": "2026-06-13", "in": 15.0, "out": 75.0, "cw": 18.75, "cw1h": 30.0, "cr": 1.5, "source": "Anthropic docs (Opus 4.1, deprecated)" }
+      ]
+    },
+    "gpt-5.5": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-06-11",
+          "observed": "2026-06-13",
+          "in": 5.0,
+          "out": 30.0,
+          "cw": 5.0,
+          "cr": 0.5,
+          "source": "OpenAI docs (gpt-5.5; context tier selected from billed input: <=272k short, >272k long)",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 5.0, "out": 30.0, "cw": 5.0, "cr": 0.5 },
+            "long": { "in": 10.0, "out": 45.0, "cw": 10.0, "cr": 1.0 }
+          }
+        }
+      ]
+    },
+    "gpt-5.5-pro": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-06-13",
+          "observed": "2026-06-13",
+          "in": 30.0,
+          "out": 180.0,
+          "cw": 30.0,
+          "cr": 3.0,
+          "source": "OpenAI docs (gpt-5.5-pro; context tier selected from billed input: <=272k short, >272k long; cached-input rate inferred as 0.1x input because the page omits it) — pinned so 'pro' isn't mispriced by the $1.75 codex fallback",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 30.0, "out": 180.0, "cw": 30.0, "cr": 3.0 },
+            "long": { "in": 60.0, "out": 270.0, "cw": 60.0, "cr": 6.0 }
+          }
+        }
+      ]
+    },
+    "gpt-5.4": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-06-11",
+          "observed": "2026-06-13",
+          "in": 2.5,
+          "out": 15.0,
+          "cw": 2.5,
+          "cr": 0.25,
+          "source": "OpenAI docs (gpt-5.4; context tier selected from billed input: <=272k short, >272k long)",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 2.5, "out": 15.0, "cw": 2.5, "cr": 0.25 },
+            "long": { "in": 5.0, "out": 22.5, "cw": 5.0, "cr": 0.5 }
+          }
+        }
+      ]
+    },
+    "gpt-5.4-pro": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-06-13",
+          "observed": "2026-06-13",
+          "in": 30.0,
+          "out": 180.0,
+          "cw": 30.0,
+          "cr": 3.0,
+          "source": "OpenAI docs (gpt-5.4-pro; context tier selected from billed input: <=272k short, >272k long; cached-input rate inferred as 0.1x input because the page omits it)",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 30.0, "out": 180.0, "cw": 30.0, "cr": 3.0 },
+            "long": { "in": 60.0, "out": 270.0, "cw": 60.0, "cr": 6.0 }
+          }
+        }
+      ]
+    },
+    "gpt-5.3-codex": {
+      "provider": "codex",
+      "rates": [
+        { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.75, "out": 14.0, "cw": 1.75, "cr": 0.175, "source": "OpenAI docs (Codex gpt-5.3-codex; the only Codex model, flat-priced — no long-context tier)" }
+      ]
+    },
+    "gemini-3-flash": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.5, "out": 3.0, "cw": 0.5, "cr": 0.05, "source": "Gemini docs (Gemini 3 Flash) — older/cheaper than the 3.5 Flash the 'flash' family now tracks" }
+      ]
+    },
+    "gemini-2.5-pro": {
+      "provider": "antigravity",
+      "rates": [
+        {
+          "effective_date": "2026-06-13",
+          "observed": "2026-06-13",
+          "in": 1.25,
+          "out": 10.0,
+          "cw": 1.25,
+          "cr": 0.125,
+          "source": "Gemini docs (Gemini 2.5 Pro; context tier selected from billed input: <=200k short, >200k long) — pinned because it's cheaper than the 3.x Pro the 'gemini' family tracks",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 200000,
+            "short": { "in": 1.25, "out": 10.0, "cw": 1.25, "cr": 0.125 },
+            "long": { "in": 2.5, "out": 15.0, "cw": 2.5, "cr": 0.25 }
+          }
+        }
+      ]
+    },
+    "gemini-2.5-flash": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.3, "out": 2.5, "cw": 0.3, "cr": 0.03, "source": "Gemini docs (Gemini 2.5 Flash, text/image/video) — pinned because it's cheaper than the 3.5 Flash the 'flash' family tracks" }
+      ]
+    },
+    "gemini-2.5-flash-lite": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.1, "out": 0.4, "cw": 0.1, "cr": 0.01, "source": "Gemini docs (Gemini 2.5 Flash-Lite, text/image/video) — cheaper than 3.1 Flash-Lite the family tracks" }
+      ]
+    }
+  },
+  "fast": {
+    "opus-4-8": [
+      { "effective_date": "2026-06-13", "observed": "2026-07-01", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs Fast mode (Opus 4.8 $10/$50); caching multipliers apply on top of fast input" }
+    ],
+    "opus-4-7": [
+      { "effective_date": "2026-06-13", "observed": "2026-07-01", "in": 30.0, "out": 150.0, "cw": 37.5, "cw1h": 60.0, "cr": 3.0, "source": "Anthropic docs Fast mode (Opus 4.7 $30/$150). As of June 29, 2026, Fast mode is no longer available on Opus 4.6, so do not use a generic 'opus' fast family." }
+    ]
+  },
+  "families": {
+    "opus": [
+      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.5-4.8, flat across the full 1M window); deprecated Opus 4/4.1 ($15/$75) pinned in models" }
+    ],
+    "sonnet-5": [
+      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic docs (Sonnet 5 introductory pricing through August 31, 2026); checked before generic 'sonnet' so dated build ids don't inherit Sonnet 4.5/4.6 pricing" },
+      { "effective_date": "2026-09-01", "observed": "2026-07-01", "in": 3.0, "out": 15.0, "cw": 3.75, "cw1h": 6.0, "cr": 0.3, "source": "Anthropic docs (Sonnet 5 standard pricing starting September 1, 2026)" }
+    ],
+    "sonnet": [
+      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 3.0, "out": 15.0, "cw": 3.75, "cw1h": 6.0, "cr": 0.3, "source": "Anthropic docs (Sonnet 4.5/4.6; Sonnet 5 is pinned separately at the more specific 'sonnet-5' family)" }
+    ],
+    "haiku": [
+      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 1.0, "out": 5.0, "cw": 1.25, "cw1h": 2.0, "cr": 0.1, "source": "Anthropic docs (Haiku 4.5)" }
+    ],
+    "nano": [
+      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.2, "out": 1.25, "cw": 0.2, "cr": 0.02, "source": "OpenAI docs (gpt-5.4-nano; only version on the page)" }
+    ],
+    "mini": [
+      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.75, "out": 4.5, "cw": 0.75, "cr": 0.075, "source": "OpenAI docs (gpt-5.4-mini; only version on the page, no gpt-5.5-mini exists yet)" }
+    ],
+    "flash-lite": [
+      { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.25, "out": 1.5, "cw": 0.25, "cr": 0.025, "source": "Gemini docs (Gemini 3.1 Flash-Lite, current text/image/video); older 2.5 Flash-Lite pinned in models. Checked before 'flash'/'gemini'." }
+    ],
+    "flash": [
+      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.5, "out": 9.0, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.5 Flash, current); Flash is repriced per version (3 Flash was $0.50/$3, 2.5 Flash $0.30/$2.50), so this tracks the latest and older versions are pinned in 'models'. Checked before 'gemini'." }
+    ],
+    "gemini": [
+      {
+        "effective_date": "2026-06-11",
+        "observed": "2026-06-13",
+        "in": 2.0,
+        "out": 12.0,
+        "cw": 2.0,
+        "cr": 0.2,
+        "source": "Gemini docs (Gemini 3.1 Pro; context tier selected from billed input: <=200k short, >200k long); no per-token cache-write fee, cw=input",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 200000,
+          "short": { "in": 2.0, "out": 12.0, "cw": 2.0, "cr": 0.2 },
+          "long": { "in": 4.0, "out": 18.0, "cw": 4.0, "cr": 0.4 }
+        }
+      }
+    ]
+  },
+  "providers": {
+    "codex": [
+      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.75, "out": 14.0, "cw": 1.75, "cr": 0.175, "source": "fallback for unlisted codex models — current gpt-5.3-codex tier" }
+    ],
+    "claude": [
+      { "effective_date": "2026-06-10", "observed": "2026-06-13", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "fallback for unknown Claude models — current Opus tier" }
+    ],
+    "antigravity": [
+      { "effective_date": "2026-06-10", "observed": "2026-06-13", "in": 2.0, "out": 12.0, "cw": 2.0, "cr": 0.2, "source": "fallback — Gemini Pro tier; Google has no per-token cache-write fee, so cw=input" }
+    ]
+  }
+}

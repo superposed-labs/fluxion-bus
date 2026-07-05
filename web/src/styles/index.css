@@ -1,0 +1,15 @@
+/* Fluxion console — styles barrel.
+ *
+ * Split out of a single 2160-line styles.css by feature area. Import order is
+ * the original file order and is load-bearing for the cascade — keep it. */
+@import "./base.css";
+@import "./topbar.css";
+@import "./tasks.css";
+@import "./detail.css";
+@import "./rail.css";
+@import "./summary.css";
+@import "./stats.css";
+@import "./schedules.css";
+@import "./monitor.css";
+@import "./runtask.css";
+@import "./compatibility.css";
