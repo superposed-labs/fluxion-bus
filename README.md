@@ -154,11 +154,11 @@ Requirements:
 
 ### macOS desktop app (recommended)
 
-For macOS users on Apple Silicon (M-series chips), install the prebuilt `Fluxion.app` from the latest GitHub Release DMG, drag it into `/Applications`, and open it. *(Note: The prebuilt Release DMG is targeted at Apple Silicon. Intel Mac users should build from source or use the CLI installation).*
+For macOS users on Apple Silicon (M-series chips), install the prebuilt `Fluxion.app` from the [latest GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) DMG, drag it into `/Applications`, and open it. *(Note: The prebuilt Release DMG is targeted at Apple Silicon. Intel Mac users should build from source or use the CLI installation).*
 
 The current prebuilt DMG is unsigned and not notarized. On first launch, macOS
 Gatekeeper may block it because Apple cannot verify the developer. If you
-downloaded it from the official GitHub Release and verified `SHA256SUMS`, open
+downloaded it from the official [GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) and verified `SHA256SUMS`, open
 it without Terminal by trying once, then going to **System Settings -> Privacy
 & Security**, finding the Fluxion warning near the bottom, and clicking **Open
 Anyway** before launching it again. If you're comfortable with the command

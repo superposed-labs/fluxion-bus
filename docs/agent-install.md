@@ -6,11 +6,11 @@ server on its user's machine. If you are a human reading this, the manual path
 in [Install and Verify](../README.md#install-and-verify) covers the same
 backend result.
 
-For normal macOS desktop use on Apple Silicon (M-series chips), prefer the prebuilt `Fluxion.dmg` from the latest GitHub Release (Intel Mac users should build from source or use the CLI installation instead). The app installs or repairs its backend from a bundled source snapshot and dependency wheels, so it needs no git, Node, Xcode Command Line Tools, or network access on the user's machine — only Python 3.12+. Use this agent-assisted document when the user wants MCP registration, CLI verification, or a non-desktop install.
+For normal macOS desktop use on Apple Silicon (M-series chips), prefer the prebuilt `Fluxion.dmg` from the [latest GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) (Intel Mac users should build from source or use the CLI installation instead). The app installs or repairs its backend from a bundled source snapshot and dependency wheels, so it needs no git, Node, Xcode Command Line Tools, or network access on the user's machine — only Python 3.12+. Use this agent-assisted document when the user wants MCP registration, CLI verification, or a non-desktop install.
 
 The current prebuilt DMG is unsigned and not notarized. If macOS blocks the app
 on first launch, tell the user to confirm they downloaded it from the official
-GitHub Release and verified `SHA256SUMS`, then either:
+[GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) and verified `SHA256SUMS`, then either:
 
 - Open **System Settings -> Privacy & Security**, find the Fluxion warning near
   the bottom, click **Open Anyway**, and launch Fluxion again.
