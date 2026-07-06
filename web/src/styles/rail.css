@@ -50,6 +50,11 @@
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 12px;
 }
+.session-key span {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
 .session-key .copy { color: var(--fg-3); font-size: 10px; }
 .session-key .copy:hover { color: var(--accent); }
 
