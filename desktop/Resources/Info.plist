@@ -26,5 +26,13 @@
 	<string>12.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/superposed-labs/fluxion-bus/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>h57JEWYuB0KTpTkDDltrnMKDuQxnAVc4igTJJK04TUQ=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

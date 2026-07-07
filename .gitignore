@@ -20,6 +20,10 @@ src/fluxion/web/static/
 desktop/Fluxion.app/
 dist/
 
+# Vendored Sparkle framework, fetched + cached on demand by desktop/build.sh
+# (pinned by version + checksum). Not tracked; re-downloaded when missing.
+desktop/Frameworks/
+
 scratch/
 cache/
 

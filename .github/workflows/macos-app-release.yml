@@ -65,6 +65,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
+          # Stamp the app's user-facing version from the pushed tag
+          # (v1.2.3 -> 1.2.3) so CFBundleShortVersionString never needs a
+          # hand edit. build.sh falls back to `git describe` for local builds.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            export FLUXION_APP_VERSION="${GITHUB_REF_NAME#v}"
+          fi
           if [ -n "$FLUXION_CODESIGN_IDENTITY" ] \
             && [ -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" ] \
             && [ -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" ] \
@@ -84,6 +90,30 @@ jobs:
           shasum -a 256 dist/macos/Fluxion.dmg dist/macos/Fluxion.app.zip \
             | tee dist/macos/SHA256SUMS
 
+      # Generate the EdDSA-signed Sparkle appcast so already-installed users
+      # receive in-app auto-updates. Requires the SPARKLE_PRIVATE_KEY secret
+      # (the base64 seed from `generate_keys -x`). Skipped when the secret is
+      # absent; the download-url-prefix points at this tag's release assets.
+      - name: Generate Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/') && env.SPARKLE_PRIVATE_KEY != ''
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          SPARKLE_VERSION=2.9.4
+          curl -fsSL -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          mkdir -p /tmp/sparkle-tools
+          tar -xJf /tmp/sparkle.tar.xz -C /tmp/sparkle-tools bin
+          mkdir -p appcast-src
+          cp dist/macos/Fluxion.app.zip appcast-src/
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_ed_key
+          /tmp/sparkle-tools/bin/generate_appcast \
+            --ed-key-file /tmp/sparkle_ed_key \
+            --download-url-prefix "https://github.com/superposed-labs/fluxion-bus/releases/download/${GITHUB_REF_NAME}/" \
+            appcast-src
+          cp appcast-src/appcast.xml dist/macos/appcast.xml
+          rm -f /tmp/sparkle_ed_key
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -92,6 +122,7 @@ jobs:
             dist/macos/Fluxion.dmg
             dist/macos/Fluxion.app.zip
             dist/macos/SHA256SUMS
+            dist/macos/appcast.xml
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -101,6 +132,23 @@ jobs:
             dist/macos/Fluxion.dmg
             dist/macos/Fluxion.app.zip
             dist/macos/SHA256SUMS
+            dist/macos/appcast.xml
+
+      # Bump the Homebrew cask in superposed-labs/homebrew-tap to the new
+      # version + sha256. Requires a repo-scoped PAT with write access to the
+      # tap, stored as the HOMEBREW_TAP_TOKEN secret. Skipped automatically
+      # when the secret is absent.
+      - name: Bump Homebrew cask
+        if: startsWith(github.ref, 'refs/tags/') && env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        uses: dawidd6/action-homebrew-bump-cask@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          tap: superposed-labs/homebrew-tap
+          cask: fluxion
+          tag: ${{ github.ref_name }}
+          no_fork: true
 
       - name: Delete signing keychain
         if: ${{ always() }}

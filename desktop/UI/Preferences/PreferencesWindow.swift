@@ -472,16 +472,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     }
 
     @objc func checkForUpdates() {
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("preferences.update.title")
-        alert.informativeText = L10n.tr("preferences.update.latest", PreferencesWindow.appVersion)
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: L10n.tr("preferences.ok"))
-        if let win = window {
-            alert.beginSheetModal(for: win, completionHandler: nil)
-        } else {
-            alert.runModal()
-        }
+        // User-initiated check. Sparkle presents the full UI itself — progress,
+        // "you're up to date", or the new-version prompt with download/install.
+        appDelegate.updaterController.checkForUpdates(nil)
     }
 
     @objc func checkAvailability() {

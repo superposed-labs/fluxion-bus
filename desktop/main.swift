@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Sparkle
 import UserNotifications
 
 // MARK: - Models
@@ -131,6 +132,10 @@ enum PollingConfig {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     var statusItem: NSStatusItem!
     var statusMenu: NSMenu!
+    // Sparkle in-app updater. Created in applicationDidFinishLaunching so
+    // scheduled background checks start on launch; also backs the
+    // "Check for Updates" action in Preferences.
+    var updaterController: SPUStandardUpdaterController!
     var richMenuWindow: NSPanel?
     var richMenuEventMonitor: Any?
     var lastRichMenuCloseTime: TimeInterval = 0
@@ -263,6 +268,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         // focused text field's field editor. Missing it is why pasting into the
         // Preferences inputs with Cmd+V did nothing while typing still worked.
         setupMainMenu()
+
+        // Start the Sparkle updater. `startingUpdater: true` begins the
+        // scheduled background checks configured in Info.plist (SUFeedURL,
+        // SUPublicEDKey, SUScheduledCheckInterval); Sparkle presents its own
+        // update UI when a newer version is published.
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
         loadEnv()
         reloadCacheFromDisk()

@@ -7,8 +7,10 @@
 # desktop/Fluxion.app and ad-hoc signs the result.
 #
 # Versions:
-#   CFBundleShortVersionString — the user-facing semver, set by hand in the
-#     tracked desktop/Resources/Info.plist when cutting a release.
+#   CFBundleShortVersionString — the user-facing semver. Derived here from the
+#     release tag (FLUXION_APP_VERSION, else the nearest `git describe` tag) so
+#     it never needs hand-bumping. Falls back to the value in the tracked
+#     desktop/Resources/Info.plist when no tag is available (dev builds).
 #   CFBundleVersion — the build number, derived here from the git commit count
 #     so it increments on every commit, never needs hand-bumping, and is never
 #     stored in a tracked file. Falls back to 0 outside a git checkout.
@@ -27,8 +29,20 @@ fi
 
 # 1. Derive the build number from the git commit count
 BUILD_NUM=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+
+# Derive the user-facing semver from the release tag so it never needs
+# hand-bumping. Priority: explicit FLUXION_APP_VERSION (set by CI from the
+# pushed tag), then the nearest git tag, then leave the tracked Info.plist
+# value untouched (dev builds with no tag).
+SHORT_VERSION="${FLUXION_APP_VERSION:-}"
+if [ -z "$SHORT_VERSION" ]; then
+    SHORT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
+fi
+SHORT_VERSION="${SHORT_VERSION#v}"
+
 echo "=== Fluxion Build ==="
 echo "Build version (git commit count): $BUILD_NUM"
+echo "Short version (semver): ${SHORT_VERSION:-<from Info.plist>}"
 
 # 2. Assemble the bundle skeleton from tracked sources
 echo "Assembling bundle from desktop/Resources/..."
@@ -36,6 +50,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$SRC_PLIST" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUM" "$APP/Contents/Info.plist"
+if [ -n "$SHORT_VERSION" ]; then
+    plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$APP/Contents/Info.plist"
+fi
 cp desktop/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 find desktop/Resources -maxdepth 1 -name "*.lproj" -type d -exec cp -R {} "$APP/Contents/Resources/" \;
 mkdir -p "$APP/Contents/Resources/Scripts"
@@ -47,6 +64,28 @@ if [ -d "src/fluxion/web/static" ]; then
     mkdir -p "$APP/Contents/Resources/WebStatic"
     cp -R src/fluxion/web/static/. "$APP/Contents/Resources/WebStatic/"
 fi
+
+# 2b. Vendor the Sparkle updater framework (in-app auto-update support).
+# Fetched on demand and cached under desktop/Frameworks (gitignored) so the
+# ~3 MB binary stays out of the repo. Pinned by version + tarball checksum.
+SPARKLE_VERSION="2.9.4"
+SPARKLE_SHA256="ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9"
+SPARKLE_CACHE="desktop/Frameworks/Sparkle-$SPARKLE_VERSION"
+SPARKLE_FW_SRC="$SPARKLE_CACHE/Sparkle.framework"
+if [ ! -d "$SPARKLE_FW_SRC" ]; then
+    echo "Fetching Sparkle $SPARKLE_VERSION..."
+    mkdir -p "$SPARKLE_CACHE"
+    SPARKLE_TAR="$(mktemp -t sparkle).tar.xz"
+    curl -fsSL -o "$SPARKLE_TAR" \
+        "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+    echo "$SPARKLE_SHA256  $SPARKLE_TAR" | shasum -a 256 -c - \
+        || { echo "error: Sparkle tarball checksum mismatch" >&2; exit 1; }
+    tar -xJf "$SPARKLE_TAR" -C "$SPARKLE_CACHE" Sparkle.framework
+    rm -f "$SPARKLE_TAR"
+fi
+echo "Embedding Sparkle.framework..."
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Bundle a backend source snapshot so first-run setup can install without git
 # or network access. `git archive` packs committed files only, which keeps
@@ -136,19 +175,38 @@ swiftc -O \
     desktop/UI/Notch/NotchIslandView+Expanded.swift \
     desktop/UI/Notch/NotchWindow.swift \
     -framework UserNotifications \
+    -F "$APP/Contents/Frameworks" \
+    -framework Sparkle \
+    -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -o "$APP/Contents/MacOS/Fluxion"
 
 # 4. Clear quarantine attributes and apply code signature
 echo "Clearing quarantine attributes..."
 xattr -cr "$APP" || true
 
+# Sign inside-out: Sparkle's nested helpers and framework must each carry their
+# own signature before the app is sealed. `--deep` is intentionally avoided —
+# Apple deprecates it for distribution and it mis-signs Sparkle's helpers.
+codesign_one() {
+    if [ -n "${FLUXION_CODESIGN_IDENTITY:-}" ]; then
+        codesign --force --options runtime --timestamp \
+            -s "$FLUXION_CODESIGN_IDENTITY" "$1"
+    else
+        codesign --force -s - "$1"
+    fi
+}
+
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
 if [ -n "${FLUXION_CODESIGN_IDENTITY:-}" ]; then
-    echo "Applying Developer ID codesign signature..."
-    codesign --force --deep --options runtime --timestamp \
-        -s "$FLUXION_CODESIGN_IDENTITY" "$APP"
+    echo "Applying Developer ID codesign signature (inside-out)..."
 else
-    echo "Applying deep ad-hoc codesign signature..."
-    codesign -s - --force --deep "$APP"
+    echo "Applying ad-hoc codesign signature (inside-out)..."
 fi
+codesign_one "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc"
+codesign_one "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc"
+codesign_one "$SPARKLE_FW/Versions/B/Updater.app"
+codesign_one "$SPARKLE_FW/Versions/B/Autoupdate"
+codesign_one "$SPARKLE_FW"
+codesign_one "$APP"
 
 echo "Build succeeded! (Build version: $BUILD_NUM)"
