@@ -558,7 +558,9 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private func buildWeeklyRow() -> NSView {
         weeklySwitch = NSSwitch()
-        weeklySwitch.state = .on
+        // Opt-in: off by default so a fresh install never schedules reminders
+        // unless the user turns them on here.
+        weeklySwitch.state = .off
         return CardRow(
             title: L10n.tr("welcome.weekly.title"),
             desc: L10n.tr("welcome.weekly.desc"),
@@ -568,11 +570,12 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
     }
 
     /// Auto-update opt-in — shown only in distribution builds where the
-    /// updater is configured. Default on; persisted by "Get Started".
+    /// updater is configured. Default off; the user must turn it on here (or in
+    /// Preferences) before any background check runs. Persisted by "Get Started".
     private func buildAutoUpdateRow() -> NSView? {
         guard appDelegate.updaterController?.isConfigured == true else { return nil }
         let sw = NSSwitch()
-        sw.state = .on
+        sw.state = .off
         autoUpdateSwitch = sw
         return CardRow(
             title: L10n.tr("preferences.auto_update"),
