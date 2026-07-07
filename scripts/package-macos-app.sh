@@ -61,7 +61,8 @@ fi
 note "Building macOS app"
 # Distribution builds bundle the backend source snapshot plus dependency
 # wheels so first-run setup works without git, npm, or network access.
-FLUXION_BUNDLE_WHEELS="${FLUXION_BUNDLE_WHEELS:-1}" bash "$ROOT/desktop/build.sh"
+FLUXION_ENABLE_SPARKLE="${FLUXION_ENABLE_SPARKLE:-1}" \
+    FLUXION_BUNDLE_WHEELS="${FLUXION_BUNDLE_WHEELS:-1}" bash "$ROOT/desktop/build.sh"
 
 if [ "${FLUXION_NOTARIZE:-0}" = "1" ]; then
   NOTARY_ZIP="$DIST_DIR/Fluxion-notary.zip"

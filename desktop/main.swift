@@ -132,10 +132,10 @@ enum PollingConfig {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     var statusItem: NSStatusItem!
     var statusMenu: NSMenu!
-    // Sparkle in-app updater. Created in applicationDidFinishLaunching so
-    // scheduled background checks start on launch; also backs the
-    // "Check for Updates" action in Preferences.
-    var updaterController: SPUStandardUpdaterController!
+    // In-app updater (Sparkle, wrapped). Created in applicationDidFinishLaunching.
+    // Inert in dev / self-compiled builds; active only in official distribution
+    // builds. Backs the "Check for Updates" action and the auto-check toggle.
+    var updaterController: UpdaterController!
     var richMenuWindow: NSPanel?
     var richMenuEventMonitor: Any?
     var lastRichMenuCloseTime: TimeInterval = 0
@@ -269,12 +269,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         // Preferences inputs with Cmd+V did nothing while typing still worked.
         setupMainMenu()
 
-        // Start the Sparkle updater. `startingUpdater: true` begins the
-        // scheduled background checks configured in Info.plist (SUFeedURL,
-        // SUPublicEDKey, SUScheduledCheckInterval); Sparkle presents its own
-        // update UI when a newer version is published.
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        // Start the updater. It stays inert unless this build has an SUFeedURL
+        // (official distribution builds only). It never installs silently, and
+        // scheduled reminders are gentle (a notification, not a modal).
+        updaterController = UpdaterController()
 
         loadEnv()
         reloadCacheFromDisk()

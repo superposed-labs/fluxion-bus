@@ -53,6 +53,17 @@ plutil -replace CFBundleVersion -string "$BUILD_NUM" "$APP/Contents/Info.plist"
 if [ -n "$SHORT_VERSION" ]; then
     plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$APP/Contents/Info.plist"
 fi
+
+# Sparkle auto-update is enabled only for official distribution builds. Dev and
+# self-compiled builds ship without the feed URL so the updater stays inert and
+# never offers to replace a locally built app with the official binary.
+# package-macos-app.sh sets FLUXION_ENABLE_SPARKLE=1.
+if [ "${FLUXION_ENABLE_SPARKLE:-0}" = "1" ]; then
+    echo "Sparkle auto-update: enabled (distribution build)"
+else
+    echo "Sparkle auto-update: disabled (dev build; stripping SUFeedURL)"
+    plutil -remove SUFeedURL "$APP/Contents/Info.plist" 2>/dev/null || true
+fi
 cp desktop/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 find desktop/Resources -maxdepth 1 -name "*.lproj" -type d -exec cp -R {} "$APP/Contents/Resources/" \;
 mkdir -p "$APP/Contents/Resources/Scripts"
@@ -156,6 +167,7 @@ swiftc -O \
     desktop/AppDelegate/AppDelegate+Polling.swift \
     desktop/AppDelegate/AppDelegate+Rendering.swift \
     desktop/UI/Localization.swift \
+    desktop/UI/UpdaterController.swift \
     desktop/UI/QuotaFormatter.swift \
     desktop/UI/Theme.swift \
     desktop/UI/CardViews.swift \
