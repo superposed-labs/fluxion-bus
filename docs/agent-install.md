@@ -6,10 +6,12 @@ server on its user's machine. If you are a human reading this, the manual path
 in [Install and Verify](../README.md#install-and-verify) covers the same
 backend result.
 
-For normal macOS desktop use on Apple Silicon (M-series chips), prefer the prebuilt `Fluxion.dmg` from the [latest GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) (Intel Mac users should build from source or use the CLI installation instead). The app installs or repairs its backend from a bundled source snapshot and dependency wheels, so it needs no git, Node, Xcode Command Line Tools, or network access on the user's machine — only Python 3.12+. Use this agent-assisted document when the user wants MCP registration, CLI verification, or a non-desktop install.
+For normal macOS desktop use on Apple Silicon (M-series chips), the easiest path is Homebrew — `brew install --cask superposed-labs/tap/fluxion` — or the prebuilt `Fluxion.dmg` from the [latest GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) (Intel Mac users should build from source or use the CLI installation instead). The app installs or repairs its backend from a bundled source snapshot and dependency wheels, so it needs no git, Node, Xcode Command Line Tools, or network access on the user's machine — only Python 3.12+. Use this agent-assisted document when the user wants MCP registration, CLI verification, or a non-desktop install.
 
-The current prebuilt DMG is unsigned and not notarized. If macOS blocks the app
-on first launch, tell the user to confirm they downloaded it from the official
+The current prebuilt DMG is unsigned and not notarized. The Homebrew cask
+strips the quarantine flag automatically, so the steps below apply only to a
+direct DMG download. If macOS blocks the app on first launch, tell the user to
+confirm they downloaded it from the official
 [GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) and verified `SHA256SUMS`, then either:
 
 - Open **System Settings -> Privacy & Security**, find the Fluxion warning near
@@ -207,7 +209,7 @@ single next step. Do not add sections, option lists, or questions:
 ✅ CLI — `fluxion doctor` and the test run passed
 ✅ MCP — registered with <client>
 <✅|⚠️> Web console — <static assets present | static assets missing: use the macOS DMG or build the web frontend>
-ℹ️ macOS desktop app — install the prebuilt Fluxion.dmg (M-series only) or build from source (Intel)
+ℹ️ macOS desktop app — `brew install --cask superposed-labs/tap/fluxion` or the prebuilt Fluxion.dmg (M-series), or build from source (Intel)
 
 Next step: start a new <client> session so the fluxion MCP tools load, then
 ask for `list_projects` via Fluxion to confirm.

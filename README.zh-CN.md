@@ -129,6 +129,14 @@ Codex / Claude / Antigravity
 
 对于使用 Apple Silicon（M 系列芯片）的 macOS 用户，请从 [最新 GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) 页面下载预编译的 `Fluxion.app` DMG 安装包，将其拖入 `/Applications` 目录中打开。*(注：预编译的 Release DMG 面向 Apple Silicon 芯片。Intel Mac 用户需要从源码构建或通过 CLI 方式安装。)*
 
+也可以使用 [Homebrew](https://brew.sh) 安装：
+
+```bash
+brew install --cask superposed-labs/tap/fluxion
+```
+
+该 cask 会下载相同的 Release DMG 并自动为你移除隔离标记，无需手动处理 Gatekeeper。但应用本身仍未签名 —— 详见下文说明。
+
 目前预编译的 DMG 镜像尚未进行签名与公证。首次启动时，macOS Gatekeeper 安全机制可能会阻止其运行，提示无法验证开发者。如果您确认是从官方 [GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) 下载并验证了 `SHA256SUMS`，可以先尝试打开一次（出现拦截提示），然后前往 **系统设置 -> 隐私与安全性**，在页面底部找到 Fluxion 的拦截警告并点击 **仍要打开**，之后再次双击即可正常运行。或者，您也可以直接在终端运行以下命令手动移除隔离（quarantine）标记：
 
 ```bash

@@ -129,6 +129,14 @@ WeChat では安全な iLink QR コードログインを使用します。アカ
 
 Apple Silicon（Mシリーズチップ）の macOS ユーザーは、[最新の GitHub リリース](https://github.com/superposed-labs/fluxion-bus/releases/latest)から事前ビルドされた `Fluxion.app` の DMG ファイルをダウンロードし、`/Applications` ディレクトリにドラッグ＆ドロップして開いてください。*(注：事前ビルドされたリリース DMG は Apple Silicon 搭載 Mac 専用です。Intel プロセッサ搭載 Mac ユーザーは、ソースからビルドするか CLI 経由でインストールしてください)。*
 
+[Homebrew](https://brew.sh) を使ってインストールすることもできます：
+
+```bash
+brew install --cask superposed-labs/tap/fluxion
+```
+
+この cask は同じリリース DMG をダウンロードし、隔離属性を自動的に解除するため、Gatekeeper の操作は不要です。ただしアプリ自体は未署名のままです —— 詳細は以下を参照してください。
+
 現在配布されている DMG イメージは開発者署名および公証が行われていません。そのため、初回起動時に macOS の Gatekeeper 機能によって開発元が未検証であるとしてブロックされる場合があります。公式の [GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) ページからダウンロードし、`SHA256SUMS` を検証した上で実行する場合は、一度アプリの起動を試みた（警告が表示された）後、**システム設定 -> プライバシーとセキュリティ** に進み、画面下部にある Fluxion の警告メッセージ横の **このまま開く** をクリックしてから、アプリを再起動してください。あるいは、コマンドライン操作に慣れている場合は、以下のコマンドを実行して隔離（quarantine）属性を直接解除することも可能です。
 
 ```bash
