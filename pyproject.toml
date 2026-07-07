@@ -1,6 +1,6 @@
 [project]
 name = "fluxion"
-version = "1.0.0"
+version = "1.0.1"
 description = "Local-first AI gateway and agent hub — run Slack tasks through Codex, Claude, or Antigravity with a web observation deck and MCP sub-agent support"
 readme = "README.md"
 requires-python = ">=3.12"

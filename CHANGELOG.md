@@ -9,6 +9,21 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-07
+
+### Added
+
+- **In-app auto-updates** — the macOS desktop app updates itself via Sparkle;
+  Preferences → Check for Updates now performs a real check instead of always
+  reporting the latest version.
+- **Homebrew cask** — install with
+  `brew install --cask superposed-labs/tap/fluxion`.
+
+### Changed
+
+- Release automation now signs a Sparkle appcast, bumps the Homebrew cask, and
+  stamps the app's user-facing version from the git tag.
+
 ## [1.0.0] - 2026-07-06
 
 Initial open-source release.
@@ -40,5 +55,6 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/superposed-labs/fluxion-bus/releases/tag/v1.0.0
