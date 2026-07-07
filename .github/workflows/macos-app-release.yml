@@ -134,21 +134,35 @@ jobs:
             dist/macos/SHA256SUMS
             dist/macos/appcast.xml
 
-      # Bump the Homebrew cask in superposed-labs/homebrew-tap to the new
-      # version + sha256. Requires a repo-scoped PAT with write access to the
-      # tap, stored as the HOMEBREW_TAP_TOKEN secret. Skipped automatically
-      # when the secret is absent.
+      # Bump the fluxion cask in superposed-labs/homebrew-tap to the new
+      # version + DMG sha256 (read from SHA256SUMS). Self-contained so it needs
+      # no third-party action. Requires the HOMEBREW_TAP_TOKEN secret (a PAT
+      # with write access to the tap); skipped automatically when absent.
       - name: Bump Homebrew cask
         if: startsWith(github.ref, 'refs/tags/') && env.HOMEBREW_TAP_TOKEN != ''
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        uses: dawidd6/action-homebrew-bump-cask@v3
-        with:
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          tap: superposed-labs/homebrew-tap
-          cask: fluxion
-          tag: ${{ github.ref_name }}
-          no_fork: true
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dmg_sha="$(awk '/Fluxion\.dmg/ {print $1}' dist/macos/SHA256SUMS)"
+          if [ -z "$dmg_sha" ]; then
+            echo "::error::could not read Fluxion.dmg sha256 from SHA256SUMS"
+            exit 1
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/superposed-labs/homebrew-tap.git" tap
+          cd tap
+          sed -i '' -E "s/^  version \".*\"/  version \"${version}\"/" Casks/fluxion.rb
+          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"${dmg_sha}\"/" Casks/fluxion.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/fluxion.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date."
+          else
+            git commit -m "fluxion ${version}"
+            git push
+          fi
 
       - name: Delete signing keychain
         if: ${{ always() }}
