@@ -17,6 +17,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so build.sh's `git rev-list --count HEAD` yields a
+          # real, monotonically increasing CFBundleVersion — Sparkle compares
+          # that number to decide whether an update is newer. A shallow (depth
+          # 1) clone would make every release build number 1 and silently
+          # break auto-updates.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
