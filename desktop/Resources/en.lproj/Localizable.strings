@@ -172,7 +172,7 @@
 "notch.row.5h" = "5-HOUR";
 "notch.row.weekly" = "WEEKLY";
 "preferences.hide_fullscreen" = "Hide on Fullscreen";
-"preferences.hide_fullscreen.desc" = "Hide the Notch while an app is in fullscreen, for the stock all-black look. Off by default, since the Notch only fills the otherwise-black strip and never covers content.";
+"preferences.hide_fullscreen.desc" = "Fade the Notch out while an app is in fullscreen — including borderless fullscreen video and games — and bring it back when fullscreen ends.";
 "preferences.section.display" = "Display";
 
 "preferences.usage.display" = "Usage Display";

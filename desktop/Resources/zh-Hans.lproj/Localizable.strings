@@ -172,7 +172,7 @@
 "notch.row.5h" = "5 小时";
 "notch.row.weekly" = "每周";
 "preferences.hide_fullscreen" = "全屏时隐藏";
-"preferences.hide_fullscreen.desc" = "当某个 app 处于全屏时隐藏灵动岛，以保留系统默认的全黑效果。默认关闭，因为它只填充 Mac 刘海区域，不遮挡内容。";
+"preferences.hide_fullscreen.desc" = "当有 app 处于全屏（包括视频播放器、游戏等无边框全屏）时淡出灵动岛，退出全屏后自动恢复。";
 "preferences.section.display" = "显示";
 
 "preferences.usage.display" = "用量显示";

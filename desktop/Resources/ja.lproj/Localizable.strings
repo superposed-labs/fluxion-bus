@@ -172,7 +172,7 @@
 "notch.row.5h" = "5時間";
 "notch.row.weekly" = "週次";
 "preferences.hide_fullscreen" = "フルスクリーン時に隠す";
-"preferences.hide_fullscreen.desc" = "アプリがフルスクリーンの時に Notch を隠し、標準の黒い表示にします。Notch は元々黒い帯を埋めるだけで内容を覆わないため、初期値はオフです。";
+"preferences.hide_fullscreen.desc" = "アプリがフルスクリーン（ボーダレスの動画・ゲームを含む）の間は Notch をフェードアウトし、終了後に自動で戻します。";
 "preferences.section.display" = "表示";
 
 "preferences.usage.display" = "使用量表示";

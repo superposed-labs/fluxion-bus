@@ -241,6 +241,29 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     /// (or other app logic) hid for a different reason. See updateFullscreenVisibility().
     private var hiddenForFullscreen = false
 
+    /// Number of native-fullscreen (type 4) Spaces on the target display at the
+    /// last visibility check. A fresh fullscreen Space is created ~500ms BEFORE
+    /// the display's Current Space flips to it (measured on macOS 26), so a jump
+    /// in this count is the earliest signal that a fullscreen transition has
+    /// begun — earlier, and independent of whether the incoming window covers
+    /// the notch strip, which is what lets us pre-empt the flash for video apps
+    /// (their fullscreen content sits *below* the notch, so the full-frame-cover
+    /// signal never fires for them). See updateFullscreenVisibility().
+    private var lastFullscreenSpaceCount = 0
+
+    /// While set and not yet elapsed, a fullscreen entry transition is in
+    /// flight: keep the notch hidden even though Current Space hasn't flipped to
+    /// type 4 yet, bridging the ~500ms gap between "fullscreen Space created"
+    /// and "Current Space == 4" so the notch never reappears mid-transition.
+    /// Cleared once the flip completes, or on timeout if the transition was for
+    /// some other display and never reaches us.
+    private var fullscreenEntryDeadline: Date?
+
+    /// Target display the fullscreen count above was read from. The notch
+    /// follows the mouse across displays, so the count must be re-baselined
+    /// (not read as a jump) whenever this changes. See updateFullscreenVisibility.
+    private var lastFullscreenDisplayID: CGDirectDisplayID?
+
     // History fetch retry: the web server may not be listening yet right after
     // launch, so a single attempt would leave "0" until the 30s poll. Each
     // fetchHistory() starts a fresh attempt chain (newer chains supersede older
@@ -267,13 +290,14 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         win.hasShadow = false
         win.level = .statusBar + 1
         win.ignoresMouseEvents = false
-        // Intentionally NO .fullScreenAuxiliary: that flag is what makes an
-        // overlay follow into — and draw on top of — another app's native
-        // fullscreen Space (fullscreen video, games, Keynote). Without it the
-        // notch shows over the regular desktop and maximized windows, but
-        // politely gets out of the way when an app goes truly fullscreen.
-        // .stationary keeps it from drifting during Spaces transitions;
-        // .ignoresCycle keeps it out of the ⌘Tab window cycle.
+        // Note: omitting .fullScreenAuxiliary does NOT keep the notch off
+        // native fullscreen Spaces — measured on macOS 26, a .canJoinAllSpaces
+        // window at this level is composited over fullscreen Spaces regardless
+        // (the window stays in CGWindowList with the fullscreen Space active).
+        // Getting out of the way of fullscreen apps is therefore handled
+        // explicitly by updateFullscreenVisibility() below, not by collection
+        // behavior. .stationary keeps it from drifting during Spaces
+        // transitions; .ignoresCycle keeps it out of the ⌘Tab window cycle.
         win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         win.isReleasedWhenClosed = false
         
@@ -300,12 +324,18 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         }
         RunLoop.main.add(webViewTimer!, forMode: .common)
         
-        // Start screen tracking timer (every 1.0 second) to follow the mouse
+        // Start screen tracking timer (every 0.25 seconds) to follow the mouse
         // cursor screen and to hide the notch while another app is fullscreen.
-        // The timer catches borderless "fake" fullscreen (video players, games,
-        // in-browser video) which does NOT change Spaces and so emits no
-        // notification; native fullscreen is handled instantly below.
-        screenTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // The interval is load-bearing for flicker-free native fullscreen: the
+        // transitioning window covers the screen's full frame ~450ms BEFORE the
+        // Space flips to fullscreen type / the Space-change notification fires /
+        // the system re-composites the notch over the new Space (measured on
+        // macOS 26). Polling faster than that lead window guarantees a tick
+        // hides the notch during the transition animation — before it could
+        // ever flash over the fullscreen content. It also catches borderless
+        // "fake" fullscreen (video players, games), which never changes Spaces
+        // and so emits no notification at all.
+        screenTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.checkActiveScreen()
             self?.updateFullscreenVisibility()
         }
@@ -340,6 +370,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     }
     
     func show() {
+        // Reset any fullscreen-hide leftovers (alpha faded to 0, hidden flag)
+        // so an explicit show — e.g. re-enabling the notch in Preferences —
+        // always lands visible. If a fullscreen app still owns the screen, the
+        // next visibility tick will fade it back out.
+        hiddenForFullscreen = false
+        fadeGeneration += 1
+        window?.alphaValue = 1
         window?.orderFrontRegardless()
         repositionWindow()
         fetchHistory()
@@ -683,9 +720,20 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func activeSpaceChanged() {
-        // Native fullscreen enter/exit changes the active Space — re-evaluate
-        // immediately rather than waiting for the next 1s tick.
+        // Native fullscreen enter/exit changes the active Space. The 0.25s poll
+        // is what actually hides the notch in time on ENTER (it sees the
+        // full-frame cover ~450ms before this notification even fires); this
+        // handler's job is mainly the EXIT direction — bring the notch back the
+        // instant fullscreen ends instead of up to a poll-interval later. The
+        // short burst re-checks absorb the CGS "Current Space" record lagging
+        // the notification during the transition, so the first check doesn't
+        // read a stale space type and no-op.
         updateFullscreenVisibility()
+        for delay in [0.1, 0.3, 0.7] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.updateFullscreenVisibility()
+            }
+        }
     }
 
     @objc private func screenParametersChanged() {
@@ -709,72 +757,154 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
-    // MARK: - Fullscreen Auto-Hide (opt-in)
+    // MARK: - Fullscreen Auto-Hide
     //
-    // Off by default: in fullscreen the notch strip is otherwise just black, and
-    // native-fullscreen content sits *below* it, so the notch fills dead space
-    // rather than covering anything. Users who prefer the stock all-black look
-    // can enable FLUXION_NOTCH_HIDE_ON_FULLSCREEN, which orders the notch out
-    // while a fullscreen app owns the notch's screen and restores it afterward.
+    // On by default (FLUXION_NOTCH_HIDE_ON_FULLSCREEN=false opts out): while a
+    // fullscreen app owns the notch's screen the island hides, and it fades back
+    // in when fullscreen ends. This is the ONLY thing keeping the island off
+    // fullscreen content: the system composites this window over native
+    // fullscreen Spaces too (see the collectionBehavior note in init).
+    //
+    // Three signals, in priority order, cover the cases (all measured on macOS
+    // 26 with a 0.25s poll + the Space-change notification):
+    //   1. A newly created fullscreen Space (type-4 count jumped) — fires ~500ms
+    //      BEFORE Current Space flips, and regardless of whether the incoming
+    //      window covers the notch strip. This is what pre-empts the flash for
+    //      *video* fullscreen, whose content sits below the notch.
+    //   2. Current Space == 4 — the steady-state "we are on a native fullscreen
+    //      Space" truth; maintains the hide after the transition completes.
+    //   3. Another app's borderless window covering the full frame — the "fake"
+    //      fullscreen of some players/games that never creates a Space at all.
+
+    /// Supersedes any in-flight fade so an interrupted hide can't order the
+    /// window out after a restore has already begun (and vice versa).
+    private var fadeGeneration = 0
+    private static let fadeDuration: TimeInterval = 0.25
+    /// How long the entry pre-empt (signal 1) keeps the notch hidden while
+    /// waiting for Current Space to flip. Comfortably longer than the measured
+    /// ~500ms gap, so a slow transition still bridges; short enough that a
+    /// fullscreen Space created on a *different* display (which never flips us
+    /// to type 4) un-strands the notch quickly.
+    private static let fullscreenEntryGrace: TimeInterval = 2.0
 
     private func updateFullscreenVisibility() {
         guard let win = window else { return }
-        let hideEnabled = (appDelegate.envVals["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] ?? "false")
+        let hideEnabled = (appDelegate.envVals["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] ?? "true")
             .lowercased() == "true"
 
-        // Not opted in: never auto-hide, and undo any hide left over from when
+        // Opted out: never auto-hide, and undo any hide left over from when
         // the preference was previously on.
         guard hideEnabled else {
             if hiddenForFullscreen {
-                hiddenForFullscreen = false
-                win.orderFrontRegardless()
-                repositionWindow()
+                restoreAfterFullscreen(win)
             }
+            fullscreenEntryDeadline = nil
             return
         }
 
         let screen = findTargetScreen()
-        if isFullscreenActive(on: screen) {
+        let spaces = fullscreenSpaces(for: screen)
+
+        // The notch follows the mouse across displays, so the target display can
+        // change between ticks. When it does, re-baseline the count instead of
+        // reading a jump: moving onto a display that merely has a fullscreen app
+        // parked in another of its Spaces must not be mistaken for a fresh
+        // fullscreen transition and hide the notch.
+        let screenChanged = spaces.displayID != lastFullscreenDisplayID
+        lastFullscreenDisplayID = spaces.displayID
+
+        // Signal 1: a fullscreen Space just appeared — arm the entry grace so we
+        // stay hidden across the pre-flip gap. Only a genuine *increase* on the
+        // *same* display arms it, so a fullscreen app merely parked in another
+        // Space doesn't keep the notch hidden while you work on the desktop.
+        if !screenChanged, spaces.count > lastFullscreenSpaceCount {
+            fullscreenEntryDeadline = Date().addingTimeInterval(Self.fullscreenEntryGrace)
+        }
+        lastFullscreenSpaceCount = spaces.count
+
+        let onFullscreenSpace = spaces.currentIsFullscreen
+        // The flip completed (signal 2 now holds), so the entry pre-empt has
+        // done its job — retire it and let the steady-state signal carry the
+        // hide, rather than letting a stale deadline linger.
+        if onFullscreenSpace {
+            fullscreenEntryDeadline = nil
+        }
+        let entering = fullscreenEntryDeadline.map { Date() < $0 } ?? false
+
+        let shouldHide = onFullscreenSpace || entering || otherAppCoversFullFrame(on: screen)
+
+        if shouldHide {
             // Only record that *we* hid it if it was actually visible, so a
             // notch hidden for some other reason is left alone on restore.
-            if win.isVisible {
-                hiddenForFullscreen = true
-                win.orderOut(nil)
+            if win.isVisible, !hiddenForFullscreen {
+                hideForFullscreen(win)
             }
         } else if hiddenForFullscreen {
-            hiddenForFullscreen = false
-            win.orderFrontRegardless()
-            repositionWindow()
+            restoreAfterFullscreen(win)
         }
     }
 
-    /// A fullscreen app owns `screen` when either its current Space is a native
-    /// fullscreen Space (the reliable signal — Space type 4) or some other app
-    /// has a borderless window covering the screen's full frame (the "fake"
-    /// fullscreen of some video players/games, which creates no Space). The Space
-    /// check stays steady through the brief moment a native-fullscreen window
-    /// resizes to clear the notch, so it never flickers.
-    private func isFullscreenActive(on screen: NSScreen) -> Bool {
-        if currentSpaceType(for: screen) == 4 { return true }
-        return otherAppCoversFullFrame(on: screen)
+    // Hiding is deliberately INSTANT — no fade-out. For native fullscreen the
+    // clock is the whole point: the entry signal (new fullscreen Space) leads
+    // the moment the system re-composites the notch over the new Space by only
+    // ~500ms, so a hide that lands inside the transition animation must take
+    // effect immediately; a fade would spend that entire budget melting out and
+    // hand back the "reappears for an instant" glitch. During the transition the
+    // screen is covered anyway, so nobody sees an instant vanish. Only the
+    // restore direction fades (fadeDuration), where the notch comes back over a
+    // calm desktop.
+    private func hideForFullscreen(_ win: NSWindow) {
+        hiddenForFullscreen = true
+        fadeGeneration += 1
+        // Drop any open tray/panel so the island comes back collapsed instead
+        // of reappearing mid-peek or as the full expanded card.
+        if model.notchState != .collapsed {
+            collapse()
+        }
+        win.alphaValue = 0
+        win.orderOut(nil)
     }
 
-    /// The macOS Space type for `screen`'s currently visible Space, read from the
-    /// private SkyLight managed-display-spaces list. 4 == native fullscreen.
-    private func currentSpaceType(for screen: NSScreen) -> Int {
-        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
-              let uuidRef = CGDisplayCreateUUIDFromDisplayID(CGDirectDisplayID(number.uint32Value))?.takeRetainedValue(),
+    private func restoreAfterFullscreen(_ win: NSWindow) {
+        hiddenForFullscreen = false
+        fadeGeneration += 1
+        repositionWindow()
+        win.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.fadeDuration
+            win.animator().alphaValue = 1
+        }
+    }
+
+    /// The fullscreen picture for `screen`, read from the private SkyLight
+    /// managed-display-spaces list in a single pass: whether the Current Space
+    /// is a native-fullscreen Space (type 4), and how many type-4 Spaces exist
+    /// on the display right now (a jump in that count is the early entry signal —
+    /// see updateFullscreenVisibility). Scoped per display by UUID so a
+    /// fullscreen app on another monitor never hides the notch on this one.
+    private struct FullscreenSpaces {
+        let currentIsFullscreen: Bool
+        let count: Int
+        let displayID: CGDirectDisplayID?
+    }
+
+    private func fullscreenSpaces(for screen: NSScreen) -> FullscreenSpaces {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return FullscreenSpaces(currentIsFullscreen: false, count: 0, displayID: nil)
+        }
+        let displayID = CGDirectDisplayID(number.uint32Value)
+        guard let uuidRef = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue(),
               let uuid = CFUUIDCreateString(nil, uuidRef) as String?,
-              let spaces = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]] else {
-            return -1
+              let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]] else {
+            return FullscreenSpaces(currentIsFullscreen: false, count: 0, displayID: displayID)
         }
-        for display in spaces {
-            if display["Display Identifier"] as? String == uuid,
-               let current = display["Current Space"] as? [String: Any] {
-                return current["type"] as? Int ?? -1
-            }
+        for display in displays where display["Display Identifier"] as? String == uuid {
+            let currentIsFullscreen = (display["Current Space"] as? [String: Any])?["type"] as? Int == 4
+            let count = (display["Spaces"] as? [[String: Any]])?
+                .filter { $0["type"] as? Int == 4 }.count ?? 0
+            return FullscreenSpaces(currentIsFullscreen: currentIsFullscreen, count: count, displayID: displayID)
         }
-        return -1
+        return FullscreenSpaces(currentIsFullscreen: false, count: 0, displayID: displayID)
     }
 
     /// CGWindowList reports bounds in a top-left origin space anchored to the
