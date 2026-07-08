@@ -154,24 +154,18 @@ Requirements:
 
 ### macOS desktop app (recommended)
 
-For macOS users on Apple Silicon (M-series chips), install the prebuilt `Fluxion.app` from the [latest GitHub Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) DMG, drag it into `/Applications`, and open it. *(Note: The prebuilt Release DMG is targeted at Apple Silicon. Intel Mac users should build from source or use the CLI installation).*
+The desktop app runs on Apple Silicon (M-series) Macs. Intel users should build from source or use the CLI installation below.
 
-With [Homebrew](https://brew.sh):
+The easiest way in is [Homebrew](https://brew.sh):
 
 ```bash
 brew install --cask superposed-labs/tap/fluxion
 ```
 
-The cask downloads the same Release DMG and removes the quarantine flag for
-you, so no Gatekeeper steps are needed. The app is still unsigned — see below.
+The cask clears the quarantine flag for you, so there are no Gatekeeper
+steps — just launch it. Update later with `brew upgrade --cask fluxion`.
 
-The current prebuilt DMG is unsigned and not notarized. On first launch, macOS
-Gatekeeper may block it because Apple cannot verify the developer. If you
-downloaded it from the official [GitHub Releases](https://github.com/superposed-labs/fluxion-bus/releases) and verified `SHA256SUMS`, open
-it without Terminal by trying once, then going to **System Settings -> Privacy
-& Security**, finding the Fluxion warning near the bottom, and clicking **Open
-Anyway** before launching it again. If you're comfortable with the command
-line, you can instead remove the quarantine flag directly:
+**No Homebrew?** Download the `Fluxion.app` DMG from the [latest Release](https://github.com/superposed-labs/fluxion-bus/releases/latest) (verify it against `SHA256SUMS`) and drag it into `/Applications`. The app is unsigned and not notarized, so Gatekeeper blocks the first launch: either open **System Settings → Privacy & Security** and click **Open Anyway**, or run the command below to clear quarantine yourself:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Fluxion.app
