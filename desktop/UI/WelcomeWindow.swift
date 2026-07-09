@@ -35,6 +35,7 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private var keychainSwitch: NSSwitch?
     private var weeklySwitch: NSSwitch!
+    private var autoUpdateSwitch: NSSwitch?
     private var displaySegmented: NSSegmentedControl!
     private var displayHintLabel: NSTextField!
     private var executorPopup: NSPopUpButton?
@@ -134,7 +135,9 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         let content = makeContentStack()
         content.addArrangedSubview(buildHeader())
         addSection(title: L10n.tr("welcome.section.detection"), rows: buildDetectionRows(), into: content)
-        addSection(title: L10n.tr("welcome.section.alerts"), rows: [buildWeeklyRow()], into: content)
+        var alertRows: [NSView] = [buildWeeklyRow()]
+        if let autoUpdateRow = buildAutoUpdateRow() { alertRows.append(autoUpdateRow) }
+        addSection(title: L10n.tr("welcome.section.alerts"), rows: alertRows, into: content)
         addSection(title: L10n.tr("welcome.section.display"), rows: [buildDisplayRow()], into: content)
         addSection(title: L10n.tr("welcome.section.more"), rows: buildMoreRows(), into: content)
         pinContentWidths(content)
@@ -412,7 +415,7 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         })
     }
 
-    private func showSetupFailure(_ fullOutput: String) {
+    func showSetupFailure(_ fullOutput: String) {
         setupSpinner?.stopAnimation(nil)
         setupStatusLabel?.textColor = .systemRed
         setupStatusLabel?.stringValue = L10n.tr("repository.install.failed.title")
@@ -555,12 +558,30 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private func buildWeeklyRow() -> NSView {
         weeklySwitch = NSSwitch()
-        weeklySwitch.state = .on
+        // Opt-in: off by default so a fresh install never schedules reminders
+        // unless the user turns them on here.
+        weeklySwitch.state = .off
         return CardRow(
             title: L10n.tr("welcome.weekly.title"),
             desc: L10n.tr("welcome.weekly.desc"),
             control: weeklySwitch,
             isFirst: true
+        )
+    }
+
+    /// Auto-update opt-in — shown only in distribution builds where the
+    /// updater is configured. Default off; the user must turn it on here (or in
+    /// Preferences) before any background check runs. Persisted by "Get Started".
+    private func buildAutoUpdateRow() -> NSView? {
+        guard appDelegate.updaterController?.isConfigured == true else { return nil }
+        let sw = NSSwitch()
+        sw.state = .off
+        autoUpdateSwitch = sw
+        return CardRow(
+            title: L10n.tr("preferences.auto_update"),
+            desc: L10n.tr("preferences.auto_update.desc"),
+            control: sw,
+            isFirst: false
         )
     }
 
@@ -772,6 +793,11 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         updates["FLUXION_MENU_APPEARANCE"] = displaySegmented.selectedSegment == 1 ? "rich" : "native"
 
         appDelegate.saveEnv(updates: updates)
+
+        if let autoUpdateSwitch = autoUpdateSwitch {
+            appDelegate.updaterController?.automaticallyChecksForUpdates =
+                (autoUpdateSwitch.state == .on)
+        }
 
         if weeklySwitch.state == .on {
             appDelegate.ensureNotificationPermission()

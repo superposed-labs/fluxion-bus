@@ -266,6 +266,7 @@ extension NotchIslandView {
         )
     }
 
+    @ViewBuilder
     var peekView: some View {
         let isBoth = model.peekReset == "both"
         // Fill the tray width and distribute the side slack across Spacers: one
@@ -276,10 +277,17 @@ extension NotchIslandView {
         // 11pt floor (the old fixed gap), so when there's little slack (3
         // providers) the layout matches the previous spacing instead of
         // cramping the dividers or overflowing.
-        return HStack(alignment: isBoth ? .top : .bottom, spacing: 0) {
-            Spacer(minLength: 0)
-            peekSegments(isBoth: isBoth)
-            Spacer(minLength: 0)
+        VStack(spacing: 3) {
+            HStack(alignment: isBoth ? .top : .bottom, spacing: 0) {
+                Spacer(minLength: 0)
+                peekSegments(isBoth: isBoth)
+                Spacer(minLength: 0)
+            }
+            if model.isUpgradingBackend {
+                Text(L10n.tr("menu.updating_components"))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.white.opacity(0.6))
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)

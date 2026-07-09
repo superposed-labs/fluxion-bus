@@ -474,7 +474,11 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     @objc func checkForUpdates() {
         // User-initiated check. Sparkle presents the full UI itself — progress,
         // "you're up to date", or the new-version prompt with download/install.
-        appDelegate.updaterController.checkForUpdates(nil)
+        appDelegate.updaterController.checkForUpdates()
+    }
+
+    @objc func toggleAutoUpdate(_ sender: NSSwitch) {
+        appDelegate.updaterController?.automaticallyChecksForUpdates = (sender.state == .on)
     }
 
     @objc func checkAvailability() {

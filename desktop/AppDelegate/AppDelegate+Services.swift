@@ -112,15 +112,26 @@ extension AppDelegate {
     }
 
     func restartServices(patterns: [String]) {
+        stopServices(patterns: patterns)
+        Thread.sleep(forTimeInterval: 0.2)
+        startServicesIfNeeded()
+    }
+
+    /// Stop the given services and block until they are actually gone. Also
+    /// used on its own before a backend install/upgrade swaps the source tree:
+    /// a surviving service would keep executing the replaced code, and the
+    /// pgrep-based autostart would then skip (not restart) it. Blocks up to
+    /// ~6s, so call it off the main thread.
+    func stopServices(patterns: [String]) {
         // Ask the services to exit (SIGTERM — the daemons handle it gracefully).
         for pattern in patterns {
             signalProcesses(pattern: pattern, signal: nil)  // default TERM
         }
 
-        // Wait until they're actually gone before respawning. Graceful shutdown
-        // can take up to a tick, and startServicesIfNeeded() skips any service
-        // it still sees running — so a fixed sleep here used to leave a service
-        // dead when shutdown outran it. Poll instead, then force-kill stragglers.
+        // Wait until they're actually gone. Graceful shutdown can take up to a
+        // tick, and startServicesIfNeeded() skips any service it still sees
+        // running — so a fixed sleep here used to leave a service dead when
+        // shutdown outran it. Poll instead, then force-kill stragglers.
         let deadline = Date().addingTimeInterval(6.0)
         while Date() < deadline && patterns.contains(where: { isProcessRunning(pattern: $0) }) {
             Thread.sleep(forTimeInterval: 0.2)
@@ -128,9 +139,6 @@ extension AppDelegate {
         for pattern in patterns where isProcessRunning(pattern: pattern) {
             signalProcesses(pattern: pattern, signal: "KILL")
         }
-        Thread.sleep(forTimeInterval: 0.2)
-
-        startServicesIfNeeded()
     }
 
     /// pkill helper. `signal` is a name like "KILL"; nil sends the default TERM.

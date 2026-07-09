@@ -265,6 +265,11 @@
 "repository.python_required.download" = "python.org を開く";
 "preferences.update.title" = "アップデートを確認";
 "preferences.update.latest" = "Fluxion の最新バージョン（%@）を実行中です。";
+"preferences.check_updates" = "アップデートを確認";
+"preferences.auto_update" = "アップデートを自動的に確認";
+"preferences.auto_update.desc" = "Fluxion がバックグラウンドで確認して通知します。確認なしにインストールすることはありません。";
+"update.available.title" = "アップデートがあります";
+"update.available.body" = "Fluxion %@ が利用可能です。Fluxion を開いてインストールしてください。";
 "preferences.python_missing.title" = "Fluxion Python 環境が見つかりません";
 "preferences.python_missing.message" = "想定されるプロジェクト仮想環境:\n%@";
 "preferences.repository_changed.title" = "リポジトリを変更しました";
@@ -408,3 +413,5 @@
 "welcome.setup.copy_log" = "ログをコピー";
 "welcome.executor.title" = "デフォルトエージェント";
 "welcome.executor.desc" = "指定がない場合、新しいタスクはこのエージェントで実行されます。プロジェクトや会話ごとに変更できます。";
+"menu.updating_components" = "コンポーネントを更新中...";
+

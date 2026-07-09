@@ -53,6 +53,17 @@ plutil -replace CFBundleVersion -string "$BUILD_NUM" "$APP/Contents/Info.plist"
 if [ -n "$SHORT_VERSION" ]; then
     plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" "$APP/Contents/Info.plist"
 fi
+
+# Sparkle auto-update is enabled only for official distribution builds. Dev and
+# self-compiled builds ship without the feed URL so the updater stays inert and
+# never offers to replace a locally built app with the official binary.
+# package-macos-app.sh sets FLUXION_ENABLE_SPARKLE=1.
+if [ "${FLUXION_ENABLE_SPARKLE:-0}" = "1" ]; then
+    echo "Sparkle auto-update: enabled (distribution build)"
+else
+    echo "Sparkle auto-update: disabled (dev build; stripping SUFeedURL)"
+    plutil -remove SUFeedURL "$APP/Contents/Info.plist" 2>/dev/null || true
+fi
 cp desktop/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 find desktop/Resources -maxdepth 1 -name "*.lproj" -type d -exec cp -R {} "$APP/Contents/Resources/" \;
 mkdir -p "$APP/Contents/Resources/Scripts"
@@ -92,13 +103,26 @@ ditto "$SPARKLE_FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 # local junk (.venv, data, untracked experiments) out of the distributed app.
 # Outside a git checkout the snapshot is skipped and the bootstrap script
 # falls back to the git-based installer.
+#
+# The REVISION marker (the last commit touching backend paths) is what makes an
+# installed app silently upgrade the managed backend to match its snapshot — so
+# only distribution builds write it. A dev or self-compiled app carrying its own
+# ad-hoc revision would otherwise fight the official install (and other local
+# builds) over ~/.local/share/fluxion, reinstalling the backend on every launch
+# of a differently-built app. Mirrors the Sparkle gating above; override with
+# FLUXION_DISTRIBUTION=0/1.
+FLUXION_DISTRIBUTION="${FLUXION_DISTRIBUTION:-${FLUXION_ENABLE_SPARKLE:-0}}"
 BACKEND_DIR="$APP/Contents/Resources/Backend"
 if git rev-parse HEAD >/dev/null 2>&1; then
     echo "Bundling backend source snapshot..."
     mkdir -p "$BACKEND_DIR"
     git archive --format=tar.gz --prefix=fluxion/ \
         -o "$BACKEND_DIR/backend.tar.gz" HEAD
-    git rev-parse HEAD > "$BACKEND_DIR/REVISION"
+    if [ "$FLUXION_DISTRIBUTION" = "1" ]; then
+        git log -1 --format=%H -- src/fluxion pyproject.toml scripts web > "$BACKEND_DIR/REVISION"
+    else
+        echo "Dev build: skipping Backend/REVISION (no silent backend upgrades)"
+    fi
 elif [ "${FLUXION_BUNDLE_WHEELS:-0}" = "1" ]; then
     echo "error: FLUXION_BUNDLE_WHEELS=1 requires a git checkout to snapshot the backend" >&2
     exit 1
@@ -156,6 +180,7 @@ swiftc -O \
     desktop/AppDelegate/AppDelegate+Polling.swift \
     desktop/AppDelegate/AppDelegate+Rendering.swift \
     desktop/UI/Localization.swift \
+    desktop/UI/UpdaterController.swift \
     desktop/UI/QuotaFormatter.swift \
     desktop/UI/Theme.swift \
     desktop/UI/CardViews.swift \

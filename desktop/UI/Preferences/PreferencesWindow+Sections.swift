@@ -338,7 +338,22 @@ extension PreferencesWindow {
         quitBtn.target = self
         quitBtn.action = #selector(quitApp)
 
-        let actionStack = NSStackView(views: [quitBtn])
+        // Manual "Check for Updates" — shown only in distribution builds where
+        // the updater is actually configured (dev builds leave it inert).
+        var footerButtons: [NSView] = []
+        if appDelegate.updaterController?.isConfigured == true {
+            let updateBtn = TxtButton()
+            updateBtn.title = L10n.tr("preferences.check_updates")
+            updateBtn.isBordered = false
+            updateBtn.translatesAutoresizingMaskIntoConstraints = false
+            updateBtn.target = self
+            updateBtn.action = #selector(checkForUpdates)
+            updateBtn.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            footerButtons.append(updateBtn)
+        }
+        footerButtons.append(quitBtn)
+
+        let actionStack = NSStackView(views: footerButtons)
         actionStack.orientation = .horizontal
         actionStack.spacing = 6
         actionStack.alignment = .centerY
@@ -1056,7 +1071,26 @@ extension PreferencesWindow {
             isFirst: true
         )
 
-        addSection(title: L10n.tr("preferences.section.startup"), rows: [launchAtLoginRow], into: documentStack)
+        var startupRows: [NSView] = [launchAtLoginRow]
+
+        // Auto-update toggle — only in distribution builds where the updater is
+        // configured. Off = no background checks (manual "Check for Updates"
+        // only); on = gentle background checks. Never installs without asking.
+        if appDelegate.updaterController?.isConfigured == true {
+            let autoUpdateSwitch = NSSwitch()
+            autoUpdateSwitch.state =
+                appDelegate.updaterController.automaticallyChecksForUpdates ? .on : .off
+            autoUpdateSwitch.target = self
+            autoUpdateSwitch.action = #selector(toggleAutoUpdate(_:))
+            startupRows.append(CardRow(
+                title: L10n.tr("preferences.auto_update"),
+                desc: L10n.tr("preferences.auto_update.desc"),
+                control: autoUpdateSwitch,
+                isFirst: false
+            ))
+        }
+
+        addSection(title: L10n.tr("preferences.section.startup"), rows: startupRows, into: documentStack)
     }
 
     // MARK: - Section 11: Fluxion Repository

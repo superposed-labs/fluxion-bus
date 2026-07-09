@@ -132,10 +132,10 @@ enum PollingConfig {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     var statusItem: NSStatusItem!
     var statusMenu: NSMenu!
-    // Sparkle in-app updater. Created in applicationDidFinishLaunching so
-    // scheduled background checks start on launch; also backs the
-    // "Check for Updates" action in Preferences.
-    var updaterController: SPUStandardUpdaterController!
+    // In-app updater (Sparkle, wrapped). Created in applicationDidFinishLaunching.
+    // Inert in dev / self-compiled builds; active only in official distribution
+    // builds. Backs the "Check for Updates" action and the auto-check toggle.
+    var updaterController: UpdaterController!
     var richMenuWindow: NSPanel?
     var richMenuEventMonitor: Any?
     var lastRichMenuCloseTime: TimeInterval = 0
@@ -150,6 +150,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     // Internal (not `private(set)`) so that resolver, now in a separate file,
     // can write it — Swift's `private` is file-scoped.
     var repoPath: String = ""
+    var isUpgradingBackend: Bool = false
+    /// Latest bootstrap output line during a silent upgrade, surfaced under the
+    /// "updating components" dropdown entry so a long reinstall visibly makes
+    /// progress instead of sitting on a static label.
+    var upgradeStatusLine: String = ""
+    /// The live "updating components" menu item, updated in place on each
+    /// progress line — an open NSMenu tracks title changes, and
+    /// rebuildDropdown only runs when the menu (re)opens. Weak: the menu owns it.
+    weak var upgradeMenuItem: NSMenuItem?
 
     /// Latest decoded providers held in memory. This is the single source of
     /// truth for rendering — disk is only read when the cache file changes.
@@ -171,6 +180,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     // Dynamic background polling based on screen state and activity.
     var monitorTimer: Timer?
     var isScreenActive: Bool = true
+    var terminationSignalSources: [DispatchSourceSignal] = []
+    var didPrepareForTermination = false
 
     // Hybrid refresh state.
     var lastClaudeHistoryMtime: Date?
@@ -253,6 +264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         registerNotificationCategories()
+        installTerminationSignalHandlers()
 
         guard resolveRepositoryPath() else {
             NSApp.terminate(nil)
@@ -269,17 +281,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         // Preferences inputs with Cmd+V did nothing while typing still worked.
         setupMainMenu()
 
-        // Start the Sparkle updater. `startingUpdater: true` begins the
-        // scheduled background checks configured in Info.plist (SUFeedURL,
-        // SUPublicEDKey, SUScheduledCheckInterval); Sparkle presents its own
-        // update UI when a newer version is published.
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        // Start the updater. It stays inert unless this build has an SUFeedURL
+        // (official distribution builds only). It never installs silently, and
+        // scheduled reminders are gentle (a notification, not a modal).
+        updaterController = UpdaterController()
 
         loadEnv()
         reloadCacheFromDisk()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = NSStatusItem.AutosaveName("FluxionStatusItem")
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -290,7 +301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
             notchWindowController = NotchWindowController()
             notchWindowController?.show()
         }
-        
+
         render()
         let backendReady = showSetupWarningIfNeeded()
         guard backendReady else {
@@ -317,6 +328,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     /// onboarding. Called at launch when the backend is already installed,
     /// and again after an in-app backend install completes.
     func startRuntimeAfterBackendReady(onboarding: OnboardingPresentation) {
+        if isSilentUpgradeNeeded() {
+            isUpgradingBackend = true
+            let cached = filteredProviders()
+            notchWindowController?.model.providers = cached
+            notchWindowController?.setUpgradingBackend(true)
+            if let menu = statusMenu {
+                rebuildDropdown(menu)
+            }
+            render()
+            NSLog("FluxionMenu: Starting silent backend upgrade...")
+            // Services that survived a crashed session would keep executing the
+            // old (deleted) source tree after the swap, and the pgrep-based
+            // autostart would then skip them — stop them first; the normal
+            // post-upgrade startup below brings them back on the new code.
+            let patterns = serviceProcessPatterns
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.stopServices(patterns: patterns)
+                DispatchQueue.main.async { [weak self] in
+                    self?.bootstrapBackend(progress: { [weak self] line in
+                        self?.updateUpgradeProgress(line)
+                    }) { [weak self] ok, output in
+                        guard let self = self else { return }
+                        self.isUpgradingBackend = false
+                        self.upgradeStatusLine = ""
+                        self.notchWindowController?.setUpgradingBackend(false)
+                        if ok {
+                            NSLog("FluxionMenu: Silent backend upgrade completed successfully.")
+                            self.loadEnv()
+                            if let menu = self.statusMenu {
+                                self.rebuildDropdown(menu)
+                            }
+                            self.startRuntimeAfterBackendReady(onboarding: .suppress)
+                        } else {
+                            NSLog("FluxionMenu: Silent backend upgrade failed: %@", output)
+                            WelcomeWindow.shared.showBackendSetup()
+                            WelcomeWindow.shared.showSetupFailure(output)
+                        }
+                    }
+                }
+            }
+            return
+        }
+
         // Seed initial cached data and local file timestamps.
         seedInitialCachedProviders()
         seedActivityTimestamps()
@@ -370,8 +424,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        prepareForTermination()
+    }
+
+    func installTerminationSignalHandlers() {
+        guard terminationSignalSources.isEmpty else { return }
+
+        for signalNumber in [SIGTERM, SIGINT] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.prepareForTermination()
+                NSApp.terminate(nil)
+            }
+            source.resume()
+            terminationSignalSources.append(source)
+        }
+    }
+
+    func prepareForTermination() {
+        guard !didPrepareForTermination else { return }
+        didPrepareForTermination = true
+
         stopNotificationWatcher()
         stopCacheWatcher()
+        spinnerTimer?.invalidate()
+        spinnerTimer = nil
+        monitorTimer?.invalidate()
+        monitorTimer = nil
+        if let statusItem = statusItem {
+            statusItem.isVisible = false
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
         for pattern in serviceProcessPatterns {
             signalProcesses(pattern: pattern, signal: nil)
         }
