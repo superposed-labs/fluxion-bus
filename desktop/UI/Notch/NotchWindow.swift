@@ -45,6 +45,11 @@ struct CollapsedContentWidthKey: PreferenceKey {
 // classify windows the same way. The view's windowKind/windowTag methods
 // delegate here.
 func notchWindowKind(_ window: QuotaWindow) -> QuotaWindowKind? {
+    // Scoped sub-limits never classify as 5h/weekly: activeWindow picks the
+    // least-remaining window per kind, so a spent model cap (Fable at 0%)
+    // would otherwise hijack the weekly slot and lock the whole card. They
+    // render as their own rows instead (scopedWindows / scopedQuotaRow).
+    if window.isScoped { return nil }
     let hay = "\((window.key ?? "").lowercased()) \((window.label ?? "").lowercased())"
     if hay.contains("5h") || hay.contains("5-hour") || hay.contains("5 hour") {
         return .fiveHour
@@ -301,6 +306,7 @@ struct NotchIslandView: View {
     }
     func getActive5hWindow(for provider: ProviderUsage) -> QuotaWindowSnapshot? { quota.getActive5hWindow(for: provider) }
     func getActiveWeeklyWindow(for provider: ProviderUsage) -> QuotaWindowSnapshot? { quota.getActiveWeeklyWindow(for: provider) }
+    func scopedWindows(for provider: ProviderUsage) -> [QuotaWindowSnapshot] { quota.scopedWindows(for: provider) }
     func getCredits(for provider: ProviderUsage) -> Double? { quota.getCredits(for: provider) }
     func quotaState(for provider: ProviderUsage) -> ProviderQuotaState { quota.quotaState(for: provider) }
     func isSubscription(for provider: ProviderUsage) -> Bool { quota.isSubscription(for: provider) }

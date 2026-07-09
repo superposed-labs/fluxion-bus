@@ -253,7 +253,50 @@ class ClaudeUsageProbe:
                 continue
             windows.append(UsageWindow(key=key, label=label, used_percent=used, resets_at=resets))
 
+        # Model-scoped caps (e.g. the Fable weekly cap) only arrive in the
+        # generic `limits` array. Unscoped entries there duplicate the
+        # top-level windows, so only scoped ones become windows of their own,
+        # slotted right after the weekly window they subdivide.
+        limits = data.get("limits")
+        if isinstance(limits, list):
+            insert_at = next((i + 1 for i, w in enumerate(windows) if w.key == "7d"), len(windows))
+            for limit in limits:
+                window = self._scoped_limit_window(limit)
+                if window is not None:
+                    windows.insert(insert_at, window)
+                    insert_at += 1
+
         return windows
+
+    @staticmethod
+    def _scoped_limit_window(limit: Any) -> UsageWindow | None:
+        """A `limits[]` entry as a UsageWindow, or None for unscoped entries.
+
+        Weekly-scoped only: the API has no other scoped kind today, and a
+        hypothetical session-scoped entry would trip the schedulers'
+        5h-window heuristics. The "scoped_" key prefix is the contract the
+        desktop/web UIs use to tell sub-limits from account-wide windows.
+        """
+        if not isinstance(limit, dict):
+            return None
+        if not isinstance(limit.get("scope"), dict) or limit.get("group") != "weekly":
+            return None
+        label = _find_first(limit["scope"], {"display_name", "displayName"})
+        if not isinstance(label, str) or not label.strip():
+            return None
+        label = label.strip()
+        used = _normalize_percent(limit.get("percent"))
+        resets = _normalize_reset(limit.get("resets_at"))
+        if used is None and resets is None:
+            return None
+        slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "model"
+        return UsageWindow(
+            key=f"scoped_{slug}",
+            label=label,
+            used_percent=used,
+            resets_at=resets,
+            window_minutes=10080,
+        )
 
     def _account_label(self, data: dict[str, Any]) -> str:
         label = _find_first(data, {"subscription_type", "subscriptionType", "plan", "plan_type"})

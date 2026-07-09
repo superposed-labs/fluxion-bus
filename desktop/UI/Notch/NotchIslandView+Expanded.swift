@@ -277,11 +277,21 @@ extension NotchIslandView {
         // rather than a fixed per-state reserve, so 1-line notes / no-footer
         // states don't leave dead space below the bars. The ring above stays in
         // its own fixed frame, so this never shifts ring/bar alignment.
+        let scopedRows = scopedWindows(for: provider)
         VStack(spacing: 0) {
             if useAntigravityRows {
                 antigravityWeeklyRows(weeklyPools, state: state, visual: visual)
             } else {
                 regularQuotaRows(state: state, visual: visual)
+            }
+
+            if !scopedRows.isEmpty {
+                VStack(spacing: 7) {
+                    ForEach(Array(scopedRows.enumerated()), id: \.offset) { _, row in
+                        scopedQuotaRow(row, visual: visual)
+                    }
+                }
+                .padding(.top, 7)
             }
 
             quotaFooterBand(
@@ -434,6 +444,54 @@ extension NotchIslandView {
                 }
             }
             .foregroundColor(textColor)
+
+            quotaProgressBar(remaining: snapshot.remaining, color: barColor)
+        }
+    }
+
+    /// A model-scoped sub-limit (e.g. Claude's Fable weekly cap), in the same
+    /// visual language as antigravityWeeklyRow: model name + WK chip + percent
+    /// + timer + its own bar. When spent, the row reads red with a lock glyph
+    /// counting down the weekly reset — the card itself stays healthy because
+    /// scoped windows never enter the 5h/weekly classification.
+    @ViewBuilder
+    func scopedQuotaRow(_ snapshot: QuotaWindowSnapshot, visual: ProviderVisual) -> some View {
+        let depleted = snapshot.remaining <= 0
+        let barColor = depleted ? Color(NSColor.systemRed) : Color(visual.brandColor)
+        let chipColor = depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.54)
+        VStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                HStack(spacing: 5) {
+                    Text((snapshot.window.label ?? "MODEL").uppercased())
+                        .font(.system(size: 10.5, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.54))
+                    Text("WK")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .tracking(0.4)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(chipColor.opacity(0.16))
+                        .cornerRadius(4)
+                        .foregroundColor(chipColor.opacity(0.92))
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                Text("\(Int(snapshot.remaining))%")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.9))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 8)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Image(systemName: depleted ? "lock.fill" : (snapshot.idle ? "moon.zzz.fill" : "clock"))
+                        .font(.system(size: 9))
+                        .opacity(depleted ? 0.9 : (snapshot.idle ? 0.5 : 0.75))
+                    timerTextView(for: snapshot)
+                        .frame(minWidth: 56, alignment: .leading)
+                }
+            }
+            .foregroundColor(depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.58))
 
             quotaProgressBar(remaining: snapshot.remaining, color: barColor)
         }

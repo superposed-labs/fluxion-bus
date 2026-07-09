@@ -38,6 +38,25 @@
 .quota-reset { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-3); }
 .quota-note { font-size: 10.5px; color: var(--fg-3); font-style: italic; line-height: 1.5; }
 
+/* Model-scoped sub-limit (e.g. Fable weekly cap): indented child of the
+   weekly row, with an L-connector and a slimmer bar. */
+.quota-row.scoped { margin-left: 16px; position: relative; }
+.quota-row.scoped::before {
+  content: "";
+  position: absolute;
+  left: -11px; top: -6px;
+  width: 7px; height: 14px;
+  border-left: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+.quota-row.scoped .quota-bar { height: 4px; }
+.quota-scoped-chip {
+  font-family: var(--font-mono); font-size: 8.5px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--st-failed);
+  border: 1px solid currentColor; border-radius: 999px;
+  padding: 0 5px; margin-left: 6px; vertical-align: 1px;
+}
+
 /* Session timeline */
 .session-key {
   font-family: var(--font-mono);
@@ -200,6 +219,9 @@
 .excard .quota-win {
   color: var(--fg-2);
   letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .excard .quota-track {
   position: relative;

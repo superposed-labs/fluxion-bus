@@ -129,6 +129,16 @@ struct NotchQuotaPresenter {
         activeWindow(for: provider, kind: .fiveHour)
     }
 
+    /// Model-scoped weekly caps (e.g. Claude's Fable cap), for rendering as
+    /// their own rows below the regular windows. Excluded from 5h/weekly
+    /// classification (notchWindowKind returns nil for them), so a spent cap
+    /// can't lock the card — it reads as blocked on its own row only.
+    func scopedWindows(for provider: ProviderUsage) -> [QuotaWindowSnapshot] {
+        provider.windows
+            .filter { $0.isScoped }
+            .compactMap { snapshot(for: $0, kind: .weekly, fetchedAt: provider.fetchedAt) }
+    }
+
     func getActiveWeeklyWindow(for provider: ProviderUsage) -> QuotaWindowSnapshot? {
         activeWindow(for: provider, kind: .weekly)
     }

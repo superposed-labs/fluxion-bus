@@ -468,8 +468,9 @@ extension AppDelegate {
         for p in filtered where p.status == "ok" {
             for w in p.windows {
                 let name = menuQuotaWindowLabel(w, provider: p.provider)
-                if name.count > maxNameLen {
-                    maxNameLen = name.count
+                let wLen = self.visualWidth(name)
+                if wLen > maxNameLen {
+                    maxNameLen = wLen
                 }
             }
         }
@@ -588,8 +589,8 @@ extension AppDelegate {
                     let bar = self.barStr(used: u)
 
                     // Pad displayName to align dynamically without truncation
-                    let paddedName = displayName.padding(toLength: maxNameLen, withPad: " ", startingAt: 0)
-                    let paddedLeft = leftPct.padding(toLength: 9, withPad: " ", startingAt: 0)
+                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
+                    let paddedLeft = self.padString(leftPct, toVisualLength: 9)
                     let prefix = "  \(paddedName) \(bar)  \(paddedLeft)  "
                     let prefixWidth = 2 + maxNameLen + 1 + 10 + 2 + 9 + 2
                     let targetWidth = maxNameLen + 34
@@ -656,7 +657,7 @@ extension AppDelegate {
                     resetsItem.image = self.imageForSymbol("arrow.counterclockwise", color: itemColor)
                     
                     let displayName = L10n.tr("menu.resets")
-                    let paddedName = displayName.padding(toLength: maxNameLen, withPad: " ", startingAt: 0)
+                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
                     let availableText = L10n.tr("menu.resets.available.compact", resets.count)
                     
                     let infoPart = soon
@@ -701,7 +702,9 @@ extension AppDelegate {
 
     // MARK: - Helper Formatting
     func headline(_ p: ProviderUsage) -> Double? {
-        let used = p.windows.compactMap { $0.usedPercent }
+        // Scoped sub-limits only block one model, so the headline keeps
+        // meaning "account-wide worst window" and skips them.
+        let used = p.windows.filter { !$0.isScoped }.compactMap { $0.usedPercent }
         return used.max()
     }
 
@@ -724,6 +727,15 @@ extension AppDelegate {
             }
         }
         return w
+    }
+
+    func padString(_ str: String, toVisualLength targetLen: Int) -> String {
+        let currentLen = visualWidth(str)
+        if currentLen >= targetLen {
+            return str
+        }
+        let paddingCount = targetLen - currentLen
+        return str + String(repeating: " ", count: paddingCount)
     }
 
     func resetPhrase(window: QuotaWindow, fetchedAt: String?) -> String {
@@ -856,6 +868,11 @@ extension AppDelegate {
     }
 
     func compactQuotaWindowLabel(_ w: QuotaWindow) -> String {
+        // Scoped sub-limits keep their model name — collapsing them into
+        // "Weekly" would make them indistinguishable from the weekly row.
+        if w.isScoped {
+            return "\(w.label ?? "Model") · wk"
+        }
         let raw = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
             return L10n.tr("preferences.notch.weekly")
