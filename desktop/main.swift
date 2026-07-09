@@ -57,6 +57,14 @@ struct QuotaWindow: Codable {
         case resetsAt = "resets_at"
         case windowMinutes = "window_minutes"
     }
+
+    /// Model-scoped sub-limit (e.g. Claude's Fable weekly cap). The "scoped_"
+    /// key prefix is the probe's contract for windows that subdivide an
+    /// account-wide window: they only block one model, so they never drive
+    /// provider-level aggregates (menu-bar headline, notch 5h/weekly picks).
+    var isScoped: Bool {
+        (key ?? "").hasPrefix("scoped_")
+    }
 }
 
 struct AvailabilityEntry: Codable {

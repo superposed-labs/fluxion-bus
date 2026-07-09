@@ -19,6 +19,12 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
+// Model-scoped sub-limits (e.g. Claude's Fable weekly cap) — carved out of the
+// weekly window, rendered as an indented child row rather than a peer window.
+function isScopedWindow(w: UsageWindow): boolean {
+  return w.key.startsWith("scoped_");
+}
+
 interface UsageRailProps {
   usage: ProviderUsage[];
 }
@@ -76,6 +82,7 @@ function fmtCount(n: number): string {
 function QuotaWindowRow({ w }: { w: UsageWindow }): JSX.Element {
   const { t } = useI18n();
   const used = w.used_percent;
+  const scoped = isScopedWindow(w);
 
   // Pure credit balance (Antigravity AI Credits): a raw count, no bar/clock.
   if (used == null && w.total == null && w.remaining != null) {
@@ -100,9 +107,12 @@ function QuotaWindowRow({ w }: { w: UsageWindow }): JSX.Element {
       ? "—"
       : `${Math.round(remainingPct)}% ${t("common.left")}`;
   return (
-    <div className="quota-row">
+    <div className={scoped ? "quota-row scoped" : "quota-row"}>
       <div className="quota-row-top">
-        <span className="quota-w-label">{w.label}</span>
+        <span className="quota-w-label">
+          {w.label}
+          {scoped && usedNum >= 100 ? <span className="quota-scoped-chip">{t("rail.scopedCapped")}</span> : null}
+        </span>
         <span className="quota-w-left">{rightLabel}</span>
       </div>
       <div className="quota-bar" title={remainingPct == null ? t("common.unknown") : `${Math.round(remainingPct)}% ${t("common.remaining")}`}>

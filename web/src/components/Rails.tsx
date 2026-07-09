@@ -128,6 +128,8 @@ function clampPct(n: number): number {
 function getShortLabel(label: string, key: string): string {
   const lbl = (label || "").toLowerCase();
   const k = (key || "").toLowerCase();
+  // Model-scoped sub-limits carry the model name as their label ("Fable").
+  if (k.startsWith("scoped_")) return label || key;
   if (lbl.includes("5-hour") || lbl.includes("5h") || k.includes("5h")) return "5h";
   if (
     lbl.includes("weekly") ||

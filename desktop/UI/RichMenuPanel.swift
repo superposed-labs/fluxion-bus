@@ -917,6 +917,10 @@ final class RichMenuPanelView: NSView {
     }
 
     private func richWindowLabel(_ w: QuotaWindow) -> String {
+        // Scoped sub-limits reuse Antigravity's "<Model> · wk" language.
+        if w.isScoped {
+            return "\(w.label ?? "Model") · wk"
+        }
         let raw = w.label ?? w.key ?? "Quota"
         let lower = raw.lowercased()
         if lower.contains("gemini") && (lower.contains("weekly") || lower.contains("week")) {
@@ -935,6 +939,9 @@ final class RichMenuPanelView: NSView {
     }
 
     private func compactQuotaWindowLabel(_ w: QuotaWindow) -> String {
+        if w.isScoped {
+            return richWindowLabel(w)
+        }
         let raw = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
             return L10n.tr("preferences.notch.weekly")

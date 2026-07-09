@@ -291,6 +291,60 @@ def test_claude_maps_windows(monkeypatch):
     assert by_key["7d"].used_percent == 13.0
 
 
+def test_claude_maps_scoped_weekly_limit(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 67.0, "resets_at": "2026-07-08T04:30:00+00:00"},
+        "seven_day": {"utilization": 98.0, "resets_at": "2026-07-08T21:00:00+00:00"},
+        "seven_day_oauth_apps": {"utilization": 5.0, "resets_at": "2026-07-09T12:00:00+00:00"},
+        "limits": [
+            # Unscoped entries duplicate the top-level windows: skipped.
+            {"kind": "session", "group": "session", "percent": 67, "scope": None},
+            {"kind": "weekly_all", "group": "weekly", "percent": 98, "scope": None},
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 100,
+                "severity": "critical",
+                "resets_at": "2026-07-08T21:00:00+00:00",
+                "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+                "is_active": True,
+            },
+        ],
+    }
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    usage = ClaudeUsageProbe(ProbeConfig(claude_usage_token="tok-123")).probe()
+
+    assert usage.status == STATUS_OK
+    # The scoped cap subdivides the weekly window, so it renders right after it.
+    assert [w.key for w in usage.windows] == ["5h", "7d", "scoped_fable", "agent_sdk"]
+    fable = usage.windows[2]
+    assert fable.label == "Fable"
+    assert fable.used_percent == 100.0
+    assert fable.resets_at == "2026-07-08T21:00:00+00:00"
+    assert fable.window_minutes == 10080
+
+
+def test_claude_ignores_session_scoped_limits(monkeypatch):
+    # A hypothetical session-scoped cap must not become a window: the
+    # schedulers' 5h heuristics would mistake it for the account 5h window.
+    payload = {
+        "five_hour": {"utilization": 10.0, "resets_at": "2026-07-08T04:30:00+00:00"},
+        "limits": [
+            {
+                "kind": "session_scoped",
+                "group": "session",
+                "percent": 50,
+                "resets_at": "2026-07-08T04:30:00+00:00",
+                "scope": {"model": {"display_name": "Fable"}},
+            },
+        ],
+    }
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    usage = ClaudeUsageProbe(ProbeConfig(claude_usage_token="tok-123")).probe()
+
+    assert [w.key for w in usage.windows] == ["5h"]
+
+
 def test_claude_ignores_extra_usage_spend_cap(monkeypatch):
     payload = {
         "five_hour": {"utilization": 27.0, "resets_at": "2026-06-02T10:00:00+00:00"},
