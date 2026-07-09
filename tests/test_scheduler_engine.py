@@ -56,6 +56,18 @@ def _usage(
     ]
 
 
+def _step(rule, state, now, usage, tick_sec=60):
+    """Evaluate one tick, then mirror the daemon's post-eval baseline update
+    (``state.last_usage = observe_window(...)``) so multi-tick refresh scenarios
+    — including the two-observation debounce — can be driven from tests."""
+    decision = engine.evaluate_rule(rule, state, now, usage, tick_sec=tick_sec)
+    if rule.trigger.type == "quota_refresh":
+        obs = engine.observe_window(usage, rule.trigger.provider, rule.trigger.window_key)
+        if obs is not None:
+            state.last_usage = obs
+    return decision
+
+
 # --- cron ----------------------------------------------------------------
 
 
@@ -103,10 +115,13 @@ def test_refresh_baseline_does_not_fire():
 def test_refresh_fires_on_used_percent_cliff():
     rule = _refresh_rule()
     state = RuleState(last_usage={"used_percent": 92.0, "resets_at": None})
-    decision = engine.evaluate_rule(
-        rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=1.0), tick_sec=60
-    )
-    assert decision.fire
+    # First edge only arms the debounce latch; it must be confirmed next tick.
+    first = _step(rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=1.0))
+    assert not first.fire
+    assert "pending confirmation" in first.reason
+    # The drop persists on the following observation → confirmed fire.
+    second = _step(rule, state, _utc(2026, 6, 3, 9, 1), _usage(used=1.0))
+    assert second.fire
 
 
 def test_refresh_fires_on_reset_advance():
@@ -114,10 +129,44 @@ def test_refresh_fires_on_reset_advance():
     prev_reset = _utc(2026, 6, 3, 0, 0).isoformat()
     new_reset = _utc(2026, 6, 10, 0, 0).isoformat()
     state = RuleState(last_usage={"used_percent": 80.0, "resets_at": prev_reset})
-    decision = engine.evaluate_rule(
-        rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=80.0, resets_at=new_reset), tick_sec=60
+    first = _step(rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=80.0, resets_at=new_reset))
+    assert not first.fire
+    second = _step(rule, state, _utc(2026, 6, 3, 9, 1), _usage(used=80.0, resets_at=new_reset))
+    assert second.fire
+
+
+def test_refresh_glitch_reverting_next_poll_never_fires():
+    """A single-poll upstream glitch — the usage endpoint briefly serving a
+    stale "fresh window" snapshot that reverts on the next poll — must not fire.
+    Regression for Codex /wham/usage intermittently reporting 7d at ~1% with a
+    forward-jumped reset for one observation, then back to the real value."""
+    rule = _refresh_rule()
+    real_reset = _utc(2026, 6, 12, 0, 0).isoformat()
+    phantom_reset = _utc(2026, 6, 15, 0, 0).isoformat()
+    state = RuleState(
+        last_usage={
+            "used_percent": 72.0,
+            "resets_at": real_reset,
+            "observed_at": _utc(2026, 6, 3, 8, 59).isoformat(),
+        }
     )
-    assert decision.fire
+    # Glitch sample: looks like a reset (used 72→1, reset jumps forward).
+    glitch = _step(
+        rule,
+        state,
+        _utc(2026, 6, 3, 9, 0),
+        _usage(used=1.0, resets_at=phantom_reset, fetched_at=_utc(2026, 6, 3, 9, 0).isoformat()),
+    )
+    assert not glitch.fire
+    # Next poll reverts to the real value → the pending edge is discarded.
+    recovered = _step(
+        rule,
+        state,
+        _utc(2026, 6, 3, 9, 1),
+        _usage(used=72.0, resets_at=real_reset, fetched_at=_utc(2026, 6, 3, 9, 1).isoformat()),
+    )
+    assert not recovered.fire
+    assert state.pending_refresh is None
 
 
 def test_refresh_does_not_fire_when_future_reset_rolls_forward():
@@ -192,15 +241,15 @@ def test_refresh_fires_when_future_reset_jumps_to_new_window():
         }
     )
 
-    decision = engine.evaluate_rule(
-        rule,
-        state,
-        now,
-        _usage(used=5.0, resets_at=new_reset, fetched_at=now.isoformat()),
-        tick_sec=60,
+    first = _step(
+        rule, state, now, _usage(used=5.0, resets_at=new_reset, fetched_at=now.isoformat())
     )
-
-    assert decision.fire
+    assert not first.fire
+    later = now + timedelta(minutes=1)
+    second = _step(
+        rule, state, later, _usage(used=5.0, resets_at=new_reset, fetched_at=later.isoformat())
+    )
+    assert second.fire
 
 
 def test_refresh_rolling_estimate_suppressed_even_with_high_usage():
@@ -259,22 +308,14 @@ def test_refresh_fires_when_resets_at_cleared():
         }
     )
 
-    decision = engine.evaluate_rule(
-        rule,
-        state,
-        now,
-        _usage(
-            provider="claude",
-            window="5h",
-            used=0.0,
-            resets_at=None,
-            fetched_at=now.isoformat(),
-        ),
-        tick_sec=60,
+    cleared = _usage(
+        provider="claude", window="5h", used=0.0, resets_at=None, fetched_at=now.isoformat()
     )
-
-    assert decision.fire
-    assert "resets_at cleared" in decision.reason
+    first = _step(rule, state, now, cleared)
+    assert not first.fire
+    second = _step(rule, state, now + timedelta(minutes=1), cleared)
+    assert second.fire
+    assert "resets_at cleared" in second.reason
 
 
 def test_refresh_no_fire_on_small_change():
@@ -290,10 +331,10 @@ def test_refresh_fires_on_medium_drop_light_user():
     rule = _refresh_rule()
     # Drop from 30% to 5% (drop is 25% which is >= 20% margin, and current 5% <= 15% ceiling)
     state = RuleState(last_usage={"used_percent": 30.0, "resets_at": None})
-    decision = engine.evaluate_rule(
-        rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=5.0), tick_sec=60
-    )
-    assert decision.fire
+    first = _step(rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=5.0))
+    assert not first.fire
+    second = _step(rule, state, _utc(2026, 6, 3, 9, 1), _usage(used=5.0))
+    assert second.fire
 
 
 def test_refresh_no_fire_on_too_small_drop():

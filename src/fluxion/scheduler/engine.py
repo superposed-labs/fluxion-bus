@@ -57,7 +57,10 @@ def evaluate_rule(
     usage: list[ProviderUsage],
     tick_sec: int,
 ) -> FireDecision:
-    """Decide whether `rule` should fire at `now`. Pure: never mutates state."""
+    """Decide whether `rule` should fire at `now`. Read-only except for the
+    quota-refresh debounce latch (`state.pending_refresh`), which it advances so
+    a refresh edge must be confirmed on two consecutive observations before it
+    fires. The daemon still owns `last_usage`/`last_fired_at` bookkeeping."""
     if getattr(rule, "run_now", False):
         return FireDecision(True, "manual trigger")
 
@@ -116,6 +119,42 @@ def _eval_quota_refresh(
         # First observation only establishes a baseline; never fire blind.
         return FireDecision(False, "baseline established")
 
+    # Debounce: a refresh edge only fires once it has been confirmed on two
+    # consecutive observations. This filters upstream single-sample glitches
+    # (a provider usage endpoint intermittently serving a stale "fresh window"
+    # snapshot) that revert on the very next poll — they would otherwise look
+    # like a real reset for one poll and fire a false notification/ping. A
+    # genuine reset persists, so it still fires, just one poll (~1 tick) later.
+    pending = state.pending_refresh
+    if pending is not None:
+        baseline = pending.get("baseline")
+        confirm = (
+            _detect_refresh_edge(trigger, baseline, current)
+            if isinstance(baseline, dict)
+            else FireDecision(False, "")
+        )
+        state.pending_refresh = None
+        if confirm.fire:
+            # The post-reset state held across two polls → confirmed.
+            return confirm
+        # Reverted → it was a transient glitch. Fall through and re-arm below
+        # only if `current` presents a fresh edge against the latest baseline.
+
+    edge = _detect_refresh_edge(trigger, prev, current)
+    if edge.fire:
+        state.pending_refresh = {"baseline": dict(prev)}
+        return FireDecision(False, f"{edge.reason} (pending confirmation)")
+    return edge
+
+
+def _detect_refresh_edge(
+    trigger: Any,
+    prev: dict[str, Any],
+    current: dict[str, Any],
+) -> FireDecision:
+    """Raw single-step refresh-edge test: does `current` look like a window
+    reset relative to `prev`? Pure and stateless — the debounce that requires
+    two consecutive edges lives in the caller."""
     # Reset timestamp jumped forward → a new window started.
     cur_reset = parse_iso(current.get("resets_at"))
     prev_reset = parse_iso(prev.get("resets_at"))

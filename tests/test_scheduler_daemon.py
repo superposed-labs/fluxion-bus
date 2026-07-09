@@ -133,12 +133,17 @@ def test_quota_refresh_fires_once_on_edge(tmp_path):
     daemon.tick()
     assert runner.requests == []
 
-    # Tick 2: the cliff is an edge — fire exactly once.
+    # Tick 2: the cliff is an edge, but the debounce only arms it — no fire yet.
+    usage.snapshot = _usage(1.0, provider="claude")
+    daemon.tick()
+    assert runner.requests == []
+
+    # Tick 3: the drop persisted across two observations — confirmed, fire once.
     usage.snapshot = _usage(1.0, provider="claude")
     daemon.tick()
     assert len(runner.requests) == 1
 
-    # Tick 3: still low — the edge was consumed, do not refire.
+    # Tick 4: still low — the edge was consumed, do not refire.
     usage.snapshot = _usage(1.0, provider="claude")
     daemon.tick()
     assert len(runner.requests) == 1
@@ -161,7 +166,8 @@ def test_quota_refresh_ping_targets_provider_when_agent_auto(tmp_path):
     usage.snapshot = _usage(90.0, provider="claude")
     daemon.tick()
     usage.snapshot = _usage(0.0, provider="claude")
-    daemon.tick()
+    daemon.tick()  # arms the debounce latch
+    daemon.tick()  # confirms on the second low observation → fires
     assert len(runner.requests) == 1
     assert runner.requests[0].agent == "claude"  # auto resolved to the provider
     assert runner.requests[0].mode == "read-only"
@@ -296,8 +302,11 @@ def test_daemon_slack_notification_on_quota_refresh(tmp_path, monkeypatch):
     daemon.tick()
     assert sent_messages == []
 
-    # Trigger quota reset (cliff edge)
+    # Trigger quota reset (cliff edge) — first tick only arms the debounce.
     usage.snapshot = _usage(10.0, provider="claude", window="5h")
+    daemon.tick()
+    assert sent_messages == []
+    # Second low observation confirms the reset → notification fires.
     daemon.tick()
 
     # Should have triggered and sent Slack notification
@@ -363,8 +372,10 @@ def test_daemon_slack_notification_dm_fallback(tmp_path):
     daemon.tick()
     assert sent_messages == []
 
-    # Trigger quota reset (cliff edge)
+    # Trigger quota reset (cliff edge) — arm, then confirm on the next tick.
     usage.snapshot = _usage(10.0, provider="claude", window="5h")
+    daemon.tick()
+    assert sent_messages == []
     daemon.tick()
 
     # Assertions
@@ -430,8 +441,10 @@ def test_daemon_slack_notification_dm_fallback_failure(tmp_path):
     daemon.tick()
     assert sent_messages == []
 
-    # Trigger quota reset (cliff edge)
+    # Trigger quota reset (cliff edge) — arm, then confirm on the next tick.
     usage.snapshot = _usage(10.0, provider="claude", window="5h")
+    daemon.tick()
+    assert sent_messages == []
     daemon.tick()
 
     # Assertions
@@ -483,7 +496,9 @@ def test_daemon_wechat_notification_on_quota_refresh(tmp_path, monkeypatch):
     usage.snapshot = _usage(90.0, provider="codex", window="7d")
     daemon.tick()
     usage.snapshot = _usage(10.0, provider="codex", window="7d")
-    daemon.tick()
+    daemon.tick()  # arms the debounce latch
+    assert sent_messages == []
+    daemon.tick()  # confirms → notification fires
 
     assert len(sent_messages) == 1
     user_id, context_token, text = sent_messages[0]
@@ -603,7 +618,11 @@ def test_anchor_burst_fires_one_per_tick_until_cap(tmp_path):
     daemon.tick()
     assert runner.requests == []
 
-    usage.snapshot = _codex_5h(1.0)  # cliff edge -> arm + ping #1
+    usage.snapshot = _codex_5h(1.0)  # cliff edge -> arm debounce only, no ping
+    daemon.tick()
+    assert runner.requests == []
+
+    usage.snapshot = _codex_5h(1.0)  # confirmed -> arm burst + ping #1
     daemon.tick()
     assert len(runner.requests) == 1
     assert runner.requests[0].session_policy == "auto"  # resume within event
@@ -625,8 +644,10 @@ def test_anchor_burst_stops_when_anchored(tmp_path):
     )
     usage.snapshot = _codex_5h(90.0)
     daemon.tick()
-    usage.snapshot = _codex_5h(1.0)  # edge -> ping #1
+    usage.snapshot = _codex_5h(1.0)  # edge -> arm debounce (no ping yet)
     daemon.tick()
+    assert runner.requests == []
+    daemon.tick()  # confirmed -> ping #1
     assert len(runner.requests) == 1
 
     usage.snapshot = _codex_5h(1.0, span_hours=1.0)  # now anchored -> stop
@@ -649,8 +670,10 @@ def test_anchor_burst_coalesces_5h_and_7d(tmp_path):
     )
     usage.snapshot = _codex_5h(90.0)
     daemon.tick()
-    usage.snapshot = _codex_5h(1.0)  # both 5h & 7d edges fire same tick
+    usage.snapshot = _codex_5h(1.0)  # both 5h & 7d edges arm the debounce
     daemon.tick()
+    assert runner.requests == []
+    daemon.tick()  # confirmed -> one pool -> one ping
     assert len(runner.requests) == 1  # one pool -> one ping, not two
 
 
@@ -732,7 +755,9 @@ def test_monitor_rule_pings_when_global_autoping_on(tmp_path):
     usage.snapshot = _codex_5h(90.0)
     daemon.tick()
     usage.snapshot = _codex_5h(1.0)
-    daemon.tick()  # edge -> notify + ping #1
+    daemon.tick()  # edge -> arm debounce (no notify/ping yet)
+    assert runner.requests == []
+    daemon.tick()  # confirmed -> notify + ping #1
     assert len(runner.requests) == 1
     assert daemon._anchors != {}  # burst armed
     assert runner.requests[0].session_policy == "auto"
