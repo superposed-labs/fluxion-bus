@@ -100,6 +100,9 @@ struct NotchIslandView: View {
     @ObservedObject var model: NotchDataModel
     weak var controller: NotchWindowController?
     
+    /// Neon purple of the backend-upgrade indicator; matches the menu bar dot
+    /// drawn in AppDelegate+Rendering.
+    static let upgradeTint = Color(red: 0.58, green: 0.38, blue: 0.95)
 
     /// Current time, updated every second when the notch is visible.
     /// Reading `now` inside time-display functions makes them proper @State
@@ -192,6 +195,42 @@ struct NotchIslandView: View {
     
     var body: some View {
         ZStack(alignment: .top) {
+            if model.isUpgradingBackend {
+                // Every upgrade-glow layer sits BEHIND the opaque card, so only
+                // the part outside the silhouette ever shows. Drawing any of
+                // them on top would expose the seam between the physical notch
+                // and the drawn strip: a centered stroke keeps its inner half
+                // on the drawn wings (real pixels) but loses it over the
+                // hardware cutout (no pixels), so the light appears to switch
+                // Z-layers as it crosses the boundary. Line widths are doubled
+                // where a crisp edge is wanted, since only the outer half is
+                // visible. Needs the halo window margin — see
+                // NotchWindowController.setUpgradingBackend.
+                ZStack {
+                    // Soft outer halo.
+                    LoadingSweep(
+                        cornerRadius: targetCornerRadius,
+                        width: targetWidth,
+                        height: targetHeight,
+                        tint: Self.upgradeTint
+                    )
+                    // Constant faint rim so the whole outline reads as "active"
+                    // even where the comet currently isn't (visible: ~0.8pt).
+                    BottomRoundedBorder(cornerRadius: targetCornerRadius)
+                        .stroke(Self.upgradeTint.opacity(0.3), lineWidth: 1.6)
+                        .frame(width: targetWidth, height: targetHeight)
+                    // Crisp comet line hugging the edge (visible: ~1.6pt).
+                    LoadingSweep(
+                        cornerRadius: targetCornerRadius,
+                        width: targetWidth,
+                        height: targetHeight,
+                        tint: Self.upgradeTint,
+                        lineWidth: 3.2,
+                        blur: 0
+                    )
+                }
+            }
+
             // Animatable background
             backgroundCard
             
@@ -228,6 +267,7 @@ struct NotchIslandView: View {
         )
         .ignoresSafeArea()
         .onTapGesture {
+            guard !model.isUpgradingBackend else { return }
             controller?.toggleExpand()
         }
         .onChange(of: model.page) { _ in
@@ -272,4 +312,42 @@ struct NotchIslandView: View {
     func formatDuration(_ seconds: TimeInterval) -> (primary: String, secondary: String) { quota.formatDuration(seconds) }
     func formatTokenCount(_ val: Int) -> String { quota.formatTokenCount(val) }
 }
+
+/// A comet-like light running along the notch border. The phase is derived
+/// from the wall clock (not view state), so multiple instances — the blurred
+/// halo behind the card and the crisp edge stroke on top of it — animate in
+/// lockstep for free.
+struct LoadingSweep: View {
+    let cornerRadius: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+    let tint: Color
+    var lineWidth: CGFloat = 5.5
+    var blur: CGFloat = 3.0
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let rotation = (t * 90).truncatingRemainder(dividingBy: 360)
+            BottomRoundedBorder(cornerRadius: cornerRadius)
+                .stroke(
+                    AngularGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: .clear, location: 0.00),
+                            .init(color: tint.opacity(0.0), location: 0.45),
+                            .init(color: tint.opacity(1.0), location: 0.72),
+                            .init(color: .white.opacity(1.0), location: 0.90),
+                            .init(color: tint.opacity(0.0), location: 1.00),
+                        ]),
+                        center: .center,
+                        angle: .degrees(rotation)
+                    ),
+                    lineWidth: lineWidth
+                )
+                .blur(radius: blur)
+                .frame(width: width, height: height)
+        }
+    }
+}
+
 

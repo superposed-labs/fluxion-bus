@@ -32,6 +32,7 @@ struct ProviderHistoryStats {
 
 // MARK: - Notch Data Model
 class NotchDataModel: ObservableObject {
+    @Published var isUpgradingBackend: Bool = false
     @Published var providers: [ProviderUsage] = []
     @Published var justGranted: Int = 0
     @Published var todayStats: [String: ProviderHistoryStats] = [:]
@@ -108,12 +109,20 @@ class NotchDataModel: ObservableObject {
     // row over two labeled countdowns instead of a single inline timer.
     static let peekBothExtraHeight: CGFloat = 34
 
+    // Extra tray height for the one-line "updating components" caption shown
+    // under the peek segments during a backend upgrade. Without it the
+    // bottom-anchored content grows upward into the notch band and the
+    // segments slide behind the physical notch.
+    static let upgradeCaptionHeight: CGFloat = 15
+
     var peekHeight: CGFloat {
         // With a notch the tray keeps the notch band above the content row; a
         // non-notched pill has no band to mirror, so it hugs the content
         // (which the peek view centers vertically instead of bottom-anchoring).
         let base: CGFloat = hasNotch ? safeAreaTop + 36 : 44
-        return peekReset == "both" ? base + Self.peekBothExtraHeight : base
+        let both: CGFloat = peekReset == "both" ? Self.peekBothExtraHeight : 0
+        let upgrade: CGFloat = isUpgradingBackend ? Self.upgradeCaptionHeight : 0
+        return base + both + upgrade
     }
 }
 
@@ -446,6 +455,17 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         let size = getWindowSize(for: model.notchState)
         updateWindowFrame(to: size)
     }
+
+    /// Toggle the backend-upgrade indicator. The sweep's outer glow needs the
+    /// halo margin around the collapsed strip, so the window must be reframed
+    /// right away — a bare `model.isUpgradingBackend` write only re-renders the
+    /// SwiftUI content inside the existing tight window, and the glow stays
+    /// clipped until some other transition happens to resize it.
+    func setUpgradingBackend(_ upgrading: Bool) {
+        guard model.isUpgradingBackend != upgrading else { return }
+        model.isUpgradingBackend = upgrading
+        repositionWindow()
+    }
     
     private func getLeftAndRightMargins(count: Int) -> (left: CGFloat, right: CGFloat) {
         let leftW: CGFloat
@@ -598,9 +618,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         // collapsed window and swallow clicks (intermittent "click doesn't
         // expand"). Peek is always strictly larger than collapsed/expanded by
         // the margin, so the size match is unambiguous.
-        let peekSize = getWindowSize(for: .peek)
-        windowHasPeekHalo = abs(size.width - peekSize.width) < 0.5
-            && abs(size.height - peekSize.height) < 0.5
+        if model.isUpgradingBackend {
+            windowHasPeekHalo = true
+        } else {
+            let peekSize = getWindowSize(for: .peek)
+            windowHasPeekHalo = abs(size.width - peekSize.width) < 0.5
+                && abs(size.height - peekSize.height) < 0.5
+        }
     }
     
     private func getCollapsedWidth(screen: NSScreen, count: Int) -> CGFloat {
@@ -615,10 +639,11 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     }
     
     private func getWindowSize(for state: NotchState) -> NSSize {
-        let count = notchLayoutCount(model.providers)
         let screen = findTargetScreen()
         let safeAreaTop = screen.safeAreaInsets.top
         let hasNotch = safeAreaTop > 25
+        
+        let count = notchLayoutCount(model.providers)
         
         switch state {
         case .collapsed:
@@ -627,13 +652,23 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             // Match the physical notch height when present (see collapsedHeight);
             // local hasNotch/safeAreaTop are used because model.safeAreaTop is not
             // updated until updateWindowFrame, which runs after this.
-            return NSSize(width: w, height: hasNotch ? safeAreaTop : 32)
+            let h = hasNotch ? safeAreaTop : 32
+            if model.isUpgradingBackend {
+                // Halo margin so the upgrade sweep's outer glow isn't clipped
+                // by the window while collapsed.
+                return NSSize(width: w + Self.peekMarginW, height: h + Self.peekMarginH)
+            }
+            return NSSize(width: w, height: h)
         case .peek:
             let w: CGFloat
             // "both" mode stacks two labeled timers per segment, so the tray is
             // taller. peekReset is a stable preference (set before reposition),
-            // so reading it from the model here is safe.
-            let extra: CGFloat = model.peekReset == "both" ? NotchDataModel.peekBothExtraHeight : 0
+            // so reading it from the model here is safe. Mirrors peekHeight,
+            // including the upgrade caption row.
+            var extra: CGFloat = model.peekReset == "both" ? NotchDataModel.peekBothExtraHeight : 0
+            if model.isUpgradingBackend {
+                extra += NotchDataModel.upgradeCaptionHeight
+            }
             // Transparent margin so the spring's overshoot can extend past the
             // tray edges instead of being clipped by the window border — same
             // trick the expanded panel uses (see below). Without this the peek

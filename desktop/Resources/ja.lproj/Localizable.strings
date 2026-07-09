@@ -413,3 +413,5 @@
 "welcome.setup.copy_log" = "ログをコピー";
 "welcome.executor.title" = "デフォルトエージェント";
 "welcome.executor.desc" = "指定がない場合、新しいタスクはこのエージェントで実行されます。プロジェクトや会話ごとに変更できます。";
+"menu.updating_components" = "コンポーネントを更新中...";
+

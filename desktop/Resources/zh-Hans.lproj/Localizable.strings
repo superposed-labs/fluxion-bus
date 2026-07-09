@@ -413,3 +413,5 @@
 "welcome.setup.copy_log" = "复制日志";
 "welcome.executor.title" = "默认 Agent";
 "welcome.executor.desc" = "新任务默认由该 Agent 执行；项目或会话可另行指定。";
+"menu.updating_components" = "正在更新组件...";
+

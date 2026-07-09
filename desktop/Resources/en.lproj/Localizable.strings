@@ -413,3 +413,5 @@
 "welcome.setup.copy_log" = "Copy Log";
 "welcome.executor.title" = "Default executor";
 "welcome.executor.desc" = "Tasks run on this agent unless a project or conversation picks another.";
+"menu.updating_components" = "Updating components...";
+
