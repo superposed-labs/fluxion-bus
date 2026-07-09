@@ -223,16 +223,23 @@ class RuleState:
     runs_today_date: str = ""
     # Last observed quota window for this rule, used to detect refresh edges.
     last_usage: dict[str, Any] | None = None
+    # A refresh edge seen on the previous observation, awaiting confirmation on
+    # the next one before it fires. Debounces upstream single-sample glitches
+    # (e.g. a provider usage endpoint intermittently serving a stale "fresh
+    # window" snapshot) that would otherwise look like a real reset for one poll.
+    pending_refresh: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> RuleState:
         last_usage = raw.get("last_usage")
+        pending_refresh = raw.get("pending_refresh")
         return cls(
             last_fired_at=raw.get("last_fired_at"),
             last_eval_at=raw.get("last_eval_at"),
             runs_today=int(raw.get("runs_today", 0) or 0),
             runs_today_date=str(raw.get("runs_today_date", "")),
             last_usage=dict(last_usage) if isinstance(last_usage, dict) else None,
+            pending_refresh=dict(pending_refresh) if isinstance(pending_refresh, dict) else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,4 +249,5 @@ class RuleState:
             "runs_today": self.runs_today,
             "runs_today_date": self.runs_today_date,
             "last_usage": self.last_usage,
+            "pending_refresh": self.pending_refresh,
         }
