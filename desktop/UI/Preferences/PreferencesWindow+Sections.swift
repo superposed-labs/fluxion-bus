@@ -577,7 +577,7 @@ extension PreferencesWindow {
         )
 
         checkHideOnFullscreen = NSSwitch()
-        checkHideOnFullscreen.state = (appDelegate.envVals["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] ?? "false").lowercased() == "true" ? .on : .off
+        checkHideOnFullscreen.state = (appDelegate.envVals["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] ?? "true").lowercased() == "true" ? .on : .off
         checkHideOnFullscreen.target = self
         checkHideOnFullscreen.action = #selector(autosave)
         hideOnFullscreenRow = CardRow(
