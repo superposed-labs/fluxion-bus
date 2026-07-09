@@ -9,6 +9,27 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-10
+
+### Added
+
+- **Claude model-scoped limits** — backend, web, and desktop app now support
+  per-model (Fable) rate-limit tracking with CJK-aligned visual display.
+
+### Changed
+
+- **Automatic versioning** — package version is now derived from git tags via
+  `setuptools-scm`; no manual version bumps needed for releases.
+- **Smoother in-app updates** — silent backend upgrades and gentler update
+  prompts in the desktop app.
+- **Scheduler** — quota-refresh edge detection is debounced over two
+  observations to reduce false positives.
+
+### Fixed
+
+- **Desktop** — the notch no longer briefly reappears when entering or exiting
+  fullscreen.
+
 ## [1.0.1] - 2026-07-07
 
 ### Added
@@ -55,6 +76,7 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/superposed-labs/fluxion-bus/releases/tag/v1.0.0
