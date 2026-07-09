@@ -23,6 +23,38 @@ extension AppDelegate {
         let appearance = envVals["FLUXION_MENU_APPEARANCE"] ?? "native"
         let providers = filteredProviders()
 
+        if isUpgradingBackend {
+            if statusItem.isVisible, let button = statusItem.button {
+                button.image = nil
+                button.imagePosition = .noImage
+                
+                let font = NSFont(name: "Menlo", size: 12.5) ?? NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
+                let spinner = spinnerFrames[spinnerIndex]
+                
+                // Calculate breathing alpha based on system time (2-second cycle)
+                let t = Date().timeIntervalSinceReferenceDate
+                let wave = (sin(t * Double.pi) + 1.0) / 2.0
+                let alpha = CGFloat(0.3 + 0.7 * wave)
+                
+                // Dot color matching the neon purple notch glow
+                let dotColor = NSColor(red: 0.58, green: 0.38, blue: 0.95, alpha: alpha)
+                
+                let attrTitle = NSMutableAttributedString()
+                attrTitle.append(attachmentForDot(color: dotColor, size: 11.5))
+                attrTitle.append(NSAttributedString(string: " \(spinner)", attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]))
+                
+                button.title = attrTitle.string
+                button.attributedTitle = attrTitle
+                button.toolTip = L10n.tr("menu.updating_components")
+                statusItem.length = 38
+            }
+            startSpinner()
+            return
+        }
+
         if statusItem.isVisible {
             configureStatusItemInteraction(appearance: appearance)
             drawRichTitle(providers: providers, spinner: spinnerFrames[spinnerIndex])
@@ -287,8 +319,13 @@ extension AppDelegate {
         let t = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.spinnerIndex = (self.spinnerIndex + 1) % self.spinnerFrames.count
-            // Title only — no disk read, no menu rebuild.
-            self.drawRichTitle(providers: self.filteredProviders(), spinner: self.spinnerFrames[self.spinnerIndex])
+            if self.isUpgradingBackend {
+                // The upgrade indicator (breathing dot) is drawn by render().
+                self.render()
+            } else {
+                // Title only — no disk read, no menu rebuild.
+                self.drawRichTitle(providers: self.filteredProviders(), spinner: self.spinnerFrames[self.spinnerIndex])
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         spinnerTimer = t
@@ -359,9 +396,69 @@ extension AppDelegate {
         rebuildDropdown(menu)
     }
 
+    /// The latest installer output line as a small, gray, tightly truncated
+    /// detail row — the headline item above it stays clean, and a verbose pip
+    /// line can't blow the menu out to screen width. The lowest-information
+    /// parts of a pip line are dropped first ("(from …)" parentheticals and
+    /// "==<version>" pins), so most lines fit without an ellipsis:
+    /// "Collecting pydantic-core==2.27.2 (from pydantic)" → "Collecting pydantic-core".
+    func upgradeDetailTitle() -> NSAttributedString {
+        var line = upgradeStatusLine
+        if let parenthetical = line.range(of: " (") {
+            line = String(line[..<parenthetical.lowerBound])
+        }
+        if let versionPin = line.range(of: "==") {
+            line = String(line[..<versionPin.lowerBound])
+        }
+        // Cap near the headline's width so this row never becomes the widest
+        // item — otherwise one long pip line stretches the whole menu and
+        // every shorter update leaves trailing blank space.
+        if line.count > 26 {
+            line = String(line.prefix(26)) + "…"
+        }
+        return NSAttributedString(string: line, attributes: [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    }
+
+    /// Record a bootstrap progress line and refresh the live detail row in
+    /// place (rebuildDropdown only runs when the menu opens, but an already
+    /// open NSMenu tracks item changes).
+    func updateUpgradeProgress(_ line: String) {
+        upgradeStatusLine = line
+        upgradeMenuItem?.attributedTitle = upgradeDetailTitle()
+        upgradeMenuItem?.isHidden = line.isEmpty
+    }
+
     func rebuildDropdown(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.autoenablesItems = false
+
+        if isUpgradingBackend {
+            let updatingItem = NSMenuItem(
+                title: L10n.tr("menu.updating_components"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            updatingItem.isEnabled = false
+            menu.addItem(updatingItem)
+
+            // Live installer output, one small gray line under the headline.
+            let detailItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            detailItem.isEnabled = false
+            detailItem.attributedTitle = upgradeDetailTitle()
+            detailItem.isHidden = upgradeStatusLine.isEmpty
+            menu.addItem(detailItem)
+            upgradeMenuItem = detailItem
+
+            menu.addItem(NSMenuItem.separator())
+
+            let quitItem = NSMenuItem(title: L10n.tr("app.quit"), action: #selector(quitApp), keyEquivalent: "")
+            quitItem.target = self
+            menu.addItem(quitItem)
+            return
+        }
 
         let spinner = spinnerFrames[spinnerIndex]
         let filtered = filteredProviders()

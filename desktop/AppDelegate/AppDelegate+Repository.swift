@@ -117,15 +117,18 @@ extension AppDelegate {
     /// on the main queue while the install runs; `completion` receives the
     /// overall result and the full combined output. Completion is driven by
     /// EOF on the output pipe (all writers, including brew/pip children, have
-    /// exited) so no trailing output is lost.
+    /// exited) so no trailing output is lost. `forceFull` skips the script's
+    /// fast in-place update so the venv is rebuilt — the Repair flow needs
+    /// this, because a source-only swap cannot fix a broken environment.
     func bootstrapBackend(
+        forceFull: Bool = false,
         progress: ((String) -> Void)? = nil,
         completion: @escaping (Bool, String) -> Void
     ) {
         let scriptCandidates = [
+            Bundle.main.path(forResource: "bootstrap-backend", ofType: "sh", inDirectory: "Scripts") ?? "",
             (repoPath as NSString).appendingPathComponent("scripts/bootstrap-backend.sh"),
             (bundledRepoCandidate as NSString).appendingPathComponent("scripts/bootstrap-backend.sh"),
-            Bundle.main.path(forResource: "bootstrap-backend", ofType: "sh", inDirectory: "Scripts") ?? "",
         ].filter { !$0.isEmpty }
 
         guard let scriptPath = scriptCandidates.first(where: {
@@ -138,11 +141,15 @@ extension AppDelegate {
         let task = Process()
         let output = Pipe()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [
+        var arguments = [
             scriptPath,
             "--install-dir", repoPath,
             "--workspace", FileManager.default.homeDirectoryForCurrentUser.path,
         ]
+        if forceFull {
+            arguments.append("--force-full")
+        }
+        task.arguments = arguments
         task.standardOutput = output
         task.standardError = output
 
@@ -307,7 +314,20 @@ extension AppDelegate {
         panel.center()
         panel.makeKeyAndOrderFront(nil)
 
-        bootstrapBackend { [weak self] ok, output in
+        // A repair rebuilds the venv underneath any running service; stop them
+        // first so nothing keeps executing the replaced code (they are started
+        // again below on success).
+        let patterns = serviceProcessPatterns
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.stopServices(patterns: patterns)
+            DispatchQueue.main.async { [weak self] in
+                self?.runBackendInstall(resultPanel: panel)
+            }
+        }
+    }
+
+    private func runBackendInstall(resultPanel panel: NSWindow) {
+        bootstrapBackend(forceFull: true) { [weak self] ok, output in
             guard let self = self else { return }
             panel.orderOut(nil)
 
@@ -367,5 +387,28 @@ extension AppDelegate {
             return false
         }
         return promptBackendInstall(missing: missing)
+    }
+
+    func getBundledRevision() -> String? {
+        guard let resourcePath = Bundle.main.resourcePath else { return nil }
+        let path = (resourcePath as NSString).appendingPathComponent("Backend/REVISION")
+        return (try? String(contentsOfFile: path, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func getInstalledRevision() -> String? {
+        let path = (repoPath as NSString).appendingPathComponent(".fluxion-revision")
+        return (try? String(contentsOfFile: path, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func isSilentUpgradeNeeded() -> Bool {
+        guard repoPath == managedInstallPath else { return false }
+        let gitPath = (repoPath as NSString).appendingPathComponent(".git")
+        guard !FileManager.default.fileExists(atPath: gitPath) else { return false }
+
+        guard let bundled = getBundledRevision() else { return false }
+        let installed = getInstalledRevision()
+        return installed != bundled
     }
 }

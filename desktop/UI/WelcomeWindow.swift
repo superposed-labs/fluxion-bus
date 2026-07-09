@@ -415,7 +415,7 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         })
     }
 
-    private func showSetupFailure(_ fullOutput: String) {
+    func showSetupFailure(_ fullOutput: String) {
         setupSpinner?.stopAnimation(nil)
         setupStatusLabel?.textColor = .systemRed
         setupStatusLabel?.stringValue = L10n.tr("repository.install.failed.title")
