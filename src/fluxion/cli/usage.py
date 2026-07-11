@@ -40,7 +40,12 @@ def main() -> None:
     if args.refresh_prices:
         from fluxion.usage import price_data
 
-        results = price_data.refresh()
+        # Resolve the cache through Settings (which loads the .env) so the
+        # refresh lands in the same data dir the services read from, no matter
+        # what directory the CLI is run from. The result JSON carries the
+        # absolute paths written.
+        settings = Settings.load()
+        results = price_data.refresh(cache_dir=settings.data_dir / "price_cache")
         print(json.dumps(results, indent=args.indent))
         raise SystemExit(0 if all(r["ok"] for r in results) else 1)
     print(
