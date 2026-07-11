@@ -432,6 +432,10 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                     session_id=session_id or path.stem,
                     input_tokens=max(0, input_total - cached),
                     output_tokens=output,
+                    # Codex 0.142.3 rollout TokenUsage omits GPT-5.6's API-level
+                    # cache_write_tokens field. Keep the existing numeric shape
+                    # for aggregation, but the Web UI treats GPT-5.6 cost as a
+                    # lower bound instead of interpreting this as an observed 0.
                     cache_creation_tokens=0,
                     cache_read_tokens=cached,
                     dedup_key=f"codex:{path.name}:{seq}",

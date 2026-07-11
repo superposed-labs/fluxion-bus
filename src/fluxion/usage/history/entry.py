@@ -25,10 +25,11 @@ class UsageEntry:
     cache_creation_tokens: int
     cache_read_tokens: int
     dedup_key: str
-    # The 1-hour portion of cache_creation_tokens (the rest is the 5-minute
-    # cache). Anthropic charges 2x input for the 1h write vs 1.25x for the 5m,
-    # so the split must be priced separately; Claude Code uses the 1h cache
-    # almost exclusively. Codex/others don't break this out, so it stays 0.
+    # The 1-hour portion of cache_creation_tokens (the rest uses the provider's
+    # default cache-write rate). Anthropic charges 2x input for the 1h write vs
+    # 1.25x for the 5m default, so the split must be priced separately; Claude
+    # Code uses the 1h cache almost exclusively. Codex/others don't break this
+    # out, so it stays 0.
     cache_creation_1h_tokens: int = 0
     # Anthropic Fast mode bills Opus at a premium (e.g. Opus 4.8 $10/$50 vs
     # $5/$25). The transcript's usage.speed marks these turns, so they can be

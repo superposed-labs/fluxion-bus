@@ -79,9 +79,9 @@ const L = {
     en: "in API-equivalent value · covered by your plans, not billed",
   },
   spendNote: {
-    zh: "预估花费 · 缓存读取按约 1/10 输入价格计算",
-    ja: "の推定コスト · キャッシュ読込は入力の約1/10で算入",
-    en: "estimated spend · cache reads billed at ~1/10 input",
+    zh: "预估花费 · 已按模型的缓存读取折扣计价",
+    ja: "の推定コスト · モデル別のキャッシュ読込割引を反映",
+    en: "estimated spend · includes model-specific cache-read discounts",
   },
   inPlan: { zh: "订阅内", ja: "プラン内", en: "in-plan" },
   planPrice: { zh: "订阅月费", ja: "プラン価格", en: "plan price" },
@@ -112,10 +112,17 @@ const L = {
   codexCoverage: { zh: "Codex 服务器对账", ja: "Codex サーバー照合", en: "Codex server reconciliation" },
   cacheRead: { zh: "缓存读取", ja: "キャッシュ読込", en: "Cache read" },
   modelsNote: {
-    zh: "每个模型两条柱：生成（输入 → 输出 → 缓存写入）和复用（缓存读取）。OpenAI/Codex 与 Gemini 使用隐式缓存，因此不会显示独立的缓存写入段。",
-    ja: "モデルごとに2本のバー — 生成（入力 → 出力 → キャッシュ書込）と再利用（キャッシュ読込）。OpenAI/Codex・Gemini は暗黙キャッシュのためキャッシュ書込の区切りは出ません。",
-    en: "Two bars per model — Generated (input → output → cache write) and Reused (cache read). OpenAI/Codex & Gemini cache implicitly, so they show no separate cache-write segment.",
+    zh: "每个模型两条柱：生成（输入 → 输出 → 已上报的缓存写入）和复用（缓存读取）。只有本地日志明确提供写入量时才显示缓存写入段。",
+    ja: "モデルごとに2本のバー — 生成（入力 → 出力 → 報告済みキャッシュ書込）と再利用（キャッシュ読込）。ローカルログが書込量を明示した場合のみ書込区分を表示します。",
+    en: "Two bars per model — Generated (input → output → reported cache writes) and Reused (cache reads). A cache-write segment appears only when local logs report it.",
   },
+  cacheWriteUnreported: {
+    zh: "GPT-5.6 的 Codex 本地日志尚未上报缓存写入量；显示的成本是最低估算，实际 API 等价值可能更高。",
+    ja: "GPT-5.6 の Codex ローカルログはキャッシュ書込量をまだ報告していません。表示コストは下限で、実際の API 換算値は高い可能性があります。",
+    en: "Codex local logs do not yet report GPT-5.6 cache writes. Displayed cost is a lower bound; actual API-equivalent value may be higher.",
+  },
+  notReported: { zh: "未上报", ja: "未報告", en: "not reported" },
+  lowerBound: { zh: "最低估算", ja: "下限推定", en: "lower bound" },
   cacheNote: {
     zh: "所有上下文中有 {pct}% 来自 prompt cache，属于复用而非重新生成。",
     ja: "全コンテキストの {pct}% はキャッシュから読込 — 再生成ではなく再利用です。",
@@ -152,6 +159,11 @@ const L = {
   cacheWriteShort: { zh: "写入", ja: "書込", en: "cache write" },
   cacheReadShort: { zh: "读取", ja: "読込", en: "cache read" },
   uncachedInput: { zh: "未缓存输入", ja: "非キャッシュ入力", en: "uncached input" },
+  inputMayIncludeWrites: {
+    zh: "输入（含未上报写入）",
+    ja: "入力（未報告の書込を含む）",
+    en: "input (includes unreported writes)",
+  },
   cacheReadTip: { zh: "缓存读取", ja: "キャッシュ読込", en: "cache read" },
   cacheServedTip: {
     zh: "{cached} / {total} 上下文来自缓存",
@@ -168,6 +180,10 @@ const L = {
 function fmtMoney(n: number): string {
   if (n >= 1000) return "$" + (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k";
   return "$" + n.toFixed(n >= 100 ? 0 : 2);
+}
+
+function fmtCost(n: number, lowerBound = false): string {
+  return `${lowerBound ? "≥ " : ""}${fmtMoney(n)}`;
 }
 
 // ── formatters ──────────────────────────────────────────────────────
@@ -208,6 +224,10 @@ function prettyModel(model: string | null): string {
     return tail ? `${base} ${tail}` : base;
   }
   return titleCase(model);
+}
+
+function hasUnreportedGpt56CacheWrites(model: UsageModelStat): boolean {
+  return model.provider === "codex" && /^gpt-5\.6(?:-|$)/i.test(model.model);
 }
 
 // ── component ───────────────────────────────────────────────────────
@@ -281,6 +301,7 @@ export function UsageStats(): JSX.Element {
   );
   const t = data?.totals;
   const hasData = !!t && t.messages > 0;
+  const hasUnreportedCacheWrites = data?.by_model.some(hasUnreportedGpt56CacheWrites) ?? false;
 
   return (
     <div className="stats-main scroll" onMouseOver={showTip} onMouseOut={hideTip}>
@@ -323,11 +344,23 @@ export function UsageStats(): JSX.Element {
 
         {hasData && t && view === "overview" && (
           <>
-            <Hero t={t} sub={sub} lang={lang} />
-            <StatStrip data={data!} sub={sub} planMonthly={planMonthly} lang={lang} />
+            <Hero t={t} sub={sub} lang={lang} lowerBound={hasUnreportedCacheWrites} />
+            <StatStrip
+              data={data!}
+              sub={sub}
+              planMonthly={planMonthly}
+              lang={lang}
+              lowerBound={hasUnreportedCacheWrites}
+            />
             <ReconciliationStrip data={data!} lang={lang} />
             {sub && (
-              <PlansStrip quota={quota} planMonthly={planMonthly} cost={t.cost} lang={lang} />
+              <PlansStrip
+                quota={quota}
+                planMonthly={planMonthly}
+                cost={t.cost}
+                lang={lang}
+                lowerBound={hasUnreportedCacheWrites}
+              />
             )}
             <Heatmap data={data!} lang={lang} />
           </>
@@ -335,14 +368,31 @@ export function UsageStats(): JSX.Element {
         {hasData && view === "models" && (
           <ModelsView models={data!.by_model} sub={sub} lang={lang} />
         )}
-        {hasData && <CostNote data={data!} sub={sub} lang={lang} />}
+        {hasData && (
+          <CostNote
+            data={data!}
+            sub={sub}
+            lang={lang}
+            lowerBound={hasUnreportedCacheWrites}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 // ── cost disclaimer / provenance footnote ───────────────────────────
-function CostNote({ data, sub, lang }: { data: UsageHistory; sub: boolean; lang: Lang }): JSX.Element {
+function CostNote({
+  data,
+  sub,
+  lang,
+  lowerBound,
+}: {
+  data: UsageHistory;
+  sub: boolean;
+  lang: Lang;
+  lowerBound: boolean;
+}): JSX.Element {
   const updated = data.prices_updated_at;
   const uncosted = data.totals.uncosted_tokens ?? 0;
   return (
@@ -356,6 +406,7 @@ function CostNote({ data, sub, lang }: { data: UsageHistory; sub: boolean; lang:
           {fmtTok(uncosted)} {L.uncostedNote[lang]}
         </span>
       )}
+      {lowerBound && <span className="warn">{L.cacheWriteUnreported[lang]}</span>}
     </div>
   );
 }
@@ -397,7 +448,17 @@ function ReconciliationStrip({
 }
 
 // ── hero ────────────────────────────────────────────────────────────
-function Hero({ t, sub, lang }: { t: UsageHistoryTotals; sub: boolean; lang: Lang }): JSX.Element {
+function Hero({
+  t,
+  sub,
+  lang,
+  lowerBound,
+}: {
+  t: UsageHistoryTotals;
+  sub: boolean;
+  lang: Lang;
+  lowerBound: boolean;
+}): JSX.Element {
   const parts = [
     { k: L.input[lang], v: t.input_tokens, cls: "seg-input", sw: "var(--tk-input)" },
     { k: L.output[lang], v: t.output_tokens, cls: "seg-output", sw: "var(--tk-output)" },
@@ -414,11 +475,17 @@ function Hero({ t, sub, lang }: { t: UsageHistoryTotals; sub: boolean; lang: Lan
           <span className="u">{L.tokens[lang]}</span>
         </div>
         <div className="hero-sub">
-          ≈ <b>{fmtMoney(t.cost)}</b> {sub ? L.apiValueNote[lang] : L.spendNote[lang]}
+          {lowerBound ? "≥ " : "≈ "}<b>{fmtMoney(t.cost)}</b>{" "}
+          {lowerBound ? L.lowerBound[lang] : (sub ? L.apiValueNote[lang] : L.spendNote[lang])}
         </div>
         <div className="compbar">
           {parts.map((p) => (
-            <i key={p.k} className={p.cls} style={{ flex: p.v }} data-tip={`${p.k}: ${fmtTok(p.v)}`} />
+            <i
+              key={p.k}
+              className={p.cls}
+              style={{ flex: p.v }}
+              data-tip={`${p.k}: ${p.cls === "seg-cw" && lowerBound ? L.notReported[lang] : fmtTok(p.v)}`}
+            />
           ))}
         </div>
         <div className="complegend">
@@ -426,7 +493,11 @@ function Hero({ t, sub, lang }: { t: UsageHistoryTotals; sub: boolean; lang: Lan
             <span className="lg" key={p.k}>
               <span className="sw" style={{ background: p.sw }} />
               {p.k}
-              <span className="v">{fmtTok(p.v)}</span>
+              <span className="v">
+                {p.cls === "seg-cw" && lowerBound
+                  ? (p.v > 0 ? `≥ ${fmtTok(p.v)}` : L.notReported[lang])
+                  : fmtTok(p.v)}
+              </span>
             </span>
           ))}
         </div>
@@ -462,11 +533,13 @@ function StatStrip({
   sub,
   planMonthly,
   lang,
+  lowerBound,
 }: {
   data: UsageHistory;
   sub: boolean;
   planMonthly: number;
   lang: Lang;
+  lowerBound: boolean;
 }): JSX.Element {
   const t = data.totals;
   const sessions = Math.max(1, t.sessions);
@@ -477,15 +550,15 @@ function StatStrip({
   const costTile = sub
     ? {
         k: L.apiValue[lang],
-        val: fmtMoney(t.cost),
-        ctx: <span>{roi >= 1 ? `≈ ${roi.toFixed(roi >= 10 ? 0 : 1)}× ${L.planPrice[lang]}` : L.inPlan[lang]}</span>,
+        val: fmtCost(t.cost, lowerBound),
+        ctx: <span>{lowerBound ? L.lowerBound[lang] : roi >= 1 ? `≈ ${roi.toFixed(roi >= 10 ? 0 : 1)}× ${L.planPrice[lang]}` : L.inPlan[lang]}</span>,
       }
     : {
         k: L.estSpend[lang],
-        val: fmtMoney(t.cost),
+        val: fmtCost(t.cost, lowerBound),
         ctx: (
           <span>
-            {fmtMoney(costPer1M)} {L.per1MGen[lang]}
+            {fmtCost(costPer1M, lowerBound)} {L.per1MGen[lang]}
           </span>
         ),
       };
@@ -552,11 +625,13 @@ function PlansStrip({
   planMonthly,
   cost,
   lang,
+  lowerBound,
 }: {
   quota: ProviderUsage[];
   planMonthly: number;
   cost: number;
   lang: Lang;
+  lowerBound: boolean;
 }): JSX.Element | null {
   const rows = quota.flatMap((p) => {
     if (p.status !== "ok") return [];
@@ -592,7 +667,7 @@ function PlansStrip({
       <span className="spacer" />
       {mult && (
         <span className="note">
-          {fmtMoney(cost)} {L.apiEquiv[lang]} ≈ {mult}× {L.planPrice[lang]}
+          {fmtCost(cost, lowerBound)} {L.apiEquiv[lang]} {lowerBound ? "≥" : "≈"} {mult}× {L.planPrice[lang]}
         </span>
       )}
     </div>
@@ -783,14 +858,19 @@ function ModelsView({
       </div>
       <div className="mrows">
         {sorted.map((m) => {
+          const cacheWriteUnreported = hasUnreportedGpt56CacheWrites(m);
           const segs = [
             {
               v: m.input_tokens,
               c: "var(--tk-input)",
-              k: m.provider === "codex" ? L.uncachedInput[lang] : L.inputShort[lang],
+              k: cacheWriteUnreported
+                ? L.inputMayIncludeWrites[lang]
+                : m.provider === "codex"
+                  ? L.uncachedInput[lang]
+                  : L.inputShort[lang],
             },
             { v: m.output_tokens, c: "var(--tk-output)", k: L.outputShort[lang] },
-            ...(m.provider === "claude"
+            ...(m.cache_creation_tokens > 0
               ? [{ v: m.cache_creation_tokens, c: "var(--tk-cw)", k: L.cacheWriteShort[lang] }]
               : []),
           ].filter((s) => s.v > 0);
@@ -850,13 +930,22 @@ function ModelsView({
                   <span className="sep">·</span>
                   <span><b>{m.sessions}</b> {L.sess[lang]}</span>
                   <span className="sep">·</span>
-                  <span><b>{fmtTok(m.input_tokens)}</b> {L.inputShort[lang]}</span>
+                  <span>
+                    <b>{fmtTok(m.input_tokens)}</b>{" "}
+                    {cacheWriteUnreported ? L.inputMayIncludeWrites[lang] : L.inputShort[lang]}
+                  </span>
                   <span className="sep">·</span>
                   <span><b>{fmtTok(m.output_tokens)}</b> {L.outputShort[lang]}</span>
                   {cw > 0 && (
                     <>
                       <span className="sep">·</span>
                       <span><b>{fmtTok(cw)}</b> {L.cacheWriteShort[lang]}</span>
+                    </>
+                  )}
+                  {cacheWriteUnreported && (
+                    <>
+                      <span className="sep">·</span>
+                      <span className="warn">{L.cacheWriteShort[lang]} {L.notReported[lang]}</span>
                     </>
                   )}
                   <span className="sep">·</span>
@@ -882,7 +971,7 @@ function ModelsView({
                   <div className="lbl">{L.generatedShort[lang]}</div>
                 </div>
                 <div className="m-num m-cost">
-                  <div className="big">{fmtMoney(m.cost)}</div>
+                  <div className="big">{fmtCost(m.cost, cacheWriteUnreported)}</div>
                   <div className="lbl">{(sub ? L.apiValue : L.estSpend)[lang]}</div>
                 </div>
               </div>

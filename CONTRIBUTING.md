@@ -31,6 +31,18 @@ cd web && npm ci && cd ..
 
 Requires Python >= 3.12 and (for the frontend) Node >= 18.
 
+### macOS development app
+
+Run the desktop app against the current working tree without changing the saved
+production backend:
+
+```bash
+scripts/run-dev-app.sh
+```
+
+Use `--skip-web` for Python-only changes and `--rebuild-app` after changing
+Swift sources. Run `scripts/run-dev-app.sh --help` for all options.
+
 ## Before you open a PR
 
 Run the same checks CI runs (`.github/workflows/ci.yml`). All must pass:

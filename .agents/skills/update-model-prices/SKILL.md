@@ -57,14 +57,20 @@ Rates are USD per 1M tokens. Resolution for a given model id cascades:
 Each entry is a list of dated rates: `{ effective_date, observed, in, out, cw, cw1h, cr, source }`.
 
 - `in` / `out` — input / output price.
-- `cw` — cache **write**, 5-minute TTL (Anthropic ~1.25× input). OpenAI and
-  Google have **no** per-token cache-write fee, so set `cw = in` for them.
+- `cw` — the model's default cache **write** rate. For Anthropic this is the
+  5-minute TTL rate (~1.25× input). OpenAI models before GPT-5.6 and Google have
+  no additional per-token cache-write fee, so set `cw = in` for them. GPT-5.6
+  and later bill both implicit and explicit cache writes at 1.25× input; their
+  current cache TTL is at least 30 minutes, so use the documented cache-write
+  column rather than assuming `cw = in`.
 - `cw1h` — cache **write**, 1-hour TTL (Anthropic **2× input**). The transcript
   records the per-turn 1h/5m token split, so the two are priced separately —
   this matters because Claude Code uses the 1h cache almost exclusively. Omit
   `cw1h` when there's no distinct 1h rate (OpenAI/Google); the resolver falls
-  back to `cw`. (Codex turns carry zero cache-write tokens anyway, so it's moot
-  there.)
+  back to `cw`. Current Codex rollout logs do not expose GPT-5.6 cache-write
+  tokens, so Fluxion's reconstructed cost is a lower bound until that telemetry
+  is available; do not change the documented rate to compensate for missing
+  usage data.
 - `cr` — cache **read** (the "cached input" column; ~1/10th of input).
 - `effective_date` — when this price took effect *as far as we know*. Use the
   provider's announced change date when there is one; otherwise it's a
