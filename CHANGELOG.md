@@ -9,6 +9,23 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-11
+
+### Added
+
+- **GPT-5.6 pricing** — Sol, Terra, Luna, and alias pricing with context tiers
+  and dated Codex fallback behavior. The usage UI now distinguishes cache
+  writes and presents missing GPT-5.6 cache-write telemetry as an unreported
+  lower-bound cost.
+- **Development launcher** — a workspace-backed macOS development launcher,
+  documented in CONTRIBUTING.
+
+### Fixed
+
+- **Desktop** — the embedded console no longer shows light legacy scrollbars on
+  macOS 26 (Tahoe): release builds link the current macOS SDK, and the console
+  declares its color scheme so natively painted controls follow the theme.
+
 ## [1.0.2] - 2026-07-10
 
 ### Added
@@ -76,7 +93,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/superposed-labs/fluxion-bus/releases/tag/v1.0.0
