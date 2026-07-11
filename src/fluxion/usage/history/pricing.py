@@ -212,9 +212,8 @@ def _entry_cost(e: UsageEntry, rate: dict[str, float] | None) -> float:
     whose model resolves to no rate (e.g. a local model) costs 0.
 
     Cache-write tokens are split by TTL: the 1-hour portion prices at `cw1h`
-    (Anthropic 2x input), the rest at `cw` (the 5-minute rate). Providers
-    without a 1h rate (or without a per-token cache-write fee) just fall back to
-    `cw`, so this is a no-op for them."""
+    (Anthropic 2x input), while the rest uses the provider's default `cw` rate.
+    Providers without a distinct 1h rate just fall back to `cw`."""
     rate = _rate_for_entry(e, rate)
     if rate is None:
         return 0.0
