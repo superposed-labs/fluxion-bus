@@ -498,10 +498,12 @@ class SchedulerDaemon:
             decision = engine.evaluate_rule(rule, state, now, usage, self._tick_sec)
 
             # Always refresh the quota baseline so an edge fires exactly once.
+            # (advance_baseline quarantines backward-resets_at glitch samples
+            # instead of adopting them.)
             if rule.trigger.type == TRIGGER_QUOTA_REFRESH:
                 obs = engine.observe_window(usage, rule.trigger.provider, rule.trigger.window_key)
                 if obs is not None:
-                    state.last_usage = obs
+                    engine.advance_baseline(state, obs)
             state.last_eval_at = now.isoformat()
             dirty = True
 

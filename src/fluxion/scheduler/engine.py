@@ -60,7 +60,8 @@ def evaluate_rule(
     """Decide whether `rule` should fire at `now`. Read-only except for the
     quota-refresh debounce latch (`state.pending_refresh`), which it advances so
     a refresh edge must be confirmed on two consecutive observations before it
-    fires. The daemon still owns `last_usage`/`last_fired_at` bookkeeping."""
+    fires. The daemon still owns `last_usage`/`last_fired_at` bookkeeping (via
+    `advance_baseline` for the former)."""
     if getattr(rule, "run_now", False):
         return FireDecision(True, "manual trigger")
 
@@ -145,6 +146,35 @@ def _eval_quota_refresh(
         state.pending_refresh = {"baseline": dict(prev)}
         return FireDecision(False, f"{edge.reason} (pending confirmation)")
     return edge
+
+
+def advance_baseline(state: RuleState, current: dict[str, Any]) -> None:
+    """Adopt `current` as the quota baseline (`state.last_usage`) — unless it is
+    suspect. A `resets_at` that moved *backward* relative to the held baseline
+    cannot be a real window transition (within a window the timestamp holds
+    steady; at a reset it jumps forward), so such a sample is quarantined in
+    `state.suspect_usage` and only adopted once a second consecutive
+    observation confirms the backward state. Without this, a one-sample stale
+    snapshot (an earlier-window `resets_at`) poisons the baseline, and its
+    reversion on the next poll masquerades as a fresh "reset advanced" edge
+    that the two-observation debounce then dutifully confirms — reality stays
+    stable while the pending baseline is the glitch itself."""
+    prev = state.last_usage
+    if prev is not None and _is_backward_jump(prev, current):
+        if state.suspect_usage is None:
+            state.suspect_usage = dict(current)
+            return
+        # Backward state held across two consecutive polls → treat as real.
+    state.suspect_usage = None
+    state.last_usage = current
+
+
+def _is_backward_jump(prev: dict[str, Any], current: dict[str, Any]) -> bool:
+    cur_reset = parse_iso(current.get("resets_at"))
+    prev_reset = parse_iso(prev.get("resets_at"))
+    if cur_reset is None or prev_reset is None:
+        return False
+    return (prev_reset - cur_reset).total_seconds() > REFRESH_RESET_EPSILON_SEC
 
 
 def _detect_refresh_edge(

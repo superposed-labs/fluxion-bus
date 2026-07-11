@@ -228,11 +228,17 @@ class RuleState:
     # (e.g. a provider usage endpoint intermittently serving a stale "fresh
     # window" snapshot) that would otherwise look like a real reset for one poll.
     pending_refresh: dict[str, Any] | None = None
+    # An observation whose resets_at moved backward vs `last_usage` — physically
+    # impossible for a real window, so it's quarantined instead of adopted as
+    # the baseline. Adopted only if the backward state persists a second
+    # consecutive observation (see engine.advance_baseline).
+    suspect_usage: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> RuleState:
         last_usage = raw.get("last_usage")
         pending_refresh = raw.get("pending_refresh")
+        suspect_usage = raw.get("suspect_usage")
         return cls(
             last_fired_at=raw.get("last_fired_at"),
             last_eval_at=raw.get("last_eval_at"),
@@ -240,6 +246,7 @@ class RuleState:
             runs_today_date=str(raw.get("runs_today_date", "")),
             last_usage=dict(last_usage) if isinstance(last_usage, dict) else None,
             pending_refresh=dict(pending_refresh) if isinstance(pending_refresh, dict) else None,
+            suspect_usage=dict(suspect_usage) if isinstance(suspect_usage, dict) else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,4 +257,5 @@ class RuleState:
             "runs_today_date": self.runs_today_date,
             "last_usage": self.last_usage,
             "pending_refresh": self.pending_refresh,
+            "suspect_usage": self.suspect_usage,
         }
