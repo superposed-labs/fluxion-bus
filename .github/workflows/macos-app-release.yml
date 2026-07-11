@@ -12,7 +12,11 @@ permissions:
 jobs:
   build:
     name: Build Fluxion.app
-    runs-on: macos-14
+    # macos-26: the linked macOS SDK must be current — on macOS 26 (Tahoe)
+    # hosts, WKWebView renders legacy light-colored native scrollbars in apps
+    # linked against pre-26 SDKs, ignoring the console's scrollbar CSS. The
+    # deployment target stays macOS 12.0 (set in desktop/build.sh).
+    runs-on: macos-26
 
     steps:
       - name: Checkout
