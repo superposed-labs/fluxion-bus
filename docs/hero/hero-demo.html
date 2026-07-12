@@ -73,7 +73,8 @@
     border-bottom:1px solid rgba(255,255,255,.05); font-size:12px; color:var(--fg-1); z-index:6;
   }
   .mb-left{display:flex; align-items:center; gap:15px}
-  .mb-left .app{font-weight:700; color:var(--fg-0)}
+  .mb-left .app{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--fg-0)}
+  .mb-left .app img{width:15px;height:15px;display:block}
   .mb-left .mi{color:var(--fg-2); font-weight:500}
   .mb-right{display:flex; align-items:center; gap:12px}
   .mb-right .clock{color:var(--fg-2); font-variant-numeric:tabular-nums}
@@ -286,7 +287,7 @@
 
       <!-- menu bar -->
       <div class="menubar">
-        <div class="mb-left"><span class="app">Fluxion</span><span class="mi">File</span><span class="mi">Window</span><span class="mi">Help</span></div>
+        <div class="mb-left"><span class="app"><img src="../../assets/brand/fluxion-logo.svg" alt="">Fluxion</span><span class="mi">File</span><span class="mi">Window</span><span class="mi">Help</span></div>
         <div class="mb-right"><span class="clock">12:05</span></div>
       </div>
 

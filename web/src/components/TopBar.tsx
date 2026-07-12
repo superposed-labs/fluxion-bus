@@ -50,7 +50,7 @@ export function TopBar({
   return (
     <div className="topbar">
       <div className="brand">
-        <span className="brand-mark" />
+        <img className="brand-mark" src="/fluxion-logo.svg" alt="" aria-hidden="true" />
         Fluxion
       </div>
 
