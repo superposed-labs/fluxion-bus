@@ -1,4 +1,8 @@
-# Fluxion Bus
+<p align="center">
+  <img src="assets/brand/fluxion-logo.svg" width="132" alt="Fluxion logo">
+</p>
+
+<h1 align="center">Fluxion Bus</h1>
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
