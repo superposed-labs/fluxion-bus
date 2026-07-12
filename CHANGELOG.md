@@ -9,6 +9,22 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-12
+
+### Changed
+
+- **Branding** — refreshed Fluxion's logo and macOS app icon, and added matching
+  web favicon and touch-icon assets.
+
+### Fixed
+
+- **Pricing data** — newer bundled price tables now take precedence over stale
+  local caches, refreshed prices are picked up by running services without a
+  restart, and the usage CLI always writes to the configured cache location.
+- **Scheduler** — transient usage samples with a backward `resets_at` timestamp
+  are quarantined until confirmed, preventing false quota-reset alerts when the
+  next poll recovers.
+
 ## [1.0.3] - 2026-07-11
 
 ### Added
@@ -93,7 +109,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.0...v1.0.1
