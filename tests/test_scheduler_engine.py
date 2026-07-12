@@ -58,13 +58,14 @@ def _usage(
 
 def _step(rule, state, now, usage, tick_sec=60):
     """Evaluate one tick, then mirror the daemon's post-eval baseline update
-    (``state.last_usage = observe_window(...)``) so multi-tick refresh scenarios
-    — including the two-observation debounce — can be driven from tests."""
+    (``engine.advance_baseline``) so multi-tick refresh scenarios — including
+    the two-observation debounce and the backward-resets_at quarantine — can be
+    driven from tests."""
     decision = engine.evaluate_rule(rule, state, now, usage, tick_sec=tick_sec)
     if rule.trigger.type == "quota_refresh":
         obs = engine.observe_window(usage, rule.trigger.provider, rule.trigger.window_key)
         if obs is not None:
-            state.last_usage = obs
+            engine.advance_baseline(state, obs)
     return decision
 
 
@@ -167,6 +168,87 @@ def test_refresh_glitch_reverting_next_poll_never_fires():
     )
     assert not recovered.fire
     assert state.pending_refresh is None
+
+
+def test_refresh_backward_glitch_rebound_never_fires():
+    """A one-sample stale snapshot with an *earlier* resets_at must not poison
+    the baseline: without quarantine, the recovery poll (real value again)
+    looks like a forward reset jump against the glitch, and the debounce then
+    "confirms" it against the glitch baseline while reality stays stable.
+    Regression for the 2026-07-11 codex/5h false "(reset advanced)" alerts;
+    values taken from the real anchor log."""
+    rule = _refresh_rule(window="5h")
+    real_reset = _utc(2026, 7, 11, 4, 27, 54).isoformat()
+    phantom_reset = _utc(2026, 7, 11, 4, 6, 6).isoformat()
+    state = RuleState(
+        last_usage={
+            "used_percent": 100.0,
+            "resets_at": real_reset,
+            "observed_at": _utc(2026, 7, 11, 2, 47, 59).isoformat(),
+        }
+    )
+    # Glitch sample: used falls, resets_at moves backward → quarantined.
+    glitch = _step(
+        rule,
+        state,
+        _utc(2026, 7, 11, 2, 48, 59),
+        _usage(
+            window="5h",
+            used=26.0,
+            resets_at=phantom_reset,
+            fetched_at=_utc(2026, 7, 11, 2, 48, 59).isoformat(),
+        ),
+    )
+    assert not glitch.fire
+    assert state.suspect_usage is not None
+    assert state.last_usage["resets_at"] == real_reset  # baseline held
+    # Recovery: identical to the held baseline → no edge, quarantine cleared.
+    for minute, second in ((50, 3), (51, 4)):
+        recovered = _step(
+            rule,
+            state,
+            _utc(2026, 7, 11, 2, minute, second),
+            _usage(
+                window="5h",
+                used=100.0,
+                resets_at=real_reset,
+                fetched_at=_utc(2026, 7, 11, 2, minute, second).isoformat(),
+            ),
+        )
+        assert not recovered.fire
+        assert state.pending_refresh is None
+    assert state.suspect_usage is None
+
+
+def test_refresh_backward_state_adopted_after_two_polls_and_real_reset_fires():
+    """A backward resets_at that *persists* two consecutive polls is real (the
+    provider re-reported the window) — it must be adopted as the baseline, and
+    a genuine reset accompanying it (used cliff) must still notify."""
+    rule = _refresh_rule(window="5h")
+    old_reset = _utc(2026, 7, 11, 4, 27, 54).isoformat()
+    earlier_reset = _utc(2026, 7, 11, 4, 6, 6).isoformat()
+    state = RuleState(last_usage={"used_percent": 90.0, "resets_at": old_reset})
+    # Backward + used cliff: quarantined for the baseline, but the used-cliff
+    # edge (vs the held baseline) arms the debounce latch as usual.
+    first = _step(
+        rule,
+        state,
+        _utc(2026, 7, 11, 3, 0),
+        _usage(window="5h", used=1.0, resets_at=earlier_reset),
+    )
+    assert not first.fire
+    assert "pending confirmation" in first.reason
+    assert state.last_usage["resets_at"] == old_reset
+    # Persists → confirmed fire, and the baseline adopts the backward state.
+    second = _step(
+        rule,
+        state,
+        _utc(2026, 7, 11, 3, 1),
+        _usage(window="5h", used=1.0, resets_at=earlier_reset),
+    )
+    assert second.fire
+    assert state.suspect_usage is None
+    assert state.last_usage["resets_at"] == earlier_reset
 
 
 def test_refresh_does_not_fire_when_future_reset_rolls_forward():
