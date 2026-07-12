@@ -1,10 +1,13 @@
 """Per-turn cost estimation from the dated model-price table.
 
-Rates are sourced via ``price_data.load_price_json`` (refreshed cache → bundled
-snapshot) and resolved with a cascade: exact model id → family substring
-(opus/sonnet/haiku/mini/...) → coarse provider fallback → $0. This is the one
-concern with its own change cadence (prices move; see the update-model-prices
-skill), so it lives apart from the parsing/aggregation pipeline.
+Rates are sourced via ``price_data.load_price_json`` (the newer of the
+refreshed cache and the bundled snapshot) and resolved with a cascade: exact
+model id → family substring (opus/sonnet/haiku/mini/...) → coarse provider
+fallback → $0. The parsed table and resolved rates are cached keyed on
+``price_data.price_file_stamp``, so a price file rewritten on disk is picked up
+on the next lookup without a service restart. This is the one concern with its
+own change cadence (prices move; see the update-model-prices skill), so it
+lives apart from the parsing/aggregation pipeline.
 """
 
 from __future__ import annotations
@@ -85,14 +88,21 @@ _FALLBACK_PRICES: dict[str, Any] = {
 }
 
 
-@functools.lru_cache(maxsize=1)
-def _load_prices() -> dict[str, Any]:
+@functools.lru_cache(maxsize=2)
+def _load_prices_for_stamp(stamp: tuple) -> dict[str, Any]:
     data = price_data.load_price_json("model_prices.json")
     if isinstance(data, dict):
         for section in ("models", "fast", "families", "providers"):
             data.setdefault(section, {})
         return data
     return _FALLBACK_PRICES
+
+
+def _load_prices() -> dict[str, Any]:
+    """The parsed model-price table, re-read whenever either source file
+    changes on disk (the stamp is the cache key), so refreshes and upgrades
+    land in a running service without a restart."""
+    return _load_prices_for_stamp(price_data.price_file_stamp("model_prices.json"))
 
 
 def _pick_rate(rate_list: Any, at_date: str | None) -> dict[str, float] | None:
@@ -143,13 +153,9 @@ def _resolve_fast(
 
 
 @functools.lru_cache(maxsize=8192)
-def _rates_for(
-    provider: str, model: str, at_date: str | None = None, fast: bool = False
+def _rates_for_stamp(
+    stamp: tuple, provider: str, model: str, at_date: str | None, fast: bool
 ) -> dict[str, float] | None:
-    """Resolve the rate for a model, optionally as-of a date (YYYY-MM-DD) so a
-    token is priced at whatever rate was in effect when it was used, and
-    optionally at the Fast-mode premium. Cached across the many entries that
-    share a (provider, model, date, fast)."""
     prices = _load_prices()
     low = model.lower()
     if fast:
@@ -167,6 +173,24 @@ def _rates_for(
             if rate is not None:
                 return rate
     return _pick_rate(prices["providers"].get(provider), at_date)
+
+
+def _rates_for(
+    provider: str, model: str, at_date: str | None = None, fast: bool = False
+) -> dict[str, float] | None:
+    """Resolve the rate for a model, optionally as-of a date (YYYY-MM-DD) so a
+    token is priced at whatever rate was in effect when it was used, and
+    optionally at the Fast-mode premium. Cached across the many entries that
+    share a (provider, model, date, fast); the file stamp in the key makes a
+    price file rewritten on disk take effect without a restart."""
+    stamp = price_data.price_file_stamp("model_prices.json")
+    return _rates_for_stamp(stamp, provider, model, at_date, fast)
+
+
+# The resolver cache lives on the stamped inner function; expose its clearer on
+# the public name so callers (tests, price_data._invalidate_loaders) don't
+# depend on the two-layer split.
+_rates_for.cache_clear = _rates_for_stamp.cache_clear  # type: ignore[attr-defined]
 
 
 def _rate_for_entry(e: UsageEntry, rate: dict[str, float] | None) -> dict[str, float] | None:

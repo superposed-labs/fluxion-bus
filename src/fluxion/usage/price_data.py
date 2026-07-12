@@ -1,11 +1,17 @@
-"""Load the LLM price tables with a cache → bundled → fallback cascade, and
-optionally refresh the cache from the shared standalone repo.
+"""Load the LLM price tables, choosing the freshest of the refreshed cache and
+the bundled snapshot, and optionally refresh the cache from the shared repo.
 
-**Local-first by design.** The loaders NEVER touch the network. They prefer a
-locally-refreshed cache file (if one exists), else the snapshot bundled with
-this package. The cache is only ever written by an explicit, opt-in `refresh()`
-(exposed as `fluxion-usage --refresh-prices`), so nothing reaches out to the
-network unasked.
+**Local-first by design.** The loaders NEVER touch the network. Each table has
+two on-disk candidates — a locally-refreshed cache file and the snapshot
+bundled with this package — and `load_price_json` uses whichever carries the
+newer top-level `updated_at`. The bundled snapshot is therefore a floor: an app
+upgrade that ships newer prices takes effect immediately even when a stale
+cache exists, and the cache only ever adds data newer than the release.
+
+Consumers key their parsed-table caches on `price_file_stamp()`, so a rewrite
+of either candidate (background refresh, `fluxion-usage --refresh-prices`, an
+upgrade replacing the bundle) is picked up by running services on the next
+lookup — no restart, and never any network I/O on the request path.
 
 Source of truth: https://github.com/superposed-labs/llm-price-table
 (the in-package `model_prices.json` / `plan_prices.json` are the bundled
@@ -41,18 +47,46 @@ def _cache_dir() -> Path:
     return root / "price_cache"
 
 
+def _read_price_file(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _updated_at(data: dict[str, Any] | None) -> str:
+    value = data.get("updated_at") if data else None
+    return value if isinstance(value, str) else ""
+
+
 def load_price_json(name: str) -> dict[str, Any] | None:
-    """Return the parsed price file, preferring a refreshed cache over the
-    bundled snapshot. None if neither is readable (the caller applies its own
-    embedded fallback). Never hits the network."""
+    """Return the parsed price file, choosing whichever of the refreshed cache
+    and the bundled snapshot has the newer top-level `updated_at` (ISO dates,
+    so string comparison orders them). The bundled snapshot wins ties — it went
+    through release review — and a candidate that is missing, unparseable, or
+    undated loses to a dated one. None if neither is readable (the caller
+    applies its own embedded fallback). Never hits the network."""
+    cached = _read_price_file(_cache_dir() / name)
+    bundled = _read_price_file(_BUNDLED_DIR / name)
+    if cached is None or bundled is None:
+        return cached if bundled is None else bundled
+    return cached if _updated_at(cached) > _updated_at(bundled) else bundled
+
+
+def price_file_stamp(name: str) -> tuple[tuple[int, int] | None, ...]:
+    """Cheap change token for `name`'s two candidate sources: (mtime_ns, size)
+    of the cache and bundled copies, None where absent. Parsed-table caches key
+    on it so any on-disk change is noticed on the next lookup at the cost of
+    two stat calls."""
+    stamp: list[tuple[int, int] | None] = []
     for path in (_cache_dir() / name, _BUNDLED_DIR / name):
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
+            st = path.stat()
+            stamp.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append(None)
+    return tuple(stamp)
 
 
 def _url_for(name: str) -> str:
@@ -62,12 +96,16 @@ def _url_for(name: str) -> str:
     return f"{_DEFAULT_RAW}/{name}"
 
 
-def refresh(*, timeout: float = 10.0) -> list[dict[str, Any]]:
+def refresh(*, timeout: float = 10.0, cache_dir: Path | None = None) -> list[dict[str, Any]]:
     """Fetch the latest price files from the shared repo into the local cache.
     Explicit / opt-in only — this is the one place that uses the network. JSON
     is validated before writing, so a bad fetch can't corrupt the cache.
-    Returns a per-file result list (ok / error)."""
-    cache = _cache_dir()
+    Returns a per-file result list (ok / error) with absolute paths.
+
+    `cache_dir` overrides the env-derived cache location; the CLI passes the
+    settings-resolved data dir so a refresh run from any cwd lands where the
+    services read."""
+    cache = (cache_dir if cache_dir is not None else _cache_dir()).expanduser().resolve()
     results: list[dict[str, Any]] = []
     for name in PRICE_FILES:
         url = _url_for(name)
@@ -126,15 +164,17 @@ def _is_stale() -> bool:
 
 
 def _invalidate_loaders() -> None:
-    """Clear the consumers' lru_cached loaders so a running service picks up the
-    freshly refreshed prices without a restart. Lazy import avoids a circular
-    dependency (history/plan_prices import this module)."""
+    """Drop the consumers' cached tables after a refresh. The stamp-keyed
+    loaders would notice the rewritten files on their own; clearing just stops
+    entries for the replaced files from lingering in memory. Lazy import avoids
+    a circular dependency (history/plan_prices import this module)."""
     try:
-        from fluxion.usage import history, plan_prices
+        from fluxion.usage import plan_prices
+        from fluxion.usage.history import pricing
 
-        history._load_prices.cache_clear()
-        history._rates_for.cache_clear()
-        plan_prices._load_plan_prices.cache_clear()
+        pricing._load_prices_for_stamp.cache_clear()
+        pricing._rates_for.cache_clear()
+        plan_prices._load_plan_prices_for_stamp.cache_clear()
     except Exception:
         pass
 
