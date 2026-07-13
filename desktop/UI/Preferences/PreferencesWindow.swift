@@ -1100,6 +1100,14 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         UserDefaults.standard.synchronize()
         languageRestartNotice?.isHidden = (next == initialAppLanguage)
 
+        // Keep the backend's notification/reply locale in step with the app
+        // language. Written only on an explicit change here, so a manually
+        // edited .env value stays untouched until the user picks a language.
+        let locale = L10n.pythonLocale(for: next)
+        if appDelegate.envVals["FLUXION_UI_LOCALE"] != locale {
+            appDelegate.saveEnv(updates: ["FLUXION_UI_LOCALE": locale])
+        }
+
         if let search = searchField,
            !search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             filterSettings(query: search.stringValue)

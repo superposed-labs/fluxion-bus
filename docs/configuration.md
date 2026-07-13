@@ -626,7 +626,7 @@ minimal. The table below covers the most commonly tuned keys.
 | `FLUXION_STATUS_UPDATES` | `RUNNING,FAILED,CANCELED` | Status notifications to send |
 | `FLUXION_UPLOAD_LOG_ON_SUCCESS` | `false` | Upload executor logs on success |
 | `FLUXION_LOCALE_MODE` | `auto` | `fixed` or `auto` (infers from message text) |
-| `FLUXION_UI_LOCALE` | `en` | Default locale (`zh` / `en` / `ja`) |
+| `FLUXION_UI_LOCALE` | `en` | Default locale (`zh` / `en` / `ja`) for replies and push notifications (quota resets etc.). The macOS app keeps this in sync when you change its language in Preferences |
 | `FLUXION_SLACK_TYPING_HEARTBEAT_SEC` | `6` | Typing heartbeat during long runs |
 | `FLUXION_SLACK_RUNNING_UPDATE_SEC` | `30` | Periodic in-progress status interval |
 

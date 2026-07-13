@@ -21,7 +21,13 @@ enum L10n {
     }
 
     static var pythonLocale: String {
-        switch resolvedAppLanguage {
+        return pythonLocale(for: appLanguage)
+    }
+
+    /// Backend locale (`zh`/`en`/`ja`) for a given app-language selection,
+    /// resolving "system" against the current macOS preferred languages.
+    static func pythonLocale(for language: String) -> String {
+        switch resolvedLanguage(language) {
         case "zh-Hans": return "zh"
         case "ja": return "ja"
         default: return "en"
