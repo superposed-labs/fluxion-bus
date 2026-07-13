@@ -9,6 +9,22 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-14
+
+### Added
+
+- **Quota health indicators** — quota bars now use clear remaining-capacity
+  colors in the macOS notch and menu, making low limits easier to spot.
+- **Localized reset notifications** — quota-reset alerts now use human-readable
+  English, Simplified Chinese, or Japanese copy, including the detected reset
+  reason.
+
+### Fixed
+
+- **Codex quota display** — when Codex temporarily omits its 5-hour window,
+  Fluxion now shows that limit as uncapped while keeping weekly quotas and
+  countdowns accurate.
+
 ## [1.0.4] - 2026-07-12
 
 ### Changed
@@ -109,7 +125,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.1...v1.0.2
