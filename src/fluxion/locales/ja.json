@@ -27,5 +27,14 @@
   "approval.allowed": "承認されました。Fluxion にタスクを送信できるようになりました。",
   "pending.notify.title": "新しい {channel} ユーザーが承認待ちです",
   "pending.notify.body": "{user_id}: {preview}",
-  "pending.notify.body_no_preview": "{user_id}"
+  "pending.notify.body_no_preview": "{user_id}",
+  "quota_reset.title": "Fluxion クォータリセット",
+  "quota_reset.headline": "{provider} の {window} クォータがリセットされました。利用を再開できます",
+  "quota_reset.reason.reset_advanced": "新しいウィンドウの開始を検出",
+  "quota_reset.reason.resets_cleared": "旧ウィンドウが期限切れになりました",
+  "quota_reset.reason.usage_dropped": "使用率が {prev}% から {cur}% に低下",
+  "quota_reset.detected_via": "検出根拠: {detail}",
+  "quota_reset.rule": "ルール: {rule}",
+  "quota_reset.footer": "Fluxion クォータリセット自動化",
+  "autoping.anchor_failed": "{pool} は {attempts} 回の ping でもアンカーできませんでした。次のリセットまで待機します。"
 }

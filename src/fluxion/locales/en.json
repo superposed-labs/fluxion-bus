@@ -27,5 +27,14 @@
   "approval.allowed": "Approved. You can now send tasks to Fluxion.",
   "pending.notify.title": "New {channel} user awaiting approval",
   "pending.notify.body": "{user_id}: {preview}",
-  "pending.notify.body_no_preview": "{user_id}"
+  "pending.notify.body_no_preview": "{user_id}",
+  "quota_reset.title": "Fluxion Quota Reset",
+  "quota_reset.headline": "{provider} {window} quota has reset — you're good to go",
+  "quota_reset.reason.reset_advanced": "a new usage window started",
+  "quota_reset.reason.resets_cleared": "the old window expired",
+  "quota_reset.reason.usage_dropped": "usage fell from {prev}% to {cur}%",
+  "quota_reset.detected_via": "Detected via: {detail}",
+  "quota_reset.rule": "Rule: {rule}",
+  "quota_reset.footer": "Fluxion Quota Reset Automator",
+  "autoping.anchor_failed": "{pool} did not anchor after {attempts} pings — giving up until the next reset."
 }

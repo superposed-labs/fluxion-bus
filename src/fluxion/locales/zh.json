@@ -27,5 +27,14 @@
   "approval.allowed": "已批准。你现在可以向 Fluxion 发送任务了。",
   "pending.notify.title": "新的 {channel} 用户等待审批",
   "pending.notify.body": "{user_id}：{preview}",
-  "pending.notify.body_no_preview": "{user_id}"
+  "pending.notify.body_no_preview": "{user_id}",
+  "quota_reset.title": "Fluxion 额度重置",
+  "quota_reset.headline": "{provider} {window} 额度已重置，可以继续使用了",
+  "quota_reset.reason.reset_advanced": "检测到新窗口开始",
+  "quota_reset.reason.resets_cleared": "旧窗口已到期",
+  "quota_reset.reason.usage_dropped": "用量从 {prev}% 回落到 {cur}%",
+  "quota_reset.detected_via": "检测依据：{detail}",
+  "quota_reset.rule": "规则：{rule}",
+  "quota_reset.footer": "Fluxion 额度重置助手",
+  "autoping.anchor_failed": "{pool} 连续 {attempts} 次 ping 后仍未锚定，暂停到下次重置再试。"
 }

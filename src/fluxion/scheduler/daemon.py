@@ -11,7 +11,9 @@ from uuid import uuid4
 
 from fluxion.config.settings import Settings, env_file_path
 from fluxion.executors.antigravity.models import select_antigravity_ping_model
+from fluxion.i18n import normalize_locale, t
 from fluxion.scheduler import engine
+from fluxion.scheduler.messages import build_quota_reset_copy
 from fluxion.scheduler.models import (
     ACTION_NOTIFY,
     ACTION_PING,
@@ -370,7 +372,7 @@ class SchedulerDaemon:
         rule: ScheduleRule,
         state: RuleState,
         now: datetime,
-        reason: str,
+        decision: engine.FireDecision,
         *,
         notify: bool = True,
     ) -> None:
@@ -381,7 +383,7 @@ class SchedulerDaemon:
         if pool_key in self._anchors:
             return
         if notify:
-            self._fire(rule, state, now, reason, do_submit=False)
+            self._fire(rule, state, now, decision, do_submit=False)
         self._anchors[pool_key] = _AnchorState(
             event_id=uuid4().hex[:12], provider=rule.trigger.provider
         )
@@ -460,10 +462,8 @@ class SchedulerDaemon:
             return False
 
     def _notify_anchor_failed(self, pool_key: str, attempts: int) -> None:
-        text = (
-            f"⚠️ [Fluxion Auto Ping] {pool_key} did not anchor after {attempts} "
-            "pings — giving up until the next reset."
-        )
+        body = t(self._ui_locale(), "autoping.anchor_failed", pool=pool_key, attempts=attempts)
+        text = f"⚠️ [Fluxion Auto Ping] {body}"
         if getattr(self._settings, "menu_slack_notify_refresh", False):
             self._notify_slack(text)
         if getattr(self._settings, "menu_telegram_notify_refresh", False):
@@ -512,16 +512,16 @@ class SchedulerDaemon:
                 if rule.action.type == ACTION_NOTIFY:
                     # Monitor rule: always notify (IM toggles gate the channels),
                     # then ping only if the global Auto Ping switch is on.
-                    self._fire(rule, state, now, decision.reason, do_submit=False)
+                    self._fire(rule, state, now, decision, do_submit=False)
                     if getattr(self._settings, "autoping_enabled", False):
                         if rule.trigger.provider in _ANCHOR_PROVIDERS:
-                            self._start_anchoring(rule, state, now, decision.reason, notify=False)
+                            self._start_anchoring(rule, state, now, decision, notify=False)
                         elif not self._is_provider_exhausted(provider, usage, now)[0]:
                             self._submit_anchor_ping(provider, provider, uuid4().hex[:12])
                 elif rule.action.type == ACTION_PING and rule.trigger.provider in _ANCHOR_PROVIDERS:
                     # Burst path: arm anchoring; pings are driven by
                     # _advance_anchoring below (one per tick until anchored/cap).
-                    self._start_anchoring(rule, state, now, decision.reason)
+                    self._start_anchoring(rule, state, now, decision)
                 else:
                     is_exhausted, resets_at = self._is_provider_exhausted(provider, usage, now)
                     if is_exhausted and not getattr(rule, "run_now", False):
@@ -533,7 +533,7 @@ class SchedulerDaemon:
                             f" until {resets_at}" if resets_at else "",
                         )
                     else:
-                        self._fire(rule, state, now, decision.reason)
+                        self._fire(rule, state, now, decision)
 
                 # Clear run_now flag if set
                 if getattr(rule, "run_now", False):
@@ -1213,15 +1213,19 @@ class SchedulerDaemon:
         if sent:
             log.info("Sent Feishu %s notification to %d user(s)", kind, sent)
 
+    def _ui_locale(self) -> str:
+        return normalize_locale(getattr(self._settings, "ui_locale", "en"))
+
     def _fire(
         self,
         rule: ScheduleRule,
         state: RuleState,
         now: datetime,
-        reason: str,
+        decision: engine.FireDecision,
         *,
         do_submit: bool = True,
     ) -> None:
+        reason = decision.reason
         log.info("firing schedule %s (%s): %s", rule.id, rule.name, reason)
 
         # Send quota-reset notifications to whichever channels are enabled.
@@ -1241,99 +1245,21 @@ class SchedulerDaemon:
             or notify_line
             or notify_macos
         ):
-            msg = f"🔔 *[Fluxion Quota Reset]* {rule.name} triggered: {reason}."
-
-            provider_emoji = {"claude": "🧡", "codex": "💜", "antigravity": "💙"}
-            emoji = provider_emoji.get(rule.trigger.provider.lower(), "🤖")
-            prov_name = rule.trigger.provider.title()
-            # Slack mrkdwn uses single-star bold; Telegram is authored as
-            # GitHub-Markdown (double-star) and converted to HTML below.
-            provider_slack = f"{emoji} *{prov_name}*"
-            provider_tg = f"{emoji} **{prov_name}**"
-            window_key = rule.trigger.window_key or "N/A"
-
-            # Format a beautiful Block Kit layout for Slack.
-            blocks = [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"🔔 *[Fluxion Quota Reset]*\n*Rule:* `{rule.name}`",
-                    },
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {"type": "mrkdwn", "text": f"*Provider:*\n{provider_slack}"},
-                        {"type": "mrkdwn", "text": f"*Reset Window:*\n🕒 `{window_key}`"},
-                    ],
-                },
-                {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*Event Details:*\n`{reason}`"},
-                },
-                {
-                    "type": "context",
-                    "elements": [{"type": "mrkdwn", "text": "⚡ _Fluxion Quota Reset Automator_"}],
-                },
-            ]
+            copy = build_quota_reset_copy(rule, decision, self._ui_locale())
             if notify_slack:
-                self._notify_slack(msg, blocks=blocks)
+                self._notify_slack(copy.slack_fallback, blocks=copy.slack_blocks)
             if notify_telegram:
-                tg_text = (
-                    "🔔 **[Fluxion Quota Reset]**\n"
-                    f"**Rule:** `{rule.name}`\n"
-                    f"**Provider:** {provider_tg}\n"
-                    f"**Reset Window:** 🕒 `{window_key}`\n"
-                    f"**Event Details:** `{reason}`\n"
-                    "\n⚡ _Fluxion Quota Reset Automator_"
-                )
-                self._notify_telegram(tg_text)
+                self._notify_telegram(copy.telegram)
             if notify_qqbot:
-                qq_text = (
-                    "🔔 [Fluxion Quota Reset]\n"
-                    f"Rule: {rule.name}\n"
-                    f"Provider: {emoji} {prov_name}\n"
-                    f"Reset Window: 🕒 {window_key}\n"
-                    f"Event Details: {reason}\n"
-                    "\n⚡ Fluxion Quota Reset Automator"
-                )
-                self._notify_qqbot(qq_text)
+                self._notify_qqbot(copy.plain)
             if notify_feishu:
-                feishu_text = (
-                    "🔔 [Fluxion Quota Reset]\n"
-                    f"Rule: {rule.name}\n"
-                    f"Provider: {emoji} {prov_name}\n"
-                    f"Reset Window: 🕒 {window_key}\n"
-                    f"Event Details: {reason}\n"
-                    "\n⚡ Fluxion Quota Reset Automator"
-                )
-                self._notify_feishu(feishu_text)
+                self._notify_feishu(copy.plain)
             if notify_wechat:
-                wechat_text = (
-                    "🔔 [Fluxion Quota Reset]\n"
-                    f"Rule: {rule.name}\n"
-                    f"Provider: {emoji} {prov_name}\n"
-                    f"Reset Window: 🕒 {window_key}\n"
-                    f"Event Details: {reason}\n"
-                    "\n⚡ Fluxion Quota Reset Automator"
-                )
-                self._notify_wechat(wechat_text)
+                self._notify_wechat(copy.plain)
             if notify_line:
-                line_text = (
-                    "🔔 [Fluxion Quota Reset]\n"
-                    f"Rule: {rule.name}\n"
-                    f"Provider: {emoji} {prov_name}\n"
-                    f"Reset Window: 🕒 {window_key}\n"
-                    f"Event Details: {reason}\n"
-                    "\n⚡ Fluxion Quota Reset Automator"
-                )
-                self._notify_line(line_text)
+                self._notify_line(copy.plain)
             if notify_macos:
-                self._notify_macos(
-                    "Quota Reset",
-                    f"{emoji} {prov_name} {window_key} quota has reset — {reason}",
-                )
+                self._notify_macos(copy.macos_title, copy.macos_body)
         # Notify-only mode: the burst state machine sends the reset notification
         # once at event start, then submits pings itself (silently).
         if not do_submit:
