@@ -67,6 +67,24 @@ struct QuotaWindow: Codable {
     }
 }
 
+/// OpenAI currently omits Codex's 5-hour window while continuing to return a
+/// healthy weekly window. Keep this as presentation-only state: synthesizing a
+/// quota window would make schedulers and reset notifications treat it as real.
+func isCodexFiveHourTemporarilyUncapped(_ provider: ProviderUsage) -> Bool {
+    guard provider.provider.lowercased() == "codex", provider.status == "ok" else {
+        return false
+    }
+    let hasFiveHour = provider.windows.contains { window in
+        let hay = "\((window.key ?? "").lowercased()) \((window.label ?? "").lowercased())"
+        return window.windowMinutes == 300 || hay.contains("5h") || hay.contains("5-hour")
+    }
+    let hasWeekly = provider.windows.contains { window in
+        let hay = "\((window.key ?? "").lowercased()) \((window.label ?? "").lowercased())"
+        return window.windowMinutes == 10080 || hay.contains("7d") || hay.contains("week")
+    }
+    return hasWeekly && !hasFiveHour
+}
+
 struct AvailabilityEntry: Codable {
     let status: String
     let detail: String

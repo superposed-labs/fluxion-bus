@@ -37,6 +37,7 @@
 "menu.usage.note.api_value" = "按量 API 价值使用公开标价估算。";
 "menu.usage.note.subscription" = "订阅席位显示配额，不代表花费。";
 "menu.group.native" = "原生";
+"menu.five_hour_temporarily_uncapped" = "暂不设限";
 
 "notch.page.remaining" = "剩余额度";
 "notch.page.used_today" = "今日用量";
@@ -54,8 +55,9 @@
 "notch.no_consumption" = "暂无消耗";
 "notch.api_value_est" = "~$%.2f 估算";
 "notch.api_value" = "≈$%.2f API 价值";
-"notch.five_hour_left" = "5H LEFT";
-"notch.five_hour_window" = "5H WINDOW";
+"notch.five_hour_left" = "5H left";
+"notch.five_hour_window" = "5H window";
+"notch.weekly_left" = "Weekly left";
 "notch.all_spent" = "ALL SPENT";
 "notch.weekly_cap" = "WK CAP";
 "notch.five_hour_empty" = "5H EMPTY";
@@ -414,4 +416,3 @@
 "welcome.executor.title" = "默认 Agent";
 "welcome.executor.desc" = "新任务默认由该 Agent 执行；项目或会话可另行指定。";
 "menu.updating_components" = "正在更新组件...";
-

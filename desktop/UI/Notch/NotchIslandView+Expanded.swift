@@ -282,7 +282,7 @@ extension NotchIslandView {
             if useAntigravityRows {
                 antigravityWeeklyRows(weeklyPools, state: state, visual: visual)
             } else {
-                regularQuotaRows(state: state, visual: visual)
+                regularQuotaRows(state: state, visual: visual, provider: provider)
             }
 
             if !scopedRows.isEmpty {
@@ -310,22 +310,65 @@ extension NotchIslandView {
     }
 
     @ViewBuilder
-    func regularQuotaRows(state: ProviderQuotaState, visual: ProviderVisual) -> some View {
+    func regularQuotaRows(state: ProviderQuotaState, visual: ProviderVisual, provider: ProviderUsage) -> some View {
         VStack(spacing: 6) {
-            quotaInfoLine(
-                title: L10n.tr("notch.row.5h"),
-                snapshot: state.fiveHour,
-                showPercent: false,
-                color: state.fiveHour?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.48)
-            )
-            quotaInfoLine(
-                title: L10n.tr("notch.row.weekly"),
-                snapshot: state.weekly,
-                showPercent: true,
-                color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
-            )
-            quotaProgressBar(remaining: state.weekly?.remaining ?? 0, color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color(visual.brandColor))
+            if state.fiveHour != nil {
+                quotaInfoLine(
+                    title: L10n.tr("notch.row.5h"),
+                    snapshot: state.fiveHour,
+                    showPercent: false,
+                    color: state.fiveHour?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.48)
+                )
+            } else if isCodexFiveHourTemporarilyUncapped(provider) {
+                quotaStatusLine(
+                    title: L10n.tr("notch.row.5h"),
+                    status: L10n.tr("menu.five_hour_temporarily_uncapped")
+                )
+            }
+            if state.weekly != nil {
+                quotaInfoLine(
+                    title: L10n.tr("notch.row.weekly"),
+                    snapshot: state.weekly,
+                    showPercent: true,
+                    color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
+                )
+                // The weekly bar visualizes the *long* window as a complement to
+                // the ring's *short* (5h) window. When 5h is absent/uncapped
+                // (e.g. Codex), the ring itself falls back to headlining weekly,
+                // so the bar would just redraw the same percentage — skip it.
+                // The weekly row above still carries the percent and countdown.
+                // Any non-healthy mode shows a lock reason in the ring, not
+                // weekly, so the bar stays as weekly's only visualization there.
+                let ringHeadlinesWeekly = state.mode == .healthy && state.fiveHour == nil
+                if !ringHeadlinesWeekly {
+                    quotaProgressBar(remaining: state.weekly?.remaining ?? 0, color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color(visual.brandColor))
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    func quotaStatusLine(title: String, status: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.8)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            // Match the timer rows' right column: leading-aligned in the same
+            // 56pt box so a short status ("一時解除") starts at the same x as the
+            // "6d 04h" timer in the weekly row directly below, instead of hugging
+            // the panel's right edge. There's no clock glyph (nothing counts down
+            // for an uncapped window), so that column is simply left empty. A long
+            // string (en "Temporarily uncapped") grows past 56pt and still lands
+            // against the trailing edge, unchanged.
+            Text(status)
+                .font(.system(size: 9.5, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 56, alignment: .leading)
+        }
+        .foregroundColor(Color.white.opacity(0.38))
     }
 
     @ViewBuilder
@@ -583,9 +626,10 @@ extension NotchIslandView {
                 let splitRing = splitRingSnapshot(for: p, state: state)
                 let ringPercentage = splitRing?.remaining ?? (state.mode == .healthy ? (state.fiveHour?.remaining ?? state.bindingRemaining) : state.bindingRemaining)
                 let ringColor = splitRing.map { splitQuotaColor(for: $0, visual: visual) } ?? Color(visual.brandColor)
-                let fiveHourIdle = state.fiveHour?.idle ?? false
                 let ringSubtitle = state.mode == .healthy
-                    ? (splitRing.map { splitQuotaName(for: $0) } ?? (fiveHourIdle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left")))
+                    ? (splitRing.map { splitQuotaName(for: $0) }
+                        ?? (state.fiveHour.map { $0.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left") }
+                            ?? (state.weekly != nil ? L10n.tr("notch.weekly_left") : L10n.tr("notch.unavailable"))))
                     : state.lockReason
                 // Dual-pool providers get concentric per-pool 5h arcs so both
                 // pools stay visible at once; a blocked pool's arc renders as

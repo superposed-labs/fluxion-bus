@@ -133,10 +133,19 @@ extension NotchIslandView {
             }
         } else {
             // Single window — the one the user chose (5-hour or weekly).
-            let timer = model.peekReset == "week" ? getWeeklyResetTimer(for: p) : get5hResetTimer(for: p)
+            // If that window is absent, fall back to the real window that is
+            // available. Keep percent and countdown sourced from the same
+            // snapshot so a weekly percentage never accompanies a 5h timer.
+            let preferred = model.peekReset == "week"
+                ? (state.weekly ?? state.fiveHour)
+                : (state.fiveHour ?? state.weekly)
+            let timer = timerString(for: preferred)
             HStack(spacing: 6) {
                 peekDot(visual.brandColor)
-                peekPercent(remaining: state.bindingRemaining, tag: state.bindingTag)
+                peekPercent(
+                    remaining: preferred?.remaining ?? state.bindingRemaining,
+                    tag: preferred?.tag ?? state.bindingTag
+                )
                 if !timer.isEmpty && timer != "now" {
                     peekTimer(timer)
                 }

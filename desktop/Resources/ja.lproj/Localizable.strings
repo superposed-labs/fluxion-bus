@@ -37,6 +37,7 @@
 "menu.usage.note.api_value" = "従量制 API 価値は公開価格で見積もります。";
 "menu.usage.note.subscription" = "サブスクリプション席はクォータを示し、支出ではありません。";
 "menu.group.native" = "ネイティブ";
+"menu.five_hour_temporarily_uncapped" = "一時解除";
 
 "notch.page.remaining" = "残り";
 "notch.page.used_today" = "今日の使用量";
@@ -54,8 +55,9 @@
 "notch.no_consumption" = "消費なし";
 "notch.api_value_est" = "~$%.2f 推定";
 "notch.api_value" = "≈$%.2f API 価値";
-"notch.five_hour_left" = "5H LEFT";
-"notch.five_hour_window" = "5H WINDOW";
+"notch.five_hour_left" = "5H left";
+"notch.five_hour_window" = "5H window";
+"notch.weekly_left" = "Weekly left";
 "notch.all_spent" = "ALL SPENT";
 "notch.weekly_cap" = "WK CAP";
 "notch.five_hour_empty" = "5H EMPTY";
@@ -414,4 +416,3 @@
 "welcome.executor.title" = "デフォルトエージェント";
 "welcome.executor.desc" = "指定がない場合、新しいタスクはこのエージェントで実行されます。プロジェクトや会話ごとに変更できます。";
 "menu.updating_components" = "コンポーネントを更新中...";
-
