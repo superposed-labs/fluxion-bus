@@ -13,6 +13,17 @@ enum QuotaWindowKind {
     case weekly
 }
 
+// Percent-remaining thresholds that drive quota-bar color, shared by the notch
+// and the rich menu so "seeing red" happens at the same level on both surfaces.
+// The notch steps brand-color → red at `criticalRemaining` with no amber tier
+// (amber collides with brand hues like Claude's coral); the rich menu, whose
+// bars are semantic rather than brand-colored, adds an amber band in
+// [criticalRemaining, cautionRemaining).
+enum QuotaLevel {
+    static let criticalRemaining: Double = 15
+    static let cautionRemaining: Double = 30
+}
+
 enum BindingWindowLabel: String {
     case fiveHour = "5h"
     case weekly = "wk"

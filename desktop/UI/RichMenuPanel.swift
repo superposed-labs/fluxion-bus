@@ -403,11 +403,18 @@ final class RichMenuPanelView: NSView {
         }
 
         let remaining = max(0, 100 - used)
+        // Semantic three-tier bar (green → amber → red). The red line matches the
+        // notch's `QuotaLevel.criticalRemaining`; the amber caution band fills the
+        // gap up to `cautionRemaining`. Amber is at home here because these bars
+        // aren't brand-colored (unlike the notch, where amber would clash).
+        let barColor: NSColor = remaining < QuotaLevel.criticalRemaining
+            ? red
+            : (remaining < QuotaLevel.cautionRemaining ? amber : green)
         let barRect = NSRect(x: barX, y: y + 12, width: 130, height: 6)
-        drawBar(rect: barRect, percent: remaining, color: remaining <= 15 ? red : green)
+        drawBar(rect: barRect, percent: remaining, color: barColor)
         let pct = "\(Int(round(remaining)))"
         let pctWidth = width(pct, size: 13.0, weight: .semibold, monospaced: true)
-        draw(pct, x: pctX + 34 - pctWidth, y: y + 6, size: 13.0, weight: .semibold, color: remaining <= 15 ? red : text, monospaced: true)
+        draw(pct, x: pctX + 34 - pctWidth, y: y + 6, size: 13.0, weight: .semibold, color: remaining < QuotaLevel.criticalRemaining ? red : text, monospaced: true)
         draw("%", x: pctX + 37, y: y + 7, size: 11, weight: .regular, color: muted)
         let reset = resetDuration(window: w, fetchedAt: fetchedAt)
         let resetWidth = width(reset, size: 12.5, weight: .regular, monospaced: true)
