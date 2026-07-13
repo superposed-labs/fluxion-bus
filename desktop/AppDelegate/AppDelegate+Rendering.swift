@@ -466,6 +466,9 @@ extension AppDelegate {
         // Calculate max name length dynamically to avoid truncation
         var maxNameLen = 12
         for p in filtered where p.status == "ok" {
+            if isCodexFiveHourTemporarilyUncapped(p) {
+                maxNameLen = max(maxNameLen, self.visualWidth(L10n.tr("preferences.reset.5h")))
+            }
             for w in p.windows {
                 let name = menuQuotaWindowLabel(w, provider: p.provider)
                 let wLen = self.visualWidth(name)
@@ -641,6 +644,19 @@ extension AppDelegate {
                     }
                 }
             } else {
+                if isCodexFiveHourTemporarilyUncapped(p) {
+                    let uncappedItem = NSMenuItem()
+                    uncappedItem.isEnabled = true
+                    uncappedItem.image = self.imageForSymbol("infinity", color: NSColor.secondaryLabelColor)
+                    let displayName = L10n.tr("preferences.reset.5h")
+                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
+                    let rowStr = "  \(paddedName)            \(L10n.tr("menu.five_hour_temporarily_uncapped"))"
+                    uncappedItem.attributedTitle = NSMutableAttributedString(string: rowStr, attributes: [
+                        .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ])
+                    menu.addItem(uncappedItem)
+                }
                 for w in p.windows {
                     addWindowItem(w, menuQuotaWindowLabel(w, provider: p.provider))
                 }

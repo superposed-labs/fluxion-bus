@@ -194,14 +194,32 @@ struct NotchQuotaPresenter {
         }
         let fiveHour = getActive5hWindow(for: provider)
         let weekly = getActiveWeeklyWindow(for: provider)
-        let fiveRemaining = fiveHour?.remaining ?? 100.0
-        let weeklyRemaining = weekly?.remaining ?? 100.0
+        let bindingSnapshot: QuotaWindowSnapshot?
+        let bindingLabel: BindingWindowLabel
+        switch (fiveHour, weekly) {
+        case let (five?, week?):
+            if week.remaining < five.remaining {
+                bindingSnapshot = week
+                bindingLabel = .weekly
+            } else {
+                bindingSnapshot = five
+                bindingLabel = .fiveHour
+            }
+        case let (five?, nil):
+            bindingSnapshot = five
+            bindingLabel = .fiveHour
+        case let (nil, week?):
+            bindingSnapshot = week
+            bindingLabel = .weekly
+        case (nil, nil):
+            bindingSnapshot = nil
+            bindingLabel = .fiveHour
+        }
         let credits = getCredits(for: provider)
         let hasCredits = (credits ?? 0) > 0
-        let bindingLabel: BindingWindowLabel = weeklyRemaining < fiveRemaining ? .weekly : .fiveHour
-        let bindingRemaining = min(fiveRemaining, weeklyRemaining)
-        let weekZero = weeklyRemaining <= 0.0
-        let fiveZero = fiveRemaining <= 0.0
+        let bindingRemaining = bindingSnapshot?.remaining ?? 100.0
+        let weekZero = weekly.map { $0.remaining <= 0.0 } ?? false
+        let fiveZero = fiveHour.map { $0.remaining <= 0.0 } ?? false
         let depleted = weekZero || fiveZero
         let mode: ProviderDisplayMode
         if provider.status == "loading" {
@@ -216,7 +234,7 @@ struct NotchQuotaPresenter {
             mode = .healthy
         }
 
-        let bindingTag = bindingLabel == .weekly ? weekly?.tag : fiveHour?.tag
+        let bindingTag = bindingSnapshot?.tag
         let lockReason: String
         let note: String?
         if mode == .loading {

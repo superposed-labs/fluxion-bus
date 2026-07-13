@@ -184,13 +184,14 @@ class CodexUsageProbe:
             ("primary_window", "5h", "5-hour"),
             ("secondary_window", "7d", "Weekly"),
         ]
-        for source_key, key, label in specs:
+        for source_key, fallback_key, fallback_label in specs:
             obj = rate_limit.get(source_key)
             if not isinstance(obj, dict):
                 continue
             used = _normalize_percent(obj.get("used_percent"))
             resets = self._resolve_live_reset(obj)
             window_minutes = self._window_minutes(obj.get("limit_window_seconds"))
+            key, label = self._window_identity(window_minutes, fallback_key, fallback_label)
             if used is None and resets is None:
                 continue
             windows.append(
@@ -224,6 +225,23 @@ class CodexUsageProbe:
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
             return None
         return int(seconds) // 60 or None
+
+    @staticmethod
+    def _window_identity(
+        window_minutes: int | None, fallback_key: str, fallback_label: str
+    ) -> tuple[str, str]:
+        """Name Codex windows by duration, not their response position.
+
+        Historically ``primary`` meant 5 hours and ``secondary`` meant one
+        week. Codex can now omit the 5-hour limit and return the weekly limit
+        as ``primary``, so the field position is only a compatibility fallback
+        for older payloads that do not include a duration.
+        """
+        if window_minutes == 300:
+            return "5h", "5-hour"
+        if window_minutes == 10080:
+            return "7d", "Weekly"
+        return fallback_key, fallback_label
 
     @staticmethod
     def _resolve_live_reset(obj: dict[str, Any]) -> str | None:
@@ -270,13 +288,15 @@ class CodexUsageProbe:
     def _map_log_windows(self, rate_limits: dict[str, Any]) -> list[UsageWindow]:
         windows: list[UsageWindow] = []
         specs = [("primary", "5h", "5-hour"), ("secondary", "7d", "Weekly")]
-        for source_key, key, label in specs:
+        for source_key, fallback_key, fallback_label in specs:
             obj = rate_limits.get(source_key)
             if not isinstance(obj, dict):
                 continue
             used = _normalize_percent(obj.get("used_percent"))
             resets = _normalize_reset(obj.get("resets_at"))
             window_minutes = obj.get("window_minutes")
+            normalized_minutes = window_minutes if isinstance(window_minutes, int) else None
+            key, label = self._window_identity(normalized_minutes, fallback_key, fallback_label)
             if used is None and resets is None:
                 continue
             windows.append(
@@ -285,7 +305,7 @@ class CodexUsageProbe:
                     label=label,
                     used_percent=used,
                     resets_at=resets,
-                    window_minutes=window_minutes if isinstance(window_minutes, int) else None,
+                    window_minutes=normalized_minutes,
                 )
             )
         return windows

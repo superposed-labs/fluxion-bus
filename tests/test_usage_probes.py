@@ -125,6 +125,41 @@ def test_codex_live_maps_payload(monkeypatch):
     assert by_key["7d"].window_minutes == 10080
 
 
+def test_codex_live_maps_weekly_primary_by_duration(monkeypatch):
+    payload = {
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": True,
+            "limit_reached": False,
+            "primary_window": {
+                "used_percent": 1,
+                "limit_window_seconds": 604800,
+                "reset_after_seconds": 580301,
+                "reset_at": 1784487578,
+            },
+            "secondary_window": None,
+        },
+    }
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(
+        CodexUsageProbe,
+        "_http_get_json",
+        lambda self, url, headers: {} if "rate-limit-reset-credits" in url else payload,
+    )
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.status == STATUS_OK
+    assert len(usage.windows) == 1
+    window = usage.windows[0]
+    assert window.key == "7d"
+    assert window.label == "Weekly"
+    assert window.used_percent == 1.0
+    assert window.window_minutes == 10080
+    assert window.resets_at == _epoch_to_iso(1784487578)
+
+
 def test_codex_live_maps_credits(monkeypatch):
     payload = dict(_LIVE_PAYLOAD)
     payload["credits"] = {

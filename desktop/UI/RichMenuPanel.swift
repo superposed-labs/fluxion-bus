@@ -345,6 +345,10 @@ final class RichMenuPanelView: NSView {
                 }
             }
         } else {
+            if isCodexFiveHourTemporarilyUncapped(p) {
+                drawTemporarilyUncappedRow(y: y)
+                y += rowH
+            }
             for w in p.windows {
                 if p.provider == "claude" && w.key == "ai_credits" { continue }
                 drawQuotaRow(w, fetchedAt: p.fetchedAt, y: y, hoverID: "quota-\(p.provider)-\(w.key ?? w.label ?? "\(y)")", labelOverride: compactQuotaWindowLabel(w))
@@ -408,6 +412,15 @@ final class RichMenuPanelView: NSView {
         let reset = resetDuration(window: w, fetchedAt: fetchedAt)
         let resetWidth = width(reset, size: 12.5, weight: .regular, monospaced: true)
         draw(reset, x: resetX + 96 - resetWidth, y: y + 6, size: 12.5, weight: .regular, color: remaining <= 15 ? red : muted, monospaced: true)
+    }
+
+    private func drawTemporarilyUncappedRow(y: CGFloat) {
+        let rowX = outerPad + innerPad
+        let status = L10n.tr("menu.five_hour_temporarily_uncapped")
+        drawSymbol("infinity", x: rowX + 5, y: y + 8, size: 14, color: muted)
+        draw(L10n.tr("preferences.reset.5h"), x: rowX + 36, y: y + 6, size: 13.0, weight: .regular, color: text)
+        let statusWidth = width(status, size: 12.5, weight: .medium)
+        draw(status, x: bounds.width - outerPad - innerPad - statusWidth, y: y + 6, size: 12.5, weight: .medium, color: muted)
     }
 
     private func drawUsageLine(stats: ProviderHistoryStats, y: CGFloat, hoverID: String) {
@@ -682,6 +695,9 @@ final class RichMenuPanelView: NSView {
         } else {
             let visibleWindows = p.windows.filter { isDisplayedQuotaWindow($0, provider: p.provider) }
             h += CGFloat(visibleWindows.count) * rowH
+            if isCodexFiveHourTemporarilyUncapped(p) {
+                h += rowH
+            }
         }
 
         if shouldDrawUsageStatusLine(for: p) {

@@ -37,6 +37,7 @@
 "menu.usage.note.api_value" = "Metered API value uses public list prices.";
 "menu.usage.note.subscription" = "Subscription seats show quota, not spend.";
 "menu.group.native" = "native";
+"menu.five_hour_temporarily_uncapped" = "Temporarily uncapped";
 
 "notch.page.remaining" = "Remaining";
 "notch.page.used_today" = "Used today";
@@ -56,6 +57,7 @@
 "notch.api_value" = "≈$%.2f API value";
 "notch.five_hour_left" = "5H left";
 "notch.five_hour_window" = "5H window";
+"notch.weekly_left" = "Weekly left";
 "notch.all_spent" = "all spent";
 "notch.weekly_cap" = "weekly cap";
 "notch.five_hour_empty" = "5h empty";
@@ -414,4 +416,3 @@
 "welcome.executor.title" = "Default executor";
 "welcome.executor.desc" = "Tasks run on this agent unless a project or conversation picks another.";
 "menu.updating_components" = "Updating components...";
-
