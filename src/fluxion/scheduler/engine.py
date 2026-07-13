@@ -20,7 +20,9 @@ from fluxion.usage.models import STATUS_OK, ProviderUsage
 # timestamp jumps forward (a new window started). Some providers report an
 # estimated rolling "now + window" reset; that pattern is filtered out by
 # checking whether the reset-timestamp advance roughly matches the elapsed
-# observation time (regardless of usage level).
+# observation time (regardless of usage level). The low ceiling also gates the
+# timestamp edges: a window that is already substantially consumed cannot have
+# *just* reset, so such an edge is stale news, not a live reset.
 REFRESH_DROP_MARGIN = 20.0
 REFRESH_LOW_CEILING = 15.0
 REFRESH_RESET_EPSILON_SEC = 90
@@ -189,6 +191,16 @@ def _detect_refresh_edge(
     """Raw single-step refresh-edge test: does `current` look like a window
     reset relative to `prev`? Pure and stateless — the debounce that requires
     two consecutive edges lives in the caller."""
+    # Freshness corroboration for the timestamp edges below: right after a
+    # genuine reset the new window sits near 0% used (an immediate auto-ping
+    # only nudges it a few points). When the baseline is ancient — e.g. the
+    # scheduler was down for hours and resets_at legitimately jumped across one
+    # or more whole windows — the current window may already be substantially
+    # consumed, and announcing "quota has reset" then is stale news. Unknown
+    # usage keeps the timestamp edges authoritative.
+    cur_used = current.get("used_percent")
+    window_fresh = cur_used is None or cur_used <= REFRESH_LOW_CEILING
+
     # Reset timestamp jumped forward → a new window started.
     cur_reset = parse_iso(current.get("resets_at"))
     prev_reset = parse_iso(prev.get("resets_at"))
@@ -210,6 +222,12 @@ def _detect_refresh_edge(
             )
         )
         if reset_advance > REFRESH_RESET_EPSILON_SEC and not rolling_estimate:
+            if not window_fresh:
+                return FireDecision(
+                    False,
+                    f"reset advanced but used={cur_used:.0f}% — window not fresh "
+                    "(stale-baseline catch-up); rebaselining silently",
+                )
             return FireDecision(
                 True,
                 f"quota_refresh {trigger.provider}/{trigger.window_key} (reset advanced)",
@@ -219,6 +237,12 @@ def _detect_refresh_edge(
     # Reset timestamp disappeared → the old window expired and the provider
     # no longer reports a countdown (e.g. Claude after a 5h reset).
     if prev_reset and not cur_reset:
+        if not window_fresh:
+            return FireDecision(
+                False,
+                f"resets_at cleared but used={cur_used:.0f}% — window not fresh "
+                "(stale-baseline catch-up); rebaselining silently",
+            )
         return FireDecision(
             True,
             f"quota_refresh {trigger.provider}/{trigger.window_key} (resets_at cleared)",
@@ -226,7 +250,6 @@ def _detect_refresh_edge(
         )
 
     # Used-percent fell off a cliff → window was refreshed.
-    cur_used = current.get("used_percent")
     prev_used = prev.get("used_percent")
     if (
         cur_used is not None

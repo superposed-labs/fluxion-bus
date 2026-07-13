@@ -130,10 +130,81 @@ def test_refresh_fires_on_reset_advance():
     prev_reset = _utc(2026, 6, 3, 0, 0).isoformat()
     new_reset = _utc(2026, 6, 10, 0, 0).isoformat()
     state = RuleState(last_usage={"used_percent": 80.0, "resets_at": prev_reset})
-    first = _step(rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=80.0, resets_at=new_reset))
+    first = _step(rule, state, _utc(2026, 6, 3, 9, 0), _usage(used=2.0, resets_at=new_reset))
     assert not first.fire
-    second = _step(rule, state, _utc(2026, 6, 3, 9, 1), _usage(used=80.0, resets_at=new_reset))
+    second = _step(rule, state, _utc(2026, 6, 3, 9, 1), _usage(used=2.0, resets_at=new_reset))
     assert second.fire
+
+
+def test_refresh_reset_advance_with_consumed_window_rebaselines_silently():
+    """A forward resets_at jump against an ancient baseline must not notify
+    when the current window is already substantially consumed — the reset(s)
+    happened while nobody was watching, and "you're good to go" is stale news.
+    Regression for the 2026-07-14 false alerts: the scheduler was down ~13h;
+    on restart claude/5h showed used=57% with resets_at ~13.5h ahead of the
+    persisted baseline, and the two-sample debounce dutifully confirmed it."""
+    rule = _refresh_rule(provider="claude", window="5h")
+    now = _utc(2026, 7, 13, 15, 49)
+    prev_observed = _utc(2026, 7, 13, 3, 3)  # last eval before the outage
+    state = RuleState(
+        last_usage={
+            "used_percent": 34.0,
+            "resets_at": _utc(2026, 7, 13, 3, 10).isoformat(),
+            "observed_at": prev_observed.isoformat(),
+        }
+    )
+    current_reset = _utc(2026, 7, 13, 16, 40).isoformat()
+    for minute, used in ((49, 57.0), (50, 58.0)):
+        decision = _step(
+            rule,
+            state,
+            _utc(2026, 7, 13, 15, minute),
+            _usage(
+                provider="claude",
+                window="5h",
+                used=used,
+                resets_at=current_reset,
+                fetched_at=_utc(2026, 7, 13, 15, minute).isoformat(),
+            ),
+        )
+        assert not decision.fire
+        assert state.pending_refresh is None
+    # Baseline was rebuilt silently; a genuine reset afterwards still fires.
+    assert state.last_usage["resets_at"] == current_reset
+    fresh_reset = _utc(2026, 7, 13, 21, 40).isoformat()
+    first = _step(
+        rule,
+        state,
+        _utc(2026, 7, 13, 16, 41),
+        _usage(provider="claude", window="5h", used=1.0, resets_at=fresh_reset),
+    )
+    assert not first.fire
+    second = _step(
+        rule,
+        state,
+        _utc(2026, 7, 13, 16, 42),
+        _usage(provider="claude", window="5h", used=1.0, resets_at=fresh_reset),
+    )
+    assert second.fire
+
+
+def test_refresh_resets_cleared_with_consumed_window_does_not_fire():
+    """The resets_at-cleared edge gets the same freshness gate: a countdown
+    disappearing while the window still shows substantial usage is not a
+    credible "just reset" signal."""
+    rule = _refresh_rule(provider="claude", window="5h")
+    state = RuleState(
+        last_usage={
+            "used_percent": 60.0,
+            "resets_at": _utc(2026, 6, 3, 8, 40).isoformat(),
+            "observed_at": _utc(2026, 6, 3, 8, 55).isoformat(),
+        }
+    )
+    stale = _usage(provider="claude", window="5h", used=42.0, resets_at=None)
+    for minute in (0, 1):
+        decision = _step(rule, state, _utc(2026, 6, 3, 9, minute), stale)
+        assert not decision.fire
+        assert state.pending_refresh is None
 
 
 def test_refresh_glitch_reverting_next_poll_never_fires():
