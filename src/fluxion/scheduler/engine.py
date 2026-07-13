@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -31,6 +31,10 @@ REFRESH_ROLLING_TOLERANCE_SEC = 300
 class FireDecision:
     fire: bool
     reason: str = ""
+    # Structured refresh-edge details for user-facing copy. `reason` stays the
+    # canonical log/record string; notifications localize from these instead.
+    edge_kind: str = ""  # "reset_advanced" | "resets_cleared" | "usage_dropped"
+    edge_data: dict[str, Any] = field(default_factory=dict)
 
 
 def observe_window(
@@ -209,6 +213,7 @@ def _detect_refresh_edge(
             return FireDecision(
                 True,
                 f"quota_refresh {trigger.provider}/{trigger.window_key} (reset advanced)",
+                edge_kind="reset_advanced",
             )
 
     # Reset timestamp disappeared → the old window expired and the provider
@@ -217,6 +222,7 @@ def _detect_refresh_edge(
         return FireDecision(
             True,
             f"quota_refresh {trigger.provider}/{trigger.window_key} (resets_at cleared)",
+            edge_kind="resets_cleared",
         )
 
     # Used-percent fell off a cliff → window was refreshed.
@@ -232,6 +238,8 @@ def _detect_refresh_edge(
             True,
             f"quota_refresh {trigger.provider}/{trigger.window_key} "
             f"({prev_used:.0f}%→{cur_used:.0f}%)",
+            edge_kind="usage_dropped",
+            edge_data={"prev_used": prev_used, "cur_used": cur_used},
         )
 
     return FireDecision(False, "no refresh edge")

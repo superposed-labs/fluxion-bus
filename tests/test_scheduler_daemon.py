@@ -314,9 +314,14 @@ def test_daemon_slack_notification_on_quota_refresh(tmp_path, monkeypatch):
     channel, text, blocks = sent_messages[0]
     assert channel == "C999999"
     assert "Test Quota Reset" in text
-    assert "quota_refresh claude/5h" in text
+    assert "Claude" in text
+    assert "5h" in text
+    assert "quota has reset" in text
     assert blocks is not None
-    assert len(blocks) == 4
+    assert len(blocks) == 2
+    # The context block carries the human-readable detection detail.
+    context_text = blocks[1]["elements"][0]["text"]
+    assert "usage fell from 90% to 10%" in context_text
 
 
 def test_daemon_slack_notification_dm_fallback(tmp_path):
@@ -505,7 +510,9 @@ def test_daemon_wechat_notification_on_quota_refresh(tmp_path, monkeypatch):
     assert user_id == "allowed-user"
     assert context_token == "allowed-token"
     assert "Test WeChat Reset" in text
-    assert "quota_refresh codex/7d" in text
+    assert "Codex" in text
+    assert "7d" in text
+    assert "quota has reset" in text
 
 
 def _reload_settings(tmp_path, **overrides):
