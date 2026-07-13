@@ -341,7 +341,7 @@ extension NotchIslandView {
                 // weekly, so the bar stays as weekly's only visualization there.
                 let ringHeadlinesWeekly = state.mode == .healthy && state.fiveHour == nil
                 if !ringHeadlinesWeekly {
-                    quotaProgressBar(remaining: state.weekly?.remaining ?? 0, color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color(visual.brandColor))
+                    quotaProgressBar(remaining: state.weekly?.remaining ?? 0, color: quotaBarColor(remaining: state.weekly?.remaining ?? 0, brand: Color(visual.brandColor)))
                 }
             }
         }
@@ -437,9 +437,12 @@ extension NotchIslandView {
         // while the bar keeps showing the real weekly level (dimmed) so the
         // remaining weekly quota isn't hidden.
         let blocked = depleted || lock != nil
-        let barColor = blocked
-            ? Color(NSColor.systemRed).opacity(depleted ? 1.0 : 0.55)
-            : splitQuotaColor(for: snapshot, visual: visual)
+        // Critical-low (or spent) → solid red. Locked-but-still-has-room (the
+        // pool's other window is what's spent) → dimmed red, keeping the real
+        // weekly level visible. Otherwise the pool's split hue.
+        let barColor = snapshot.remaining < QuotaLevel.criticalRemaining
+            ? Color(NSColor.systemRed)
+            : (lock != nil ? Color(NSColor.systemRed).opacity(0.55) : splitQuotaColor(for: snapshot, visual: visual))
         let chipColor = blocked ? Color(NSColor.systemRed) : splitQuotaColor(for: snapshot, visual: visual)
         let textColor = blocked ? Color(NSColor.systemRed) : Color.white.opacity(0.58)
         VStack(spacing: 5) {
@@ -500,7 +503,7 @@ extension NotchIslandView {
     @ViewBuilder
     func scopedQuotaRow(_ snapshot: QuotaWindowSnapshot, visual: ProviderVisual) -> some View {
         let depleted = snapshot.remaining <= 0
-        let barColor = depleted ? Color(NSColor.systemRed) : Color(visual.brandColor)
+        let barColor = quotaBarColor(remaining: snapshot.remaining, brand: Color(visual.brandColor))
         let chipColor = depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.54)
         VStack(spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
@@ -538,6 +541,15 @@ extension NotchIslandView {
 
             quotaProgressBar(remaining: snapshot.remaining, color: barColor)
         }
+    }
+
+    // Fill color for a single-hue quota bar: the provider's brand color while
+    // healthy, red once it drops below the shared critical threshold. No amber
+    // tier — amber would collide with brand hues like Claude's coral, so the
+    // notch steps straight brand → red. (The rich menu, whose bars are semantic
+    // green rather than brand-colored, keeps an amber caution band.)
+    func quotaBarColor(remaining: Double, brand: Color) -> Color {
+        remaining < QuotaLevel.criticalRemaining ? Color(NSColor.systemRed) : brand
     }
 
     @ViewBuilder
