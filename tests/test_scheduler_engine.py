@@ -144,7 +144,6 @@ def test_refresh_reset_advance_with_consumed_window_rebaselines_silently():
     on restart claude/5h showed used=57% with resets_at ~13.5h ahead of the
     persisted baseline, and the two-sample debounce dutifully confirmed it."""
     rule = _refresh_rule(provider="claude", window="5h")
-    now = _utc(2026, 7, 13, 15, 49)
     prev_observed = _utc(2026, 7, 13, 3, 3)  # last eval before the outage
     state = RuleState(
         last_usage={
