@@ -65,6 +65,7 @@ def compute_usage_stats(
     window: str = "all",
     projects_dir: Path = CLAUDE_PROJECTS_DIR,
     sessions_dir: Path | None = None,
+    archived_sessions_dir: Path | None = None,
     antigravity_dirs: Iterable[Path] | None = None,
     cache_path: Path | None = None,
     tz: timezone | None = None,
@@ -80,7 +81,11 @@ def compute_usage_stats(
     cache = _load_cache(cache_path)
     entries = collect_claude_entries(projects_dir, cache=cache)
     if sessions_dir is not None:
-        entries += collect_codex_entries(sessions_dir, cache=cache)
+        entries += collect_codex_entries(
+            sessions_dir,
+            archived_sessions_dir=archived_sessions_dir,
+            cache=cache,
+        )
     if antigravity_dirs is not None:
         entries += collect_antigravity_entries(antigravity_dirs, cache=cache)
     _save_cache(cache_path, cache)
@@ -103,6 +108,7 @@ class UsageHistoryService:
         *,
         projects_dir: Path = CLAUDE_PROJECTS_DIR,
         sessions_dir: Path = CODEX_SESSIONS_DIR,
+        archived_sessions_dir: Path | None = None,
         antigravity_dirs: Iterable[Path] = ANTIGRAVITY_CONVERSATIONS_DIRS,
         db_path: Path | str | None = None,
         refresh_sec: int = 60,
@@ -110,6 +116,9 @@ class UsageHistoryService:
     ) -> None:
         self._projects_dir = projects_dir
         self._sessions_dir = sessions_dir
+        if archived_sessions_dir is None:
+            archived_sessions_dir = sessions_dir.parent / "archived_sessions"
+        self._archived_sessions_dir = archived_sessions_dir
         self._antigravity_dirs = tuple(antigravity_dirs)
         self._refresh_sec = max(1, refresh_sec)
         self._lock = threading.Lock()
@@ -194,6 +203,7 @@ class UsageHistoryService:
                 self._store.sync(
                     projects_dir=self._projects_dir,
                     sessions_dir=self._sessions_dir,
+                    archived_sessions_dir=self._archived_sessions_dir,
                     antigravity_dirs=self._antigravity_dirs,
                 )
             payload = self._store.aggregate(window)
