@@ -11,7 +11,7 @@ from fluxion.executors.antigravity import models as antigravity_models
 from fluxion.subagent import AUTO_AGENT_VALUES, resolve_agent
 from fluxion.usage import price_data
 
-_CLAUDE_EXECUTOR_ALIASES = ("opus", "sonnet", "haiku")
+_CLAUDE_EXECUTOR_ALIASES = ("fable", "opus", "sonnet", "haiku")
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
