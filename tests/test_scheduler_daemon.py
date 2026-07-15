@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fluxion.scheduler import cli as scheduler_cli
 from fluxion.scheduler import daemon as scheduler_daemon
@@ -988,3 +988,219 @@ def test_codex_credit_expiry_respects_toggle(tmp_path, monkeypatch):
     usage.snapshot = _codex_resets([_credit("c1", expires_at=soon)])
     daemon.tick()
     mock_slack.assert_not_called()
+
+
+def test_claude_autoping_bypasses_scoped_limits(tmp_path):
+    rule = ScheduleRule.new(
+        name="claude-monitor",
+        trigger=Trigger(type="quota_refresh", provider="claude", window_key="5h"),
+        action=Action(type="notify", agent="claude"),
+        policy=Policy(cooldown_sec=0),
+    )
+
+    settings = types.SimpleNamespace(
+        data_dir=tmp_path,
+        autoping_enabled=True,
+    )
+    daemon, _store, runner, usage = _daemon(tmp_path, [rule], settings=settings)
+
+    # First tick: establish baseline
+    future_reset = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
+    usage.snapshot = [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(key="5h", label="5-hour", used_percent=90.0, resets_at=future_reset),
+                UsageWindow(
+                    key="scoped_fable", label="Fable", used_percent=100.0, resets_at=future_reset
+                ),
+                UsageWindow(
+                    key="scoped_claude_design",
+                    label="Claude Design",
+                    used_percent=100.0,
+                    resets_at=future_reset,
+                ),
+                UsageWindow(
+                    key="agent_sdk",
+                    label="Agent SDK",
+                    used_percent=100.0,
+                    resets_at=future_reset,
+                ),
+            ],
+        )
+    ]
+    daemon.tick()
+
+    # Second tick: trigger the edge (5h drops, but scoped_fable is still exhausted)
+    usage.snapshot = [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(key="5h", label="5-hour", used_percent=10.0, resets_at=future_reset),
+                UsageWindow(
+                    key="scoped_fable", label="Fable", used_percent=100.0, resets_at=future_reset
+                ),
+                UsageWindow(
+                    key="scoped_claude_design",
+                    label="Claude Design",
+                    used_percent=100.0,
+                    resets_at=future_reset,
+                ),
+                UsageWindow(
+                    key="agent_sdk",
+                    label="Agent SDK",
+                    used_percent=100.0,
+                    resets_at=future_reset,
+                ),
+            ],
+        )
+    ]
+    daemon.tick()  # arms debounce
+
+    # Third tick: confirm the edge -> should trigger Auto Ping because scoped_fable is bypassed
+    daemon.tick()
+    assert len(runner.requests) == 1
+    assert runner.requests[0].agent == "claude"
+
+    # Verify that a generic scheduled-task for Claude IS blocked by the scoped limit
+    cron_rule = ScheduleRule.new(
+        name="claude-cron",
+        trigger=Trigger(type="cron", cron="* * * * *", timezone="UTC"),
+        action=Action(type="ping", agent="claude"),
+        policy=Policy(cooldown_sec=0),
+    )
+    daemon2, _store2, runner2, usage2 = _daemon(tmp_path, [cron_rule], settings=settings)
+    usage2.snapshot = [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(key="5h", label="5-hour", used_percent=10.0, resets_at=future_reset),
+                UsageWindow(
+                    key="scoped_fable", label="Fable", used_percent=100.0, resets_at=future_reset
+                ),
+            ],
+        )
+    ]
+    daemon2.tick()
+    # Should defer cron rule because provider is exhausted overall due to scoped_fable
+    assert len(runner2.requests) == 0
+
+    # Verify that an exhausted account-wide Weekly window blocks a 5h-reset Ping.
+    daemon3, _store3, runner3, usage3 = _daemon(tmp_path, [rule], settings=settings)
+    usage3.snapshot = [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(key="5h", label="5-hour", used_percent=90.0, resets_at=future_reset),
+                UsageWindow(key="7d", label="Weekly", used_percent=100.0, resets_at=future_reset),
+            ],
+        )
+    ]
+    daemon3.tick()
+    usage3.snapshot = [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(key="5h", label="5-hour", used_percent=10.0, resets_at=future_reset),
+                UsageWindow(key="7d", label="Weekly", used_percent=100.0, resets_at=future_reset),
+            ],
+        )
+    ]
+    daemon3.tick()  # arms debounce
+    daemon3.tick()  # confirm -> should skip because the account-wide Weekly is exhausted
+    assert len(runner3.requests) == 0
+
+
+def test_codex_weekly_only_anchoring(tmp_path):
+    rule = ScheduleRule.new(
+        name="codex-weekly",
+        trigger=Trigger(type="quota_refresh", provider="codex", window_key="7d"),
+        action=Action(type="notify", agent="codex"),
+        policy=Policy(cooldown_sec=0),
+    )
+
+    settings = types.SimpleNamespace(
+        data_dir=tmp_path,
+        autoping_enabled=True,
+        autoping_max_attempts=3,
+    )
+    daemon, _store, runner, usage = _daemon(tmp_path, [rule], settings=settings)
+
+    # First tick: establish baseline (used_percent is 90%, resets in the future)
+    future_reset = (datetime.now(UTC) + timedelta(days=5)).isoformat()
+    usage.snapshot = [
+        ProviderUsage(
+            provider="codex",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(
+                    key="7d",
+                    label="Weekly",
+                    used_percent=90.0,
+                    resets_at=future_reset,
+                    window_minutes=10080,
+                ),
+            ],
+        )
+    ]
+    daemon.tick()
+
+    # Second tick: trigger reset (used_percent drops to 1.0%, resets_at is drifting/new)
+    drifting_reset = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+    usage.snapshot = [
+        ProviderUsage(
+            provider="codex",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(
+                    key="7d",
+                    label="Weekly",
+                    used_percent=1.0,
+                    resets_at=drifting_reset,
+                    window_minutes=10080,
+                ),
+            ],
+        )
+    ]
+    daemon.tick()  # arms debounce
+
+    # Third tick: confirm reset -> starts anchoring burst -> submits first ping
+    daemon.tick()
+    assert len(runner.requests) == 1
+    assert "codex" in daemon._anchors
+    assert daemon._anchors["codex"].window_keys == {"7d"}
+    assert daemon._anchors["codex"].attempts == 1
+
+    # Fourth tick: still drifting -> submits second ping
+    daemon.tick()
+    assert len(runner.requests) == 2
+    assert daemon._anchors["codex"].attempts == 2
+
+    # Fifth tick: window anchors (resets_at is now fixed/past compared to window start)
+    anchored_reset = (
+        datetime.now(UTC) + timedelta(days=6)
+    ).isoformat()  # less than win_sec - tolerance
+    usage.snapshot = [
+        ProviderUsage(
+            provider="codex",
+            status=STATUS_OK,
+            windows=[
+                UsageWindow(
+                    key="7d",
+                    label="Weekly",
+                    used_percent=1.0,
+                    resets_at=anchored_reset,
+                    window_minutes=10080,
+                ),
+            ],
+        )
+    ]
+    daemon.tick()
+    # Should stop anchoring and NOT submit any more pings
+    assert "codex" not in daemon._anchors
+    assert len(runner.requests) == 2

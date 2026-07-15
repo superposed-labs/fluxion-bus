@@ -25,7 +25,7 @@ from fluxion.scheduler.models import (
 from fluxion.scheduler.store import ScheduleStore
 from fluxion.subagent import SubagentRunner, SubagentRunRequest
 from fluxion.usage.collector import SharedUsageClient
-from fluxion.usage.models import ProviderUsage
+from fluxion.usage.models import STATUS_OK, ProviderUsage
 from fluxion.usage.service import UsageService
 
 log = logging.getLogger("fluxion.scheduler")
@@ -66,7 +66,9 @@ class _AnchorState:
 
     event_id: str
     provider: str
+    window_keys: set[str]
     attempts: int = 0
+    exhausted_logged: bool = False
 
 
 def _pool_key(provider: str, window_key: str) -> str:
@@ -278,6 +280,30 @@ class SchedulerDaemon:
                             return True, w.resets_at
         return False, None
 
+    def _is_provider_exhausted_for_autoping(
+        self, provider: str, usage: list[ProviderUsage], now: datetime
+    ) -> tuple[bool, str | None]:
+        if provider == "claude":
+            for pu in usage:
+                if pu.provider == provider:
+                    for w in pu.windows:
+                        if w.key in ("5h", "7d"):
+                            if w.used_percent is not None and w.used_percent >= 99.0:
+                                reset_dt = parse_iso(w.resets_at)
+                                if reset_dt and reset_dt > now:
+                                    return True, w.resets_at
+                            elif (
+                                w.remaining is not None
+                                and w.total is not None
+                                and w.total > 0
+                                and w.remaining <= 0
+                            ):
+                                reset_dt = parse_iso(w.resets_at)
+                                if reset_dt and reset_dt > now:
+                                    return True, w.resets_at
+            return False, None
+        return self._is_provider_exhausted(provider, usage, now)
+
     def _log_anchor(self, usage: list[ProviderUsage], now: datetime) -> None:
         """Append per-window anchor state (drift vs pinned) to a passive
         trajectory log, on state change or every ~10 min heartbeat. Reading
@@ -324,32 +350,28 @@ class SchedulerDaemon:
             log.debug("anchor log failed: %s", exc)
 
     # ── anchoring burst state machine ──────────────────────────────
-    def _pool_five_hour(
-        self, usage: list[ProviderUsage], pool_key: str
-    ) -> tuple[Any, str] | tuple[None, None]:
-        """The pool's 5h window plus the snapshot's fetched_at, or (None, None)."""
+    def _pool_anchored(
+        self, usage: list[ProviderUsage], pool_key: str, window_keys: set[str], now: datetime
+    ) -> bool:
+        """True when the triggering window(s) hold a fixed reset clearly inside a
+        full window (anchored), vs drifting at ~now + full window (idle)."""
         provider = pool_key.split(":", 1)[0]
+        found_keys: set[str] = set()
         for pu in usage:
-            if pu.provider != provider:
+            if pu.provider != provider or pu.status != STATUS_OK:
                 continue
             for w in pu.windows:
-                if _is_five_hour_window(w) and _pool_matches_window(pool_key, w):
-                    return w, pu.fetched_at
-        return None, None
-
-    def _pool_anchored(self, usage: list[ProviderUsage], pool_key: str, now: datetime) -> bool:
-        """True when the pool's 5h window holds a fixed reset clearly inside a
-        full window (anchored), vs drifting at ~now + full window (idle)."""
-        window, fetched_at = self._pool_five_hour(usage, pool_key)
-        if window is None:
-            return False
-        reset = parse_iso(window.resets_at)
-        win_sec = (window.window_minutes or 0) * 60
-        if reset is None or win_sec <= 0:
-            return False
-        fetched = parse_iso(fetched_at) or now
-        span = (reset - fetched).total_seconds()
-        return span < win_sec - _ANCHOR_TOLERANCE_SEC
+                if w.key in window_keys:
+                    found_keys.add(w.key)
+                    reset = parse_iso(w.resets_at)
+                    win_sec = (w.window_minutes or 0) * 60
+                    if reset is None or win_sec <= 0:
+                        return False
+                    fetched = parse_iso(pu.fetched_at) or now
+                    span = (reset - fetched).total_seconds()
+                    if span >= win_sec - _ANCHOR_TOLERANCE_SEC:
+                        return False
+        return window_keys <= found_keys
 
     def _pool_exhausted(self, usage: list[ProviderUsage], pool_key: str, now: datetime) -> bool:
         """A window in this pool is at its cap (≥99% with a future reset), so a
@@ -381,11 +403,14 @@ class SchedulerDaemon:
         event. Monitor rules notify separately, so they pass notify=False."""
         pool_key = _pool_key(rule.trigger.provider, rule.trigger.window_key)
         if pool_key in self._anchors:
+            self._anchors[pool_key].window_keys.add(rule.trigger.window_key)
             return
         if notify:
             self._fire(rule, state, now, decision, do_submit=False)
         self._anchors[pool_key] = _AnchorState(
-            event_id=uuid4().hex[:12], provider=rule.trigger.provider
+            event_id=uuid4().hex[:12],
+            provider=rule.trigger.provider,
+            window_keys={rule.trigger.window_key},
         )
 
     def _advance_anchoring(self, usage: list[ProviderUsage], now: datetime) -> None:
@@ -396,12 +421,23 @@ class SchedulerDaemon:
         cap = max(1, int(getattr(self._settings, "autoping_max_attempts", 12)))
         for pool_key in list(self._anchors):
             st = self._anchors[pool_key]
-            if self._pool_anchored(usage, pool_key, now):
+            if self._pool_anchored(usage, pool_key, st.window_keys, now):
+                log.info(
+                    "Quota pool %s anchored successfully after %d attempts", pool_key, st.attempts
+                )
                 del self._anchors[pool_key]
                 continue
             if self._pool_exhausted(usage, pool_key, now):
+                if not st.exhausted_logged:
+                    log.info("Quota pool %s anchoring deferred: pool is exhausted", pool_key)
+                    st.exhausted_logged = True
                 continue
+            else:
+                st.exhausted_logged = False
             if st.attempts >= cap:
+                log.warning(
+                    "Quota pool %s failed to anchor after %d attempts", pool_key, st.attempts
+                )
                 self._notify_anchor_failed(pool_key, st.attempts)
                 del self._anchors[pool_key]
                 continue
@@ -516,8 +552,28 @@ class SchedulerDaemon:
                     if getattr(self._settings, "autoping_enabled", False):
                         if rule.trigger.provider in _ANCHOR_PROVIDERS:
                             self._start_anchoring(rule, state, now, decision, notify=False)
-                        elif not self._is_provider_exhausted(provider, usage, now)[0]:
-                            self._submit_anchor_ping(provider, provider, uuid4().hex[:12])
+                        else:
+                            is_exhausted, resets_at = self._is_provider_exhausted_for_autoping(
+                                provider, usage, now
+                            )
+                            if is_exhausted:
+                                log.info(
+                                    "Auto Ping skipped for provider %s: account-wide quota window is exhausted%s",
+                                    provider,
+                                    f" (resets at {resets_at})" if resets_at else "",
+                                )
+                            else:
+                                success = self._submit_anchor_ping(
+                                    provider, provider, uuid4().hex[:12]
+                                )
+                                if success:
+                                    log.info(
+                                        "Auto Ping submitted successfully for provider %s", provider
+                                    )
+                                else:
+                                    log.warning(
+                                        "Auto Ping submission failed for provider %s", provider
+                                    )
                 elif rule.action.type == ACTION_PING and rule.trigger.provider in _ANCHOR_PROVIDERS:
                     # Burst path: arm anchoring; pings are driven by
                     # _advance_anchoring below (one per tick until anchored/cap).
