@@ -36,7 +36,7 @@ from fluxion.usage.history.parsing import (
     _parse_incremental,
 )
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 def _local(ts: datetime, tz: timezone | None) -> datetime:
@@ -104,6 +104,11 @@ class UsageStore:
         conn.commit()
 
     # ── sync ─────────────────────────────────────────────────────────
+    # On equal totals the *earlier* timestamp wins (mirrors `aggregate`): a
+    # Codex fork replays the parent history with timestamps rewritten to the
+    # fork instant, and only the original copy carries the real day — this also
+    # keeps those rows owned by the parent file's `path`, so deleting the
+    # forked rollout doesn't drop the parent's history.
     _UPSERT = """
         INSERT INTO entries
             (dedup_key, path, provider, ts, day, hour, model, session_id,
@@ -116,7 +121,7 @@ class UsageStore:
             cc=excluded.cc, cc1h=excluded.cc1h, cr=excluded.cr, bi=excluded.bi,
             is_fast=excluded.is_fast, total=excluded.total
         WHERE excluded.total > entries.total
-           OR (excluded.total = entries.total AND excluded.ts > entries.ts)
+           OR (excluded.total = entries.total AND excluded.ts < entries.ts)
     """
 
     def sync(

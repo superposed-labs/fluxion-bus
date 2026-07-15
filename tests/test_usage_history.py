@@ -239,7 +239,10 @@ def test_aggregate_keeps_largest_duplicate_usage_snapshot():
     assert out["totals"]["total_tokens"] == 150
 
 
-def test_aggregate_dedupes_before_window_filtering():
+def test_aggregate_dedupes_to_original_timestamp():
+    # An exact copy of a past turn (fork/resume replay) carries a rewritten,
+    # newer timestamp; the turn actually ran at the original time, so the copy
+    # must not resurface it inside a recent window.
     entries = [
         _entry("2026-05-01T10:00:00Z", "copied", tokens=100),
         _entry("2026-06-10T10:00:00Z", "copied", tokens=100),
@@ -247,7 +250,10 @@ def test_aggregate_dedupes_before_window_filtering():
 
     out = aggregate(entries, window="7d", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
 
-    assert out["totals"]["messages"] == 1
+    assert out["totals"]["messages"] == 0
+    all_out = aggregate(entries, window="all", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+    assert all_out["totals"]["messages"] == 1
+    assert all_out["by_day"][0]["date"] == "2026-05-01"
 
 
 def test_aggregate_totals_and_breakdowns(fixed_prices):
@@ -1083,6 +1089,154 @@ def test_collect_codex_incremental_append_resumes_session_state(tmp_path: Path):
     assert new.session_id == "sess-x"
     assert new.input_tokens == 200 - 50
     assert len({e.dedup_key for e in entries}) == 2  # distinct keys across the boundary
+
+
+def _codex_meta_line(session_id: str, forked_from: str | None = None) -> str:
+    meta: dict = {"type": "session_meta", "id": session_id}
+    if forked_from:
+        meta["forked_from_id"] = forked_from
+    return json.dumps({"type": "session_meta", "payload": meta})
+
+
+def _codex_rollout(
+    session_id: str,
+    turns: list[dict],
+    *,
+    forked_from: str | None = None,
+    model: str = "gpt-5-codex",
+) -> str:
+    """Codex rollout lines with realistic cumulative `total_token_usage`."""
+    lines = [
+        _codex_meta_line(session_id, forked_from),
+        json.dumps({"type": "turn_context", "payload": {"type": "turn_context", "model": model}}),
+    ]
+    total = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    for turn in turns:
+        last = {
+            "input_tokens": turn["input"],
+            "cached_input_tokens": turn["cached"],
+            "output_tokens": turn["output"],
+            "total_tokens": turn["input"] + turn["output"],
+        }
+        total = {k: total[k] + last[k] for k in total}
+        lines.append(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": turn["ts"],
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": last, "total_token_usage": dict(total)},
+                    },
+                }
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _codex_fork(session_id: str, parent_text: str, fork_ts: str, new_turns: list[dict]) -> str:
+    """Reproduce what Codex writes when forking: the fork's own session_meta,
+    then a byte-copy of the parent rollout (ancestor session_meta lines
+    included) with every timestamp rewritten to the fork instant, then any
+    genuinely new turns continuing the cumulative totals."""
+    parent_lines = parent_text.strip().split("\n")
+    parent_meta = json.loads(parent_lines[0])["payload"]
+    replayed = []
+    total = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    for raw in parent_lines:
+        event = json.loads(raw)
+        if "timestamp" in event:
+            event["timestamp"] = fork_ts
+        info = (event.get("payload") or {}).get("info") or {}
+        if isinstance(info.get("total_token_usage"), dict):
+            total = dict(info["total_token_usage"])
+        replayed.append(json.dumps(event))
+    out = [_codex_meta_line(session_id, parent_meta["id"]), *replayed]
+    for turn in new_turns:
+        last = {
+            "input_tokens": turn["input"],
+            "cached_input_tokens": turn["cached"],
+            "output_tokens": turn["output"],
+            "total_tokens": turn["input"] + turn["output"],
+        }
+        total = {k: total[k] + last[k] for k in total}
+        out.append(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": turn["ts"],
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": last, "total_token_usage": dict(total)},
+                    },
+                }
+            )
+        )
+    return "\n".join(out) + "\n"
+
+
+def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
+    """Forking a Codex session copies the ancestor rollout's entire history into
+    the new file (ancestor session_meta lines included) with all timestamps
+    rewritten to the fork instant. Replayed turns must aggregate once — on
+    their original day — through a fork-of-a-fork, while each fork's genuinely
+    new turns count on their own day."""
+    sessions = tmp_path / "sessions"
+    root_day = sessions / "2026" / "06" / "10"
+    fork_day = sessions / "2026" / "06" / "15"
+    root_day.mkdir(parents=True)
+    fork_day.mkdir(parents=True)
+
+    root_turns = [
+        {"ts": "2026-06-10T10:00:00.000Z", "input": 1000, "cached": 400, "output": 50},
+        {"ts": "2026-06-10T11:00:00.000Z", "input": 2000, "cached": 1500, "output": 80},
+    ]
+    root_text = _codex_rollout("sess-root", root_turns)
+    (root_day / "rollout-2026-06-10T10-00-00-root.jsonl").write_text(root_text, encoding="utf-8")
+
+    child_turn = {"ts": "2026-06-15T09:05:00.000Z", "input": 3000, "cached": 2500, "output": 120}
+    child_text = _codex_fork("sess-child", root_text, "2026-06-15T09:00:00.100Z", [child_turn])
+    (fork_day / "rollout-2026-06-15T09-00-00-child.jsonl").write_text(
+        child_text, encoding="utf-8"
+    )
+
+    # Fork of the fork: replays root + child history through two hops.
+    grand_turn = {"ts": "2026-06-15T10:10:00.000Z", "input": 4000, "cached": 3500, "output": 200}
+    (fork_day / "rollout-2026-06-15T10-00-00-grand.jsonl").write_text(
+        _codex_fork("sess-grand", child_text, "2026-06-15T10:00:00.100Z", [grand_turn]),
+        encoding="utf-8",
+    )
+
+    entries = collect_codex_entries(sessions)
+    now = datetime(2026, 6, 15, 23, tzinfo=UTC)
+    payload = aggregate(entries, window="all", tz=UTC, now=now)
+
+    totals = payload["totals"]
+    all_turns = root_turns + [child_turn, grand_turn]
+    expected = sum(t["input"] + t["output"] for t in all_turns)
+    assert totals["total_tokens"] == expected  # every replay counted once
+    assert totals["messages"] == len(all_turns)
+
+    by_day = {row["date"]: row for row in payload["by_day"]}
+    # Replayed turns keep their original day; only the genuinely new post-fork
+    # turns land on the fork day.
+    assert by_day["2026-06-10"]["total_tokens"] == sum(
+        t["input"] + t["output"] for t in root_turns
+    )
+    assert by_day["2026-06-15"]["total_tokens"] == sum(
+        t["input"] + t["output"] for t in (child_turn, grand_turn)
+    )
+
+    # The SQL store must reproduce the pure aggregation, whichever file syncs first.
+    from fluxion.usage.history.store import UsageStore
+
+    store = UsageStore(tmp_path / "usage.db")
+    store.sync(
+        projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC
+    )
+    got = store.aggregate("all", tz=UTC, now=now)
+    reference = dict(payload)
+    assert got == reference
 
 
 def test_compute_stats_merges_claude_codex_and_antigravity(tmp_path: Path):

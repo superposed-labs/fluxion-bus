@@ -27,7 +27,7 @@ from fluxion.usage.history.parsing import (
 from fluxion.usage.history.store import UsageStore
 from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 
-_CACHE_VERSION = 7
+_CACHE_VERSION = 8
 
 
 def _parse_usage_date(raw: str, fallback: date) -> date:

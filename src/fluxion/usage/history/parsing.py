@@ -8,6 +8,7 @@ module only orchestrates the walk + cache.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
@@ -346,6 +347,20 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     Some Codex versions emit the same token-count event twice. Those duplicates
     have identical `total_token_usage`, so skip repeated cumulative states.
 
+    Forking a session copies the parent rollout's entire history into the new
+    file with every timestamp rewritten to the fork instant, so per-file dedup
+    keys would count the whole parent history again — dated "today". Instead,
+    turns are keyed by session *lineage* plus a digest of the cumulative+turn
+    usage: the replayed copies collide with the parent's keys and aggregate
+    once, while post-fork turns diverge in cumulative totals and keep their own
+    keys. The lineage resolves transitively to the root of a fork chain because
+    the replay preserves every ancestor's `session_meta` line in order (each
+    carrying its own `forked_from_id`), so by the first `token_count` the
+    lineage has walked fork → parent → … → root; the fork's own
+    `forked_from_id` only covers the stretch before the first replayed meta
+    (verified against Codex Desktop 0.144.2 fork-of-fork rollouts). Rollouts
+    without `total_token_usage` fall back to the per-file sequence key.
+
     Note: Codex `/fast` mode sends a premium `service_tier` ("priority") and
     bills credits at 2.5x standard for GPT-5.5 / 2x for GPT-5.4 (per
     developers.openai.com/codex/speed), but the CLI deliberately omits
@@ -360,6 +375,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     previous parse stopped."""
     out: list[UsageEntry] = []
     session_id = str(state.get("session_id", ""))
+    lineage = str(state.get("lineage", ""))
     model = str(state.get("model", "unknown"))
     seq = int(state.get("seq", 0))
     previous_total_signature: str | None = state.get("prev_sig")
@@ -387,6 +403,8 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             sid = payload.get("id") or event.get("id")
             if isinstance(sid, str) and sid:
                 session_id = sid
+            fork_parent = payload.get("forked_from_id")
+            lineage = fork_parent if isinstance(fork_parent, str) and fork_parent else session_id
         elif ptype == "turn_context":
             m = payload.get("model")
             if isinstance(m, str) and m:
@@ -424,6 +442,14 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             # available approximation for the hidden summarization request.
             if pending_compaction and not (input_total or cached or output) and total_tokens > 0:
                 input_total = total_tokens
+            if total_signature is not None and lineage:
+                turn_signature = json.dumps(last, sort_keys=True, separators=(",", ":"))
+                digest = hashlib.sha1(
+                    f"{total_signature}|{turn_signature}".encode()
+                ).hexdigest()[:20]
+                dedup_key = f"codex:{lineage}:{digest}"
+            else:
+                dedup_key = f"codex:{path.name}:{seq}"
             out.append(
                 UsageEntry(
                     provider="codex",
@@ -438,7 +464,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                     # lower bound instead of interpreting this as an observed 0.
                     cache_creation_tokens=0,
                     cache_read_tokens=cached,
-                    dedup_key=f"codex:{path.name}:{seq}",
+                    dedup_key=dedup_key,
                     billed_input_tokens_total=input_total,
                 )
             )
@@ -446,6 +472,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             pending_compaction = False
 
     state["session_id"] = session_id
+    state["lineage"] = lineage
     state["model"] = model
     state["seq"] = seq
     state["prev_sig"] = previous_total_signature
