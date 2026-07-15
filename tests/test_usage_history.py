@@ -1196,9 +1196,7 @@ def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
 
     child_turn = {"ts": "2026-06-15T09:05:00.000Z", "input": 3000, "cached": 2500, "output": 120}
     child_text = _codex_fork("sess-child", root_text, "2026-06-15T09:00:00.100Z", [child_turn])
-    (fork_day / "rollout-2026-06-15T09-00-00-child.jsonl").write_text(
-        child_text, encoding="utf-8"
-    )
+    (fork_day / "rollout-2026-06-15T09-00-00-child.jsonl").write_text(child_text, encoding="utf-8")
 
     # Fork of the fork: replays root + child history through two hops.
     grand_turn = {"ts": "2026-06-15T10:10:00.000Z", "input": 4000, "cached": 3500, "output": 200}
@@ -1220,9 +1218,7 @@ def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
     by_day = {row["date"]: row for row in payload["by_day"]}
     # Replayed turns keep their original day; only the genuinely new post-fork
     # turns land on the fork day.
-    assert by_day["2026-06-10"]["total_tokens"] == sum(
-        t["input"] + t["output"] for t in root_turns
-    )
+    assert by_day["2026-06-10"]["total_tokens"] == sum(t["input"] + t["output"] for t in root_turns)
     assert by_day["2026-06-15"]["total_tokens"] == sum(
         t["input"] + t["output"] for t in (child_turn, grand_turn)
     )
@@ -1231,9 +1227,7 @@ def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
     from fluxion.usage.history.store import UsageStore
 
     store = UsageStore(tmp_path / "usage.db")
-    store.sync(
-        projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC
-    )
+    store.sync(projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC)
     got = store.aggregate("all", tz=UTC, now=now)
     reference = dict(payload)
     assert got == reference

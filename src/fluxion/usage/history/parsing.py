@@ -444,9 +444,9 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                 input_total = total_tokens
             if total_signature is not None and lineage:
                 turn_signature = json.dumps(last, sort_keys=True, separators=(",", ":"))
-                digest = hashlib.sha1(
-                    f"{total_signature}|{turn_signature}".encode()
-                ).hexdigest()[:20]
+                digest = hashlib.sha1(f"{total_signature}|{turn_signature}".encode()).hexdigest()[
+                    :20
+                ]
                 dedup_key = f"codex:{lineage}:{digest}"
             else:
                 dedup_key = f"codex:{path.name}:{seq}"
