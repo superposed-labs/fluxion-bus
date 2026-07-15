@@ -49,6 +49,7 @@ def _prices():
         "families": {
             "haiku": [{"effective_date": "2026-01-01", "in": 0.8, "out": 4, "cw": 1, "cr": 0.1}],
             "sonnet": [{"effective_date": "2026-01-01", "in": 3, "out": 15, "cw": 4, "cr": 0.3}],
+            "fable": [{"effective_date": "2026-01-01", "in": 10, "out": 50, "cw": 12, "cr": 1}],
         },
         "providers": {
             "codex": [{"effective_date": "2026-01-01", "in": 1, "out": 10, "cw": 1, "cr": 0.1}],
@@ -97,8 +98,8 @@ def test_claude_models_are_selectable_aliases_with_price_references(monkeypatch)
     view = model_catalog.list_agent_models_view(agent="claude", project="", settings=_Settings())
 
     ids = [item["id"] for item in view["models"]]
-    assert ids == ["sonnet", "opus", "haiku"]
-    assert set(ids) == {"opus", "sonnet", "haiku"}
+    assert ids == ["fable", "sonnet", "opus", "haiku"]
+    assert set(ids) == {"fable", "opus", "sonnet", "haiku"}
     assert "claude-fable-5" not in ids
     haiku = next(item for item in view["models"] if item["id"] == "haiku")
     assert haiku["source"] == "executor_alias"
