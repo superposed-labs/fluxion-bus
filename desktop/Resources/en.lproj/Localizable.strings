@@ -79,7 +79,7 @@
 "notch.loading.upper" = "LOADING";
 "notch.recovering.upper" = "CONFIRMING";
 "notch.confirming" = "Confirming…";
-"notch.recovering.note" = "Reset time reached — confirming with the provider…";
+"notch.recovering.note" = "Reset time reached — confirming…";
 "menu.reset.now" = "now";
 "menu.reset.minutes" = "%dm";
 "menu.reset.hours" = "%dh%02dm";

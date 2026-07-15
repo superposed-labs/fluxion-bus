@@ -79,7 +79,7 @@
 "notch.loading.upper" = "加载中";
 "notch.recovering.upper" = "确认中";
 "notch.confirming" = "确认中…";
-"notch.recovering.note" = "已到重置时间 — 正在向服务确认…";
+"notch.recovering.note" = "已到重置时间 — 正在确认…";
 "menu.reset.now" = "现在";
 "menu.reset.minutes" = "%d分钟";
 "menu.reset.hours" = "%d小时%02d分钟";
