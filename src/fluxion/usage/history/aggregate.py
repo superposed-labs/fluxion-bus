@@ -131,11 +131,18 @@ def aggregate(
     # the same streamed message, as well as exact copies after fork/resume.
     # Keep the largest snapshot before applying the time window so aggregation
     # uses the final usage record and cannot discard an in-window copy because
-    # an out-of-window duplicate happened to be encountered first.
+    # an out-of-window duplicate happened to be encountered first. On equal
+    # snapshots prefer the *earliest* timestamp: a Codex fork replays the parent
+    # history with every timestamp rewritten to the fork instant, and only the
+    # original copy carries the day the turn actually ran.
     unique_entries: dict[str, UsageEntry] = {}
     for e in entries:
         current = unique_entries.get(e.dedup_key)
-        if current is None or (e.total_tokens, e.ts) > (current.total_tokens, current.ts):
+        if (
+            current is None
+            or e.total_tokens > current.total_tokens
+            or (e.total_tokens == current.total_tokens and e.ts < current.ts)
+        ):
             unique_entries[e.dedup_key] = e
 
     by_day_full: dict[str, _Bucket] = {}
