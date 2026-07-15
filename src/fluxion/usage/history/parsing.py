@@ -33,6 +33,27 @@ ANTIGRAVITY_CONVERSATIONS_DIRS = (
 )
 
 
+def _dedupe_codex_paths(paths: Iterable[Path], sessions_dir: Path) -> list[Path]:
+    """Choose one physical file for each Codex rollout.
+
+    Archiving normally moves a rollout unchanged, but the active and archive
+    paths can briefly coexist. Prefer the more complete copy, then the active
+    copy when sizes tie. Codex rollout basenames contain the stable session ID.
+    """
+    by_name: dict[str, list[Path]] = {}
+    for path in paths:
+        by_name.setdefault(path.name, []).append(path)
+
+    def rank(path: Path) -> tuple[int, bool]:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = -1
+        return size, path == sessions_dir or sessions_dir in path.parents
+
+    return [max(candidates, key=rank) for candidates in by_name.values()]
+
+
 def _claude_entry_from_line(line: str) -> UsageEntry | None:
     """Parse one transcript line into a UsageEntry, or None if it isn't a
     token-bearing assistant turn."""
@@ -158,14 +179,14 @@ def _parse_incremental(
 
 
 def _collect_files(
-    root: Path,
+    roots: Path | Iterable[Path],
     pattern: str,
     parser: LineParser,
     provider: str,
     *,
     cache: dict[str, Any] | None = None,
 ) -> list[UsageEntry]:
-    """Walk `root` for files matching `pattern`, parsing each into UsageEntry.
+    """Walk `roots` for files matching `pattern`, parsing each into UsageEntry.
 
     Each provider gets its own bucket under `cache["files"][provider]` so a file
     is re-parsed only when its mtime/size changed and the stale-row sweep for one
@@ -176,18 +197,37 @@ def _collect_files(
     the parser's carry-over state restored), instead of re-reading the whole
     file. Any other change (shrink, in-place rewrite, or a pre-offset cache row)
     falls back to a full re-parse from the start."""
+    if isinstance(roots, Path):
+        roots = (roots,)
+    else:
+        roots = tuple(roots)
+
+    paths: list[Path] = []
+    for root in roots:
+        if root.is_dir():
+            paths.extend(root.rglob(pattern))
+
     bucket: dict[str, Any] = (
         cache.setdefault("files", {}).setdefault(provider, {}) if cache is not None else {}
     )
     seen_paths: set[str] = set()
     entries: list[UsageEntry] = []
 
-    if not root.is_dir():
-        if cache is not None:
-            bucket.clear()
-        return entries
+    if provider == "codex":
+        final_paths = _dedupe_codex_paths(paths, roots[0])
+        for chosen in final_paths:
+            chosen_key = str(chosen)
+            if cache is not None:
+                matching_old_keys = [
+                    key for key in bucket if Path(key).name == chosen.name and key != chosen_key
+                ]
+                for old_key in matching_old_keys:
+                    old_cached = bucket.pop(old_key)
+                    bucket.setdefault(chosen_key, old_cached)
 
-    for path in root.rglob(pattern):
+        paths = final_paths
+
+    for path in paths:
         try:
             stat = path.stat()
         except OSError:
@@ -266,11 +306,18 @@ def collect_claude_entries(
 def collect_codex_entries(
     sessions_dir: Path = CODEX_SESSIONS_DIR,
     *,
+    archived_sessions_dir: Path | None = None,
     cache: dict[str, Any] | None = None,
 ) -> list[UsageEntry]:
-    """Read every Codex rollout log under `sessions_dir` (incrementally cached),
-    returning all turns with token usage."""
-    return _collect_files(sessions_dir, "rollout-*.jsonl", _codex_line_parser, "codex", cache=cache)
+    """Read Codex rollouts from active and archived session directories."""
+    if archived_sessions_dir is None:
+        archived_sessions_dir = sessions_dir.parent / "archived_sessions"
+
+    roots = [sessions_dir]
+    if archived_sessions_dir:
+        roots.append(archived_sessions_dir)
+
+    return _collect_files(roots, "rollout-*.jsonl", _codex_line_parser, "codex", cache=cache)
 
 
 def collect_antigravity_entries(

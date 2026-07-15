@@ -1287,3 +1287,269 @@ def test_empty_when_no_projects_dir(tmp_path: Path):
     assert out["totals"]["messages"] == 0
     assert out["totals"]["top_model"] is None
     assert out["totals"]["peak_hour"] is None
+
+
+def test_codex_archived_sessions_active_only(tmp_path: Path):
+    from fluxion.usage.history import UsageHistoryService
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "rollout-1.jsonl").write_text(
+        _codex_lines(
+            [{"ts": "2026-06-10T12:00:00Z", "input": 100, "cached": 0, "output": 10}],
+            session_id="s1",
+        ),
+        encoding="utf-8",
+    )
+
+    # 1. compute_usage_stats path
+    out = compute_usage_stats(
+        window="all",
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        tz=UTC,
+        now=datetime(2026, 6, 10, 13, tzinfo=UTC),
+    )
+    assert out["totals"]["messages"] == 1
+    assert out["totals"]["input_tokens"] == 100
+    assert out["totals"]["output_tokens"] == 10
+
+    # 2. UsageHistoryService path
+    service = UsageHistoryService(
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        antigravity_dirs=(),
+        db_path=tmp_path / "usage.db",
+    )
+    got = service.get("all")
+    assert got["totals"]["messages"] == 1
+    assert got["totals"]["input_tokens"] == 100
+    assert got["totals"]["output_tokens"] == 10
+
+
+def test_codex_archived_sessions_archived_only(tmp_path: Path):
+    from fluxion.usage.history import UsageHistoryService
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    archived = tmp_path / "archived_sessions"
+    archived.mkdir()
+    (archived / "rollout-1.jsonl").write_text(
+        _codex_lines(
+            [{"ts": "2026-06-10T12:00:00Z", "input": 200, "cached": 0, "output": 20}],
+            session_id="s1",
+        ),
+        encoding="utf-8",
+    )
+
+    # 1. compute_usage_stats path
+    out = compute_usage_stats(
+        window="all",
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        tz=UTC,
+        now=datetime(2026, 6, 10, 13, tzinfo=UTC),
+    )
+    assert out["totals"]["messages"] == 1
+    assert out["totals"]["input_tokens"] == 200
+    assert out["totals"]["output_tokens"] == 20
+
+    # 2. UsageHistoryService path
+    service = UsageHistoryService(
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        antigravity_dirs=(),
+        db_path=tmp_path / "usage.db",
+    )
+    got = service.get("all")
+    assert got["totals"]["messages"] == 1
+    assert got["totals"]["input_tokens"] == 200
+    assert got["totals"]["output_tokens"] == 20
+
+
+def test_codex_archived_sessions_move_active_to_archived(tmp_path: Path):
+    from fluxion.usage.history import UsageHistoryService
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    archived = tmp_path / "archived_sessions"
+    archived.mkdir()
+
+    active_path = sessions / "rollout-1.jsonl"
+    archived_path = archived / "rollout-1.jsonl"
+
+    content = _codex_lines(
+        [{"ts": "2026-06-10T12:00:00Z", "input": 300, "cached": 0, "output": 30}], session_id="s1"
+    )
+    active_path.write_text(content, encoding="utf-8")
+
+    db_path = tmp_path / "usage.db"
+    service = UsageHistoryService(
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        antigravity_dirs=(),
+        db_path=db_path,
+    )
+
+    # First sync (active-only)
+    initial_got = service.get("all", force=True)
+    assert initial_got["totals"]["messages"] == 1
+    assert initial_got["totals"]["input_tokens"] == 300
+
+    # Verify db paths
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(active_path),)).fetchone()[0]
+        == 1
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM entries WHERE path = ?", (str(active_path),)).fetchone()[
+            0
+        ]
+        == 1
+    )
+    conn.close()
+
+    # Move active -> archived
+    active_path.rename(archived_path)
+
+    # Second sync (archived-only)
+    moved_got = service.get("all", force=True)
+    assert moved_got["totals"]["messages"] == 1
+    assert moved_got["totals"]["input_tokens"] == 300
+    assert moved_got["totals"]["cost"] == initial_got["totals"]["cost"]
+
+    # Verify db paths migrated
+    conn = sqlite3.connect(db_path)
+    assert (
+        conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(active_path),)).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM entries WHERE path = ?", (str(active_path),)).fetchone()[
+            0
+        ]
+        == 0
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM files WHERE path = ?", (str(archived_path),)).fetchone()[
+            0
+        ]
+        == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM entries WHERE path = ?", (str(archived_path),)
+        ).fetchone()[0]
+        == 1
+    )
+    conn.close()
+
+    # Test cache path key migration in compute_usage_stats
+    cache_path = tmp_path / "cache.json"
+    active_path.write_text(content, encoding="utf-8")
+    if archived_path.exists():
+        archived_path.unlink()
+
+    # Initial one-shot sync
+    out1 = compute_usage_stats(
+        window="all",
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        cache_path=cache_path,
+        tz=UTC,
+        now=datetime(2026, 6, 10, 13, tzinfo=UTC),
+    )
+    assert out1["totals"]["messages"] == 1
+
+    # Verify cache has active path
+    import json
+
+    cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert str(active_path) in cache_data["files"]["codex"]
+    assert str(archived_path) not in cache_data["files"]["codex"]
+
+    # Move active -> archived
+    active_path.rename(archived_path)
+
+    # One-shot sync after move
+    out2 = compute_usage_stats(
+        window="all",
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        cache_path=cache_path,
+        tz=UTC,
+        now=datetime(2026, 6, 10, 13, tzinfo=UTC),
+    )
+    assert out2["totals"]["messages"] == 1
+    assert out2["totals"]["input_tokens"] == 300
+
+    # Verify cache migrated path
+    cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert str(active_path) not in cache_data["files"]["codex"]
+    assert str(archived_path) in cache_data["files"]["codex"]
+
+
+def test_codex_archived_sessions_duplicate_rollout_in_both(tmp_path: Path):
+    from fluxion.usage.history import UsageHistoryService
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    archived = tmp_path / "archived_sessions"
+    archived.mkdir()
+
+    active_path = sessions / "rollout-1.jsonl"
+    archived_path = archived / "rollout-1.jsonl"
+
+    content_active = _codex_lines(
+        [
+            {"ts": "2026-06-10T12:00:00Z", "input": 400, "cached": 0, "output": 40},
+            {"ts": "2026-06-10T12:10:00Z", "input": 500, "cached": 0, "output": 50},
+        ],
+        session_id="s1",
+    )
+    content_archived = content_active
+
+    # A copy can briefly exist in both roots while Codex archives it.
+    active_path.write_text(content_active, encoding="utf-8")
+    archived_path.write_text(content_archived, encoding="utf-8")
+
+    # One-shot sync path
+    out = compute_usage_stats(
+        window="all",
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        tz=UTC,
+        now=datetime(2026, 6, 10, 13, tzinfo=UTC),
+    )
+    # Identical physical copies still represent one logical rollout.
+    assert out["totals"]["messages"] == 2
+    assert out["totals"]["input_tokens"] == 900
+
+    # Service sync path
+    service = UsageHistoryService(
+        projects_dir=tmp_path / "empty_projects",
+        sessions_dir=sessions,
+        archived_sessions_dir=archived,
+        antigravity_dirs=(),
+        db_path=tmp_path / "usage.db",
+    )
+    got = service.get("all", force=True)
+    assert got["totals"]["messages"] == 2
+    assert got["totals"]["input_tokens"] == 900
+
+    # Removing the preferred active copy must transparently fall back to the
+    # archived copy without either losing or duplicating its stored entries.
+    active_path.unlink()
+    archived_got = service.get("all", force=True)
+    assert archived_got["totals"]["messages"] == 2
+    assert archived_got["totals"]["input_tokens"] == 900
+    assert archived_got["totals"]["cost"] == got["totals"]["cost"]

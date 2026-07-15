@@ -33,6 +33,7 @@ from fluxion.usage.history.entry import UsageEntry
 from fluxion.usage.history.parsing import (
     _claude_line_parser,
     _codex_line_parser,
+    _dedupe_codex_paths,
     _parse_incremental,
 )
 
@@ -124,11 +125,15 @@ class UsageStore:
         *,
         projects_dir: Path,
         sessions_dir: Path,
+        archived_sessions_dir: Path | None = None,
         antigravity_dirs: Iterable[Path],
         tz: timezone | None = None,
     ) -> None:
         """Bring the store level with the local histories, parsing only files
         that changed (appended files re-read just their new tail)."""
+        if archived_sessions_dir is None:
+            archived_sessions_dir = sessions_dir.parent / "archived_sessions"
+
         with self._lock:
             conn = self._db()
             self._reset_if_tz_changed(conn, tz)
@@ -142,8 +147,11 @@ class UsageStore:
             self._sync_lines(
                 conn, known, projects_dir, "*.jsonl", "claude", _claude_line_parser, tz, seen
             )
+            codex_roots = [sessions_dir]
+            if archived_sessions_dir:
+                codex_roots.append(archived_sessions_dir)
             self._sync_lines(
-                conn, known, sessions_dir, "rollout-*.jsonl", "codex", _codex_line_parser, tz, seen
+                conn, known, codex_roots, "rollout-*.jsonl", "codex", _codex_line_parser, tz, seen
             )
             self._sync_antigravity(conn, known, antigravity_dirs, tz, seen)
             self._drop_missing(conn, set(known) - seen)
@@ -218,16 +226,53 @@ class UsageStore:
         self,
         conn: sqlite3.Connection,
         known: dict[str, Any],
-        root: Path,
+        roots: Path | Iterable[Path],
         pattern: str,
         provider: str,
         parser: Any,
         tz: timezone | None,
         seen: set[str],
     ) -> None:
-        if not root.is_dir():
-            return
-        for path in root.rglob(pattern):
+        if isinstance(roots, Path):
+            roots = (roots,)
+        else:
+            roots = tuple(roots)
+
+        paths: list[Path] = []
+        for root in roots:
+            if root.is_dir():
+                paths.extend(root.rglob(pattern))
+
+        if provider == "codex":
+            final_paths = _dedupe_codex_paths(paths, roots[0])
+            for chosen in final_paths:
+                chosen_key = str(chosen)
+                matching_old_keys = [
+                    key for key in known if Path(key).name == chosen.name and key != chosen_key
+                ]
+                for old_key in matching_old_keys:
+                    exists = conn.execute(
+                        "SELECT 1 FROM files WHERE path = ?", (chosen_key,)
+                    ).fetchone()
+                    if exists:
+                        # The selected copy already has its own scan state. Drop
+                        # the duplicate rather than attaching stale-only turns to
+                        # the authoritative path.
+                        conn.execute("DELETE FROM entries WHERE path = ?", (old_key,))
+                        conn.execute("DELETE FROM files WHERE path = ?", (old_key,))
+                        known.pop(old_key, None)
+                    else:
+                        conn.execute(
+                            "UPDATE files SET path = ? WHERE path = ?", (chosen_key, old_key)
+                        )
+                        conn.execute(
+                            "UPDATE entries SET path = ? WHERE path = ?", (chosen_key, old_key)
+                        )
+                        known[chosen_key] = known.pop(old_key)
+
+            paths = final_paths
+
+        for path in paths:
             try:
                 stat = path.stat()
             except OSError:
