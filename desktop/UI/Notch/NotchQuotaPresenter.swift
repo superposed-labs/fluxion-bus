@@ -33,6 +33,14 @@ enum ProviderDisplayMode {
     case healthy
     case credits
     case locked
+    /// Depleted, but the predicted reset instant has already passed while the
+    /// cached snapshot still reports the window spent — the transient gap
+    /// between "countdown hit zero" and the next poll confirming recovery.
+    /// Rendered as a neutral "confirming…" treatment instead of the red lock
+    /// (whose finished countdown would otherwise vanish and leave the card
+    /// frozen). Never asserts recovery itself: only a fresh snapshot with room
+    /// flips back to `.healthy`, so this can't resurrect a false reset.
+    case recovering
     case error
     /// First fetch for a provider with no cached history (e.g. just enabled):
     /// render a neutral pending card, never the red error treatment.
@@ -125,6 +133,20 @@ struct NotchQuotaPresenter {
             tag: windowTag(for: window),
             idle: QuotaFormatter.isWindowIdle(window, fetchedAt: fetchedAt)
         )
+    }
+
+    /// True when a depleted window's predicted reset instant has already
+    /// passed but the snapshot still reports it spent — the live countdown has
+    /// hit zero and we're waiting for a poll to confirm recovery. Idle
+    /// (unanchored) windows have no real reset instant, so they never qualify;
+    /// callers gate on `.locked` so a fresh-and-recovered window (which would
+    /// no longer be depleted) never reaches here.
+    func awaitingReset(_ snapshot: QuotaWindowSnapshot?) -> Bool {
+        guard let snap = snapshot, !snap.idle,
+              let resetDate = QuotaFormatter.parseISODate(snap.window.resetsAt) else {
+            return false
+        }
+        return resetDate <= now
     }
 
     func activeWindow(for provider: ProviderUsage, kind: QuotaWindowKind) -> QuotaWindowSnapshot? {
@@ -232,6 +254,8 @@ struct NotchQuotaPresenter {
         let weekZero = weekly.map { $0.remaining <= 0.0 } ?? false
         let fiveZero = fiveHour.map { $0.remaining <= 0.0 } ?? false
         let depleted = weekZero || fiveZero
+        // The window whose reset unblocks the provider (weekly outlasts the 5h).
+        let lockCandidate = weekZero ? weekly : fiveHour
         let mode: ProviderDisplayMode
         if provider.status == "loading" {
             mode = .loading
@@ -240,7 +264,10 @@ struct NotchQuotaPresenter {
         } else if depleted && hasCredits {
             mode = .credits
         } else if depleted {
-            mode = .locked
+            // Locked — but once the blocking window's predicted reset has
+            // elapsed, show the transitional recovering state instead of a red
+            // lock frozen on a finished countdown, until a poll confirms.
+            mode = awaitingReset(lockCandidate) ? .recovering : .locked
         } else {
             mode = .healthy
         }
@@ -276,6 +303,9 @@ struct NotchQuotaPresenter {
                 lockReason = L10n.tr("notch.five_hour_empty")
                 note = L10n.tr("notch.five_hour_spent_reserve")
             }
+        } else if mode == .recovering {
+            lockReason = L10n.tr("notch.recovering.upper")
+            note = L10n.tr("notch.recovering.note")
         } else {
             if weekZero && fiveZero {
                 lockReason = L10n.tr("notch.all_spent")
@@ -352,7 +382,14 @@ struct NotchQuotaPresenter {
         if provider.status != "ok" {
             mode = .error
         } else if alive.isEmpty {
-            mode = hasCredits ? .credits : .locked
+            if hasCredits {
+                mode = .credits
+            } else {
+                // Every pool is spent; if the earliest-recovering pool's
+                // predicted reset has already passed, show recovering until a
+                // poll confirms rather than a red lock on a finished countdown.
+                mode = awaitingReset(earliest?.blockingSnapshot) ? .recovering : .locked
+            }
         } else {
             mode = .healthy
         }
@@ -392,6 +429,9 @@ struct NotchQuotaPresenter {
         case .locked:
             lockReason = L10n.tr("notch.pool.back_first", earliest?.tag ?? "")
             note = L10n.tr("notch.pool.all_spent")
+        case .recovering:
+            lockReason = L10n.tr("notch.recovering.upper")
+            note = L10n.tr("notch.recovering.note")
         }
 
         return ProviderQuotaState(

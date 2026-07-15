@@ -144,12 +144,15 @@ struct CircularProgressRing: View {
                     Circle()
                         .trim(from: 0.0, to: CGFloat(mode == .healthy ? percentage / 100.0 : 1.0))
                         .stroke(
-                            (mode == .error || mode == .locked) ? Color(NSColor.systemRed) : (mode == .credits ? Color(NSColor.systemGreen) : color),
+                            (mode == .error || mode == .locked) ? Color(NSColor.systemRed)
+                                : mode == .recovering ? Color(NSColor.systemYellow)
+                                : (mode == .credits ? Color(NSColor.systemGreen) : color),
                             style: StrokeStyle(lineWidth: 8, lineCap: .round)
                         )
                         .rotationEffect(Angle(degrees: -90))
                         .shadow(
                             color: (mode == .error || mode == .locked) ? Color(NSColor.systemRed).opacity(0.35) :
+                                mode == .recovering ? Color(NSColor.systemYellow).opacity(0.5) :
                                 (mode == .credits ? Color(NSColor.systemGreen).opacity(0.7) : glowColor),
                             radius: 4
                         )
@@ -203,6 +206,19 @@ struct CircularProgressRing: View {
                         Text(subtitle.uppercased())
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(Color(NSColor.systemRed))
+                            .tracking(0.8)
+                    }
+                } else if mode == .recovering {
+                    // Predicted reset elapsed; confirming with the provider. A
+                    // neutral amber "confirming…" replaces the red lock + frozen
+                    // countdown until a fresh poll flips the card back to healthy.
+                    VStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(Color(NSColor.systemYellow))
+                        Text(subtitle.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(NSColor.systemYellow))
                             .tracking(0.8)
                     }
                 } else {
