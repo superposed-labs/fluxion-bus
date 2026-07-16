@@ -12,8 +12,16 @@
   font-size: 11px;
   color: var(--fg-3);
   display: flex; align-items: center; gap: 6px;
+  min-width: 0;
 }
 .detail-crumb b { color: var(--fg-1); font-weight: 500; }
+.detail-crumb > * { flex-shrink: 0; }
+/* Conversation keys are long mono strings nobody reads verbatim — ellipsize
+   instead of wrapping to several lines; the full value is in the meta row. */
+.detail-crumb b:last-child {
+  flex-shrink: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .detail-crumb .sep { color: var(--fg-3); }
 .detail-title {
   font-size: 17px;
@@ -21,7 +29,28 @@
   letter-spacing: -0.005em;
   color: var(--fg-0);
   line-height: 1.35;
+  max-width: 80ch; /* keep line length readable on very wide windows */
+  min-width: 0;
 }
+.detail-title-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.detail-title-toggle {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.detail-title-toggle:hover { color: var(--accent); }
 .detail-meta {
   display: flex; flex-wrap: wrap; gap: 18px;
   align-items: center;
@@ -30,10 +59,16 @@
   display: flex; flex-direction: column; gap: 1px;
   font-family: var(--font-mono);
   font-size: 11px;
+  min-width: 0; max-width: 100%;
 }
 .dm-lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-3); font-weight: 600; font-family: var(--font-sans); }
 .dm-val { color: var(--fg-0); font-variant-numeric: tabular-nums; }
-.dm-val.copy { cursor: default; }
+/* Truncate only when a value exceeds the pane width (session ids, conv keys);
+   the full value stays available via the title tooltip and the Meta tab. */
+.dm-val.copy {
+  cursor: default;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dm-val.copy:hover { color: var(--accent); }
 
 /* Status badge */
