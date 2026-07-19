@@ -754,6 +754,12 @@ extension NotchIslandView {
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
+        // Three-provider cards can route the shell header around the physical
+        // notch, while one- and two-provider cards must push their whole body
+        // below it. Reinvest a little of that saved vertical room here so the
+        // quota content does not look pinned to the top with all of the shared
+        // page-height slack collected above the pager.
+        .padding(.top, model.providers.count == 3 ? 10 : 0)
         .padding(.horizontal, 16)
     }
 
