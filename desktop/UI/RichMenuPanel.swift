@@ -86,7 +86,7 @@ final class RichMenuPanelView: NSView {
         self.todayStats = todayStats
         self.isFetchingHistory = isFetchingHistory
         self.historyMessage = historyMessage
-        super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 780))
+        super.init(frame: NSRect(x: 0, y: 0, width: 486, height: 780))
         wantsLayer = true
     }
 
@@ -373,9 +373,9 @@ final class RichMenuPanelView: NSView {
         let rowX = outerPad + innerPad
         let rowRect = NSRect(x: outerPad + 2, y: y + 1, width: bounds.width - (outerPad + 2) * 2, height: rowH - 2)
         drawHover(id: hoverID, rect: rowRect)
-        let barX = bounds.width - outerPad - innerPad - 96 - 64 - 130 - 24
+        let barX = bounds.width - outerPad - innerPad - 68 - 48 - 130 - 24
         let pctX = barX + 130 + 12
-        let resetX = pctX + 64 + 12
+        let resetX = pctX + 48 + 12
         let isIdle = QuotaFormatter.isWindowIdle(w, fetchedAt: fetchedAt)
         let sym = isIdle ? "moon.zzz.fill" : "clock"
         drawSymbol(sym, x: rowX + 5, y: y + 8, size: 14, color: usageColor(used: w.usedPercent))
@@ -390,13 +390,13 @@ final class RichMenuPanelView: NSView {
                     amount = "\(Int(remaining))"
                 }
                 let amountWidth = width(amount, size: 13.0, weight: .semibold)
-                draw(amount, x: resetX + 96 - amountWidth, y: y + 6, size: 13.0, weight: .semibold, color: text)
+                draw(amount, x: resetX + 68 - amountWidth, y: y + 6, size: 13.0, weight: .semibold, color: text)
             } else {
                 draw("—", x: pctX + 34, y: y + 6, size: 13.0, weight: .semibold, color: muted)
                 let reset = resetDuration(window: w, fetchedAt: fetchedAt)
                 if !reset.isEmpty {
                     let resetWidth = width(reset, size: 12.5, weight: .regular, monospaced: true)
-                    draw(reset, x: resetX + 96 - resetWidth, y: y + 6, size: 12.5, weight: .regular, color: muted, monospaced: true)
+                    draw(reset, x: resetX + 68 - resetWidth, y: y + 6, size: 12.5, weight: .regular, color: muted, monospaced: true)
                 }
             }
             return
@@ -418,7 +418,7 @@ final class RichMenuPanelView: NSView {
         draw("%", x: pctX + 37, y: y + 7, size: 11, weight: .regular, color: muted)
         let reset = resetDuration(window: w, fetchedAt: fetchedAt)
         let resetWidth = width(reset, size: 12.5, weight: .regular, monospaced: true)
-        draw(reset, x: resetX + 96 - resetWidth, y: y + 6, size: 12.5, weight: .regular, color: remaining <= 15 ? red : muted, monospaced: true)
+        draw(reset, x: resetX + 68 - resetWidth, y: y + 6, size: 12.5, weight: .regular, color: remaining <= 15 ? red : muted, monospaced: true)
     }
 
     private func drawTemporarilyUncappedRow(y: CGFloat) {

@@ -139,7 +139,7 @@ extension AppDelegate {
             historyMessage: richHistoryMessage
         )
         let height = content.preferredHeight()
-        let width: CGFloat = 600
+        let width: CGFloat = 486
         let contentFrame = NSRect(x: 0, y: 0, width: width, height: height)
         let container = RichMenuContainerView(panelView: content, frame: contentFrame)
         content.onRefresh = { [weak self] in

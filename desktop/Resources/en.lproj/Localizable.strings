@@ -30,7 +30,7 @@
 "menu.status.active" = "%d active";
 "menu.api_value" = "API value";
 "menu.tokens" = "tokens";
-"menu.cache" = "cache";
+"menu.cache" = "cache hit";
 "menu.live_quota" = "Live quota";
 "menu.usage.loading" = "Loading usage...";
 "menu.usage.notes" = "Usage notes";

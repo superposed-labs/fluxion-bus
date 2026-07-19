@@ -30,7 +30,7 @@
 "menu.status.active" = "%d 个活跃";
 "menu.api_value" = "API 价值";
 "menu.tokens" = "tokens";
-"menu.cache" = "缓存";
+"menu.cache" = "缓存命中";
 "menu.live_quota" = "实时配额";
 "menu.usage.loading" = "正在加载用量...";
 "menu.usage.notes" = "用量说明";
