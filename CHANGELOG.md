@@ -9,6 +9,41 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-19
+
+### Added
+
+- **Notch quota dashboard** — redesigned collapsed, Peek, and expanded Notch
+  quota surfaces, with provider-specific layouts, richer usage analytics, and
+  configurable gauge and display preferences.
+- **Responsive web console** — narrow windows now prioritize the detail pane,
+  clamp long summaries, and preserve full metadata through expand controls and
+  tooltips.
+- **Quota reset confirmation** — a neutral “confirming” state and eager refresh
+  now replace a stale locked display while a predicted quota reset is verified.
+
+### Changed
+
+- **Menu bar** — the enhanced panel is more compact, and its cache percentage
+  is now labelled “cache hit” to clarify its meaning.
+- **Notch preferences** — experimental environment-variable names have been
+  consolidated; existing local overrides should use the current names.
+
+## [1.0.6] - 2026-07-15
+
+### Added
+
+- **Claude Fable** — Fable is available as a selectable Claude model alias in
+  MCP model listings, with the correct pricing.
+- **App language sync** — changing the desktop app language now also updates
+  Fluxion's configured UI locale.
+
+### Fixed
+
+- **Usage and quotas** — Fluxion now includes archived Codex sessions, avoids
+  double-counting session forks, scopes auto-ping quota checks correctly, and
+  rejects stale quota-window timestamps when detecting resets.
+
 ## [1.0.5] - 2026-07-14
 
 ### Added
@@ -125,7 +160,9 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.2...v1.0.3
