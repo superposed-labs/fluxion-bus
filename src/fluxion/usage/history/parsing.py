@@ -216,11 +216,19 @@ def _collect_files(
 
     if provider == "codex":
         final_paths = _dedupe_codex_paths(paths, roots[0])
+        # Basename → cached-path index, built once instead of scanning the
+        # whole bucket (with a Path() per probe) for every rollout — that was
+        # O(files²) and dominated a no-change scan. final_paths has one path
+        # per basename, so each bucket entry is consulted at most once.
+        cached_by_name: dict[str, list[str]] = {}
+        if cache is not None:
+            for key in bucket:
+                cached_by_name.setdefault(Path(key).name, []).append(key)
         for chosen in final_paths:
             chosen_key = str(chosen)
             if cache is not None:
                 matching_old_keys = [
-                    key for key in bucket if Path(key).name == chosen.name and key != chosen_key
+                    key for key in cached_by_name.get(chosen.name, ()) if key != chosen_key
                 ]
                 for old_key in matching_old_keys:
                     old_cached = bucket.pop(old_key)

@@ -219,6 +219,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     var isPendingRefresh: Bool = false
     var pendingForceProviders: Set<String> = []
     var lastCachedProviders: [ProviderUsage] = []
+    // Multiple refresh triggers can overlap while their collector processes
+    // serialize on the shared cache lock. A count, rather than a Bool, keeps the
+    // panel-triggered Codex refresh deferred until every active process exits.
+    var usageProbesInFlight = 0
+    var codexPanelRefreshPending = false
 
     // Cache file watcher (event-driven updates instead of constant polling).
     // Not `private`: the watcher lives in AppDelegate+Polling.swift.
@@ -693,7 +698,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
 
     /// A retired snapshot older than a day is worse than a loading card: its
     /// windows have all reset since, so the numbers it shows are fiction.
-    func isRecentEnough(_ fetchedAt: String?) -> Bool {
+    func isRecentEnough(_ fetchedAt: String?, maxAge: TimeInterval = 24 * 3600) -> Bool {
         guard let fetchedAt = fetchedAt else { return false }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -702,12 +707,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         guard let date = formatter.date(from: fetchedAt) ?? fallback.date(from: fetchedAt) else {
             return false
         }
-        return Date().timeIntervalSince(date) < 24 * 3600
+        return Date().timeIntervalSince(date) < maxAge
     }
 
     // MARK: - Actions
     @objc func triggerRefresh() {
         refresh(force: true)
+    }
+
+    /// Refresh Codex quota when opening its expanded panel only if the cached
+    /// snapshot cannot answer the reset-credit row or has aged past the normal
+    /// refresh interval. If another probe is running, defer the decision until
+    /// it finishes instead of launching overlapping collector processes.
+    func refreshCodexQuotaForPanelIfNeeded() {
+        guard activeProviderKeys().contains("codex") else { return }
+        let codex = currentProviders.first { $0.provider.lowercased() == "codex" }
+        let refreshAge = TimeInterval(max(30, Int(envVals["FLUXION_USAGE_REFRESH_SEC"] ?? "") ?? 60))
+        let missingResets = codex?.resets == nil
+        let stale = !isRecentEnough(codex?.fetchedAt, maxAge: refreshAge)
+        guard codex == nil || missingResets || stale else { return }
+
+        if usageProbesInFlight > 0 {
+            codexPanelRefreshPending = true
+            return
+        }
+        codexPanelRefreshPending = false
+        refresh(force: false, forceProviders: ["codex"])
     }
 
     func refresh(force: Bool, forceProviders: [String] = []) {
@@ -743,23 +768,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         let errPipe = Pipe()
         task.standardOutput = Pipe()
         task.standardError = errPipe
+        usageProbesInFlight += 1
         task.terminationHandler = { [weak self] proc in
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             
             DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.usageProbesInFlight = max(0, self.usageProbesInFlight - 1)
                 if proc.terminationStatus != 0 {
                     NSLog("FluxionMenu: fluxion-usage exited with status %d. Error: %@", proc.terminationStatus, errStr)
                 }
-                self?.reloadCacheFromDisk()
-                self?.render()
+                self.reloadCacheFromDisk()
+                self.render()
                 // The cache file may have just been created — attach the watcher.
-                self?.startCacheWatcher()
+                self.startCacheWatcher()
+                if self.usageProbesInFlight == 0, self.codexPanelRefreshPending {
+                    self.codexPanelRefreshPending = false
+                    self.refreshCodexQuotaForPanelIfNeeded()
+                }
             }
         }
         do {
             try task.run()
         } catch {
+            usageProbesInFlight = max(0, usageProbesInFlight - 1)
             NSLog("FluxionMenu: failed to launch fluxion-usage: %@", error.localizedDescription)
         }
     }

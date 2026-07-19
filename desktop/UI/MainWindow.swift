@@ -34,12 +34,18 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
     private var connectionRetry: DispatchWorkItem?
     private var connectionAttempt = 0
     private let maxConnectionAttempts = 30
+    // Console view to land on (?view= query param), set per show() call and
+    // kept across connection retries so a retry doesn't lose the deep link.
+    private var initialView: String?
 
     private var appDelegate: AppDelegate {
         return NSApp.delegate as! AppDelegate
     }
 
-    func show() {
+    /// Show the console window. `view` deep-links to a console page (e.g.
+    /// "stats" for the usage view) — nil keeps the console's default.
+    func show(view: String? = nil) {
+        initialView = view
         if let win = window {
             win.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -284,7 +290,8 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         
         let port = appDelegate.envVals["FLUXION_UI_PORT"] ?? "8765"
         let langCode = L10n.pythonLocale
-        if let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)") {
+        let viewParam = initialView.map { "&view=\($0)" } ?? ""
+        if let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)\(viewParam)") {
             web.load(URLRequest(url: url))
         }
     }

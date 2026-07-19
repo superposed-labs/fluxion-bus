@@ -16,8 +16,14 @@ from fluxion.usage.history.entry import UsageEntry
 
 
 def _sqlite_signature(path: Path) -> list[list[int | str]]:
+    """Change signature for a conversation db: main file + -wal (name, mtime,
+    size). The -shm file is deliberately EXCLUDED: it is WAL-mode coordination
+    scratch whose mtime is touched even by our own read-only parse, so putting
+    it in the signature made every parse invalidate the signature it had just
+    stored — every sync then re-parsed every conversation db (~5s of the old
+    ~8s sync). Real content changes always move the main db or -wal mtime/size."""
     signature: list[list[int | str]] = []
-    for related in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+    for related in (path, Path(f"{path}-wal")):
         try:
             stat = related.stat()
         except OSError:

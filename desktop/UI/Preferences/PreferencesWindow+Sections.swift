@@ -523,7 +523,7 @@ extension PreferencesWindow {
         silentStylePopup.translatesAutoresizingMaskIntoConstraints = false
         silentStylePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
 
-        let activeSilent = appDelegate.envVals["FLUXION_NOTCH_SILENT_STYLE"] ?? "all"
+        let activeSilent = appDelegate.envVals["FLUXION_NOTCH_COLLAPSED_MODE"] ?? "all"
         if activeSilent == "lowest" { silentStylePopup.selectItem(at: 0) }
         else if activeSilent == "ambient" { silentStylePopup.selectItem(at: 2) }
         else { silentStylePopup.selectItem(at: 1) }
@@ -549,7 +549,75 @@ extension PreferencesWindow {
             title: L10n.tr("preferences.notch_silent"),
             desc: L10n.tr("preferences.notch_silent.desc"),
             control: silentStylePopup,
+            isFirst: true
+        )
+
+        gaugeStylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        gaugeStylePopup.addItems(withTitles: [
+            L10n.tr("preferences.notch.gauge.dot"),
+            L10n.tr("preferences.notch.gauge.ring"),
+            L10n.tr("preferences.notch.gauge.liquid")
+        ])
+        gaugeStylePopup.translatesAutoresizingMaskIntoConstraints = false
+        gaugeStylePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
+
+        let activeShape = appDelegate.envVals["FLUXION_NOTCH_GAUGE_STYLE"] ?? "ring"
+        let shapeOrder = ["dot", "ring", "liquid"]
+        gaugeStylePopup.selectItem(at: shapeOrder.firstIndex(of: activeShape) ?? 1)
+
+        gaugeStylePopup.target = self
+        gaugeStylePopup.action = #selector(autosave)
+
+        gaugeStyleRow = CardRow(
+            title: L10n.tr("preferences.notch.gauge"),
+            desc: L10n.tr("preferences.notch.gauge.desc"),
+            control: gaugeStylePopup,
             isFirst: false
+        )
+
+        gaugeValuePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        gaugeValuePopup.addItems(withTitles: [
+            L10n.tr("preferences.notch.gauge_value.beside"),
+            L10n.tr("preferences.notch.gauge_value.inside"),
+            L10n.tr("preferences.notch.gauge_value.hidden")
+        ])
+        gaugeValuePopup.translatesAutoresizingMaskIntoConstraints = false
+        gaugeValuePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
+
+        let activeGaugeValue = appDelegate.envVals["FLUXION_NOTCH_GAUGE_VALUE_POSITION"] ?? "beside"
+        let valueOrder = ["beside", "inside", "hidden"]
+        gaugeValuePopup.selectItem(at: valueOrder.firstIndex(of: activeGaugeValue) ?? 0)
+        // The dot has no interior for a number; the placement axis applies to
+        // ring/liquid only.
+        gaugeValuePopup.isEnabled = activeShape != "dot"
+
+        gaugeValuePopup.target = self
+        gaugeValuePopup.action = #selector(autosave)
+
+        gaugeValueRow = CardRow(
+            title: L10n.tr("preferences.notch.gauge_value"),
+            desc: L10n.tr("preferences.notch.gauge_value.desc"),
+            control: gaugeValuePopup,
+            isFirst: false
+        )
+
+        expandedStylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        expandedStylePopup.addItems(withTitles: [
+            L10n.tr("preferences.notch.expanded_style.compact"),
+            L10n.tr("preferences.notch.expanded_style.detailed")
+        ])
+        expandedStylePopup.translatesAutoresizingMaskIntoConstraints = false
+        expandedStylePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
+        let activeExpandedStyle = appDelegate.envVals["FLUXION_NOTCH_SINGLE_MODEL_LAYOUT"] ?? "detailed"
+        expandedStylePopup.selectItem(at: activeExpandedStyle == "compact" ? 0 : 1)
+        expandedStylePopup.target = self
+        expandedStylePopup.action = #selector(autosave)
+
+        expandedStyleRow = CardRow(
+            title: L10n.tr("preferences.notch.expanded_style"),
+            desc: L10n.tr("preferences.notch.expanded_style.desc"),
+            control: expandedStylePopup,
+            isFirst: true
         )
 
         peekResetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -561,8 +629,8 @@ extension PreferencesWindow {
         peekResetPopup.translatesAutoresizingMaskIntoConstraints = false
         peekResetPopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
 
-        let activePeekReset = appDelegate.envVals["FLUXION_NOTCH_PEEK_RESET"] ?? "5h"
-        if activePeekReset == "week" { peekResetPopup.selectItem(at: 1) }
+        let activePeekReset = appDelegate.envVals["FLUXION_NOTCH_PEEK_WINDOWS"] ?? "both"
+        if activePeekReset == "weekly" { peekResetPopup.selectItem(at: 1) }
         else if activePeekReset == "both" { peekResetPopup.selectItem(at: 2) }
         else { peekResetPopup.selectItem(at: 0) }
 
@@ -584,10 +652,29 @@ extension PreferencesWindow {
             title: L10n.tr("preferences.hide_fullscreen"),
             desc: L10n.tr("preferences.hide_fullscreen.desc"),
             control: checkHideOnFullscreen,
-            isFirst: false
+            isFirst: true
         )
 
-        addSection(title: L10n.tr("preferences.section.display"), rows: [displayStyleRow, appearanceRow, silentStyleRow, peekResetRow, hideOnFullscreenRow], into: documentStack)
+        addSection(
+            title: L10n.tr("preferences.section.display"),
+            rows: [displayStyleRow, appearanceRow],
+            into: documentStack
+        )
+        notchGlanceSection = addSection(
+            title: L10n.tr("preferences.section.notch_glance"),
+            rows: [silentStyleRow, gaugeStyleRow, gaugeValueRow, peekResetRow],
+            into: documentStack
+        )
+        notchExpandedSection = addSection(
+            title: L10n.tr("preferences.section.notch_expanded"),
+            rows: [expandedStyleRow],
+            into: documentStack
+        )
+        notchBehaviorSection = addSection(
+            title: L10n.tr("preferences.section.notch_behavior"),
+            rows: [hideOnFullscreenRow],
+            into: documentStack
+        )
     }
 
     // MARK: - Section 2: Usage Display

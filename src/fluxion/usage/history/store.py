@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Any
 
 from fluxion.usage.history import pricing
-from fluxion.usage.history.aggregate import WINDOW_DAYS, _Bucket, _streaks
+from fluxion.usage.history.aggregate import (
+    PROVIDER_DAY_SERIES_DAYS,
+    PROVIDER_HOUR_SERIES_DAYS,
+    WINDOW_DAYS,
+    _Bucket,
+    _streaks,
+)
 from fluxion.usage.history.antigravity_db import _parse_antigravity_db, _sqlite_signature
 from fluxion.usage.history.entry import UsageEntry
 from fluxion.usage.history.parsing import (
@@ -250,10 +256,19 @@ class UsageStore:
 
         if provider == "codex":
             final_paths = _dedupe_codex_paths(paths, roots[0])
+            # Basename → known-path index, built once. Scanning `known` (with a
+            # Path() constructed per probe) for every rollout was O(files²) —
+            # ~3.5M Path.name calls for ~1.9k files, the bulk of an otherwise
+            # no-op sync. final_paths carries one path per basename, so each
+            # index bucket is consulted at most once and needs no maintenance
+            # as `known` mutates below.
+            known_by_name: dict[str, list[str]] = {}
+            for key in known:
+                known_by_name.setdefault(Path(key).name, []).append(key)
             for chosen in final_paths:
                 chosen_key = str(chosen)
                 matching_old_keys = [
-                    key for key in known if Path(key).name == chosen.name and key != chosen_key
+                    key for key in known_by_name.get(chosen.name, ()) if key != chosen_key
                 ]
                 for old_key in matching_old_keys:
                     exists = conn.execute(
@@ -466,6 +481,40 @@ class UsageStore:
                 bucket.messages = n
                 by_day_full[day] = bucket
 
+            # Trailing per-provider day series for the notch sparkline — like
+            # by_day, independent of `window` (see aggregate.py).
+            provider_day_cutoff = (today - timedelta(days=PROVIDER_DAY_SERIES_DAYS - 1)).isoformat()
+            by_provider_day: dict[tuple[str, str], _Bucket] = {}
+            for day, provider, si, so, scc, scr, n in conn.execute(
+                """SELECT day, provider, SUM(i), SUM(o), SUM(cc), SUM(cr), COUNT(*)
+                   FROM entries WHERE day >= ?
+                   GROUP BY day, provider""",
+                (provider_day_cutoff,),
+            ).fetchall():
+                bucket = _Bucket()
+                bucket.input_tokens = si
+                bucket.output_tokens = so
+                bucket.cache_creation_tokens = scc
+                bucket.cache_read_tokens = scr
+                bucket.messages = n
+                by_provider_day[(day, provider)] = bucket
+
+            # Provider-specific trailing-seven-day hourly activity. This is
+            # deliberately independent of the requested window, just like the
+            # notch's provider-day series above.
+            provider_hour_cutoff = (
+                today - timedelta(days=PROVIDER_HOUR_SERIES_DAYS - 1)
+            ).isoformat()
+            by_provider_hour = {
+                (provider, hour): (messages, total_tokens or 0)
+                for provider, hour, messages, total_tokens in conn.execute(
+                    """SELECT provider, hour, COUNT(*), SUM(i + o + cc + cr)
+                       FROM entries WHERE day >= ?
+                       GROUP BY provider, hour""",
+                    (provider_hour_cutoff,),
+                ).fetchall()
+            }
+
         return self._payload(
             window,
             today,
@@ -482,6 +531,8 @@ class UsageStore:
             model_context_counts,
             model_sessions,
             by_day_full,
+            by_provider_day,
+            by_provider_hour,
             by_hour_rows,
         )
 
@@ -502,6 +553,8 @@ class UsageStore:
         model_context_counts,
         model_sessions,
         by_day_full,
+        by_provider_day,
+        by_provider_hour,
         by_hour_rows,
     ) -> dict[str, Any]:
         active_dates_full = {date.fromisoformat(d) for d in by_day_full}
@@ -567,6 +620,24 @@ class UsageStore:
                     "total_tokens": by_day_full[d].total_tokens,
                 }
                 for d in day_list_full
+            ],
+            "by_provider_day": [
+                {
+                    "date": d,
+                    "provider": p,
+                    "total_tokens": bucket.total_tokens,
+                    "generated_tokens": bucket.generated_tokens,
+                }
+                for (d, p), bucket in sorted(by_provider_day.items())
+            ],
+            "by_provider_hour": [
+                {
+                    "provider": provider,
+                    "hour": hour,
+                    "messages": messages,
+                    "total_tokens": total_tokens,
+                }
+                for (provider, hour), (messages, total_tokens) in sorted(by_provider_hour.items())
             ],
             "by_hour": [
                 {

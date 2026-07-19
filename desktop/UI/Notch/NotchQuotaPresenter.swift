@@ -475,6 +475,26 @@ struct NotchQuotaPresenter {
         return "now"
     }
 
+    /// One-unit countdown for the always-on collapsed strip. Peek and expanded
+    /// keep the full two-unit value; this compact form preserves shoulder space
+    /// beside the camera while still communicating the useful magnitude.
+    func compactTimerString(for snapshot: QuotaWindowSnapshot?) -> String {
+        if let snapshot = snapshot, snapshot.idle {
+            let label = snapshot.kind == .fiveHour ? "5h" : "7d"
+            return QuotaFormatter.windowLengthText(
+                windowMinutes: snapshot.window.windowMinutes,
+                fallbackLabel: label
+            )
+        }
+        if let snapshot = snapshot,
+           let date = QuotaFormatter.parseISODate(snapshot.window.resetsAt) {
+            let diff = date.timeIntervalSince(now)
+            if diff > 0, diff < 60 { return "<1m" }
+            return QuotaFormatter.formatDuration(diff).primary
+        }
+        return "now"
+    }
+
     func get5hResetTimer(for provider: ProviderUsage) -> String {
         timerString(for: getActive5hWindow(for: provider))
     }

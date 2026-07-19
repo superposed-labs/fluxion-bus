@@ -85,8 +85,13 @@ extension AppDelegate {
             }
 
             notch.model.providers = providers
-            notch.model.silentStyle = envVals["FLUXION_NOTCH_SILENT_STYLE"] ?? "all"
-            notch.model.peekReset = envVals["FLUXION_NOTCH_PEEK_RESET"] ?? "5h"
+            notch.model.silentStyle = envVals["FLUXION_NOTCH_COLLAPSED_MODE"] ?? "all"
+            notch.model.gaugeStyle = envVals["FLUXION_NOTCH_GAUGE_STYLE"] ?? "ring"
+            notch.model.gaugeValue = envVals["FLUXION_NOTCH_GAUGE_VALUE_POSITION"] ?? "beside"
+            notch.model.expandedStyle = envVals["FLUXION_NOTCH_SINGLE_MODEL_LAYOUT"] == "compact"
+                ? "compact"
+                : "detailed"
+            notch.model.peekReset = envVals["FLUXION_NOTCH_PEEK_WINDOWS"] ?? "both"
             notch.repositionWindow()
         }
 

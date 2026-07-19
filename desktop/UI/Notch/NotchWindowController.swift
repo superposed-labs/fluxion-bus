@@ -36,15 +36,46 @@ class NotchDataModel: ObservableObject {
     @Published var providers: [ProviderUsage] = []
     @Published var justGranted: Int = 0
     @Published var todayStats: [String: ProviderHistoryStats] = [:]
+    // Per-provider daily generated-token series for the trailing 14 local days
+    // (oldest → today), keyed by lowercased provider: the last 7 draw the
+    // usage page's week chart, the 7 before them anchor its week-over-week
+    // delta. Empty when the backend predates by_provider_day, and the chart
+    // simply doesn't render.
+    @Published var dailyTokens: [String: [Int]] = [:]
+    // Provider-specific peak local hour across the trailing seven days. The
+    // backend counts turns rather than tokens so one unusually large request
+    // cannot distort the user's habitual busy time.
+    @Published var peakHours: [String: Int] = [:]
+    // False until the first successful history fetch: the pages use this to
+    // show a loading placeholder instead of misreading "not fetched yet" as
+    // a real zero-usage day.
+    @Published var historyLoaded: Bool = false
     @Published var notchState: NotchState = .collapsed
     @Published var page: Int = 0
+    // Natural height of each expanded page (keyed by page index), reported by
+    // the pages' measurement backgrounds. expandedPageHeight tracks the entry
+    // for the CURRENT page so the island grows/shrinks per page.
+    @Published var pageHeights: [Int: CGFloat] = [:]
     @Published var hasNotch: Bool = false
     @Published var safeAreaTop: CGFloat = 0
     @Published var silentStyle: String = "all"
+    // The gauge SHAPE drawn in the collapsed strip and peek tray: "ring"
+    // (progress ring, default), "liquid" (liquid-filled circle) or "dot" (the
+    // classic glowing dot). Orthogonal to silentStyle, which decides WHAT is
+    // shown; this decides HOW.
+    @Published var gaugeStyle: String = "ring"
+    // Where each quota's number lives: "beside" the gauge (default), "inside"
+    // the ring/liquid circle, or "hidden". The dot can't hold a number, so it
+    // ignores "inside"; exhausted quotas always surface their reset countdown.
+    @Published var gaugeValue: String = "beside"
+    // Single-provider expanded quota layout: "compact" reuses the same
+    // one-ring column used by multi-provider panels; "detailed" uses the
+    // richer full-width solo card. Multi-provider panels ignore this setting.
+    @Published var expandedStyle: String = "detailed"
     // Which reset window(s) the peek status line counts down: "5h" (rolling
-    // window, default), "week" (weekly cap), or "both" (two labeled timers
+    // window), "weekly" (weekly cap), or "both" (two labeled timers,
     // stacked vertically, which makes the peek tray taller).
-    @Published var peekReset: String = "5h"
+    @Published var peekReset: String = "both"
     @Published var notchWidth: CGFloat = 0
     @Published var notchLeft: CGFloat = 0
     @Published var notchRight: CGFloat = 0
@@ -68,6 +99,19 @@ class NotchDataModel: ObservableObject {
             return count == 1 ? 200 : (count == 3 ? 380 : 280)
         }
         return max(180, peekContentWidth + 32 + 8)
+    }
+
+    // Peek tray width on a notched display: the collapsed width (+ the legacy
+    // 3-provider bonus) is the floor, but content that measures wider — pool
+    // tags, stacked timers, three segments — grows the tray instead of
+    // clipping at the window edges. Reuses the same measured row (and slack)
+    // as peekWidthNoNotch; until the first measurement lands the floor alone
+    // applies, so the tray can still open before a hover has ever happened.
+    func peekWidthWithNotch(collapsedBase: CGFloat, count: Int) -> CGFloat {
+        let bonus: CGFloat = (count == 3 && !usesTallPeekLayout) ? 80 : 0
+        let base = collapsedBase + bonus
+        guard peekContentWidth > 1 else { return base }
+        return max(base, peekContentWidth + 32 + 8)
     }
 
     // Collapsed pill width on a non-notched display: hugs the measured row
@@ -108,6 +152,35 @@ class NotchDataModel: ObservableObject {
     // Extra peek-tray height in "both" mode, where each segment stacks a header
     // row over two labeled countdowns instead of a single inline timer.
     static let peekBothExtraHeight: CGFloat = 34
+    // The dedicated two-agent treatment fits both windows into two compact
+    // rows; the WK value moves into a perimeter rail instead of requiring a
+    // third stacked timer row.
+    static let dualAgentArcPeekExtraHeight: CGFloat = 22
+    // The solo 5H | WK peek is a compact inline row below the physical notch.
+    // Twelve points keep a visible safety gap above the gauges without
+    // carrying unnecessary black space between the camera housing and row.
+    static let soloDualPeekExtraHeight: CGFloat = 12
+
+    // A single provider's compact 5H/WK glance always expands into the same
+    // two-column, two-line peek, even if the legacy timer preference selected
+    // only one window. This preserves continuity from the collapsed strip.
+    var usesTallPeekLayout: Bool {
+        peekReset == "both" || notchUsesSoloDualWindowGlance(providers)
+    }
+
+    var usesDualAgentArcPeek: Bool {
+        peekReset == "both" && notchUsesDualAgentArcPeek(providers)
+    }
+
+    var peekContentExtraHeight: CGFloat {
+        if notchUsesSoloDualWindowGlance(providers) {
+            return Self.soloDualPeekExtraHeight
+        }
+        if usesDualAgentArcPeek {
+            return Self.dualAgentArcPeekExtraHeight
+        }
+        return peekReset == "both" ? Self.peekBothExtraHeight : 0
+    }
 
     // Extra tray height for the one-line "updating components" caption shown
     // under the peek segments during a backend upgrade. Without it the
@@ -120,7 +193,7 @@ class NotchDataModel: ObservableObject {
         // non-notched pill has no band to mirror, so it hugs the content
         // (which the peek view centers vertically instead of bottom-anchoring).
         let base: CGFloat = hasNotch ? safeAreaTop + 36 : 44
-        let both: CGFloat = peekReset == "both" ? Self.peekBothExtraHeight : 0
+        let both = peekContentExtraHeight
         let upgrade: CGFloat = isUpgradingBackend ? Self.upgradeCaptionHeight : 0
         return base + both + upgrade
     }
@@ -276,9 +349,15 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     // History fetch retry: the web server may not be listening yet right after
     // launch, so a single attempt would leave "0" until the 30s poll. Each
     // fetchHistory() starts a fresh attempt chain (newer chains supersede older
-    // ones via the generation token) that backs off until it succeeds.
+    // ones via the generation token) that backs off until it succeeds. The
+    // front is dense because the common case is fast: the app restarts the web
+    // server on its own relaunch and a warm-store boot serves in ~0.6s
+    // (measured), so quarter/half-second probes pick that up almost as soon as
+    // it lands. The ~12s tail covers the slow cases — a first-ever ingest or a
+    // store-format migration — instead of giving up and stranding the
+    // placeholders until the 30s poll.
     private var fetchGeneration = 0
-    private let fetchRetryDelays: [TimeInterval] = [0.5, 1.0, 2.0, 4.0]
+    private let fetchRetryDelays: [TimeInterval] = [0.25, 0.5, 1.0, 2.0, 4.0, 4.0, 4.0]
     
     private var appDelegate: AppDelegate {
         return NSApp.delegate as! AppDelegate
@@ -444,14 +523,35 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 let cache_read_tokens: Int?
             }
 
+            struct ProviderDayStat: Codable {
+                let date: String
+                let provider: String
+                // Same measure as the headline (see HistoryModelStat), so
+                // today's bar always matches the big number above it.
+                let generated_tokens: Int
+            }
+
+            struct ProviderHourStat: Codable {
+                let provider: String
+                let hour: Int
+                let messages: Int
+                let total_tokens: Int
+            }
+
             struct HistoryPayload: Codable {
                 let by_model: [HistoryModelStat]?
+                // Absent on backends that predate the field; the sparkline
+                // just stays hidden.
+                let by_provider_day: [ProviderDayStat]?
+                let by_provider_hour: [ProviderHourStat]?
             }
 
             // A valid payload (even an empty one = no usage today) is a success;
             // anything else — connection refused, timeout, non-200, undecodable —
             // is a miss worth retrying while the server comes up.
             var parsed: [String: ProviderHistoryStats]? = nil
+            var parsedDaily: [String: [Int]] = [:]
+            var parsedPeakHours: [String: Int] = [:]
             if let data = data, error == nil,
                (response as? HTTPURLResponse)?.statusCode == 200,
                let payload = try? JSONDecoder().decode(HistoryPayload.self, from: data),
@@ -470,6 +570,49 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                     )
                 }
                 parsed = stats
+
+                if let rows = payload.by_provider_day {
+                    // Re-key the server's sparse (day, provider) rows into a
+                    // dense trailing-7-local-days series per provider so bar
+                    // positions line up across providers and zero days show
+                    // as gaps. The server buckets days in the same local
+                    // timezone this formatter uses.
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd"
+                    let dayKeys: [String] = (0..<14).reversed().map { offset in
+                        formatter.string(from: Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date())
+                    }
+                    var byProviderDay: [String: [String: Int]] = [:]
+                    for row in rows {
+                        byProviderDay[row.provider.lowercased(), default: [:]][row.date, default: 0] += row.generated_tokens
+                    }
+                    for (pKey, days) in byProviderDay {
+                        parsedDaily[pKey] = dayKeys.map { days[$0] ?? 0 }
+                    }
+                }
+
+                if let rows = payload.by_provider_hour {
+                    var grouped: [String: [ProviderHourStat]] = [:]
+                    for row in rows where (0..<24).contains(row.hour) {
+                        grouped[row.provider.lowercased(), default: []].append(row)
+                    }
+                    for (provider, hours) in grouped {
+                        // Avoid presenting a habit inferred from only one or
+                        // two turns. Ties prefer token volume, then the earlier
+                        // local hour for deterministic rendering.
+                        guard hours.reduce(0, { $0 + $1.messages }) >= 3 else { continue }
+                        let peak = hours.max { lhs, rhs in
+                            if lhs.messages != rhs.messages { return lhs.messages < rhs.messages }
+                            if lhs.total_tokens != rhs.total_tokens {
+                                return lhs.total_tokens < rhs.total_tokens
+                            }
+                            return lhs.hour > rhs.hour
+                        }
+                        if let peak = peak, peak.messages > 0 {
+                            parsedPeakHours[provider] = peak.hour
+                        }
+                    }
+                }
             }
 
             DispatchQueue.main.async {
@@ -477,6 +620,9 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 guard generation == self.fetchGeneration else { return }
                 if let stats = parsed {
                     self.model.todayStats = stats
+                    self.model.dailyTokens = parsedDaily
+                    self.model.peakHours = parsedPeakHours
+                    self.model.historyLoaded = true
                 } else if attempt < self.fetchRetryDelays.count {
                     let delay = self.fetchRetryDelays[attempt]
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -507,29 +653,100 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     private func getLeftAndRightMargins(count: Int) -> (left: CGFloat, right: CGFloat) {
         let leftW: CGFloat
         let rightW: CGFloat
-        
+
+        // The number-suppressing ring styles collapse each unit's lane to its
+        // bare ring, so the strip hugs the notch instead of carrying the dead
+        // width of numbers it no longer shows. Any state whose side text
+        // returns (the exhausted countdown, credits, ∞, loading) gets the full
+        // text lane back — the strip resizes on those transitions, trading the
+        // old fixed-width stability for a tight silhouette.
+        let shapedGaugeStyle = model.gaugeStyle != "dot"
+        let hidesSide = shapedGaugeStyle
+            && (model.gaugeValue == "inside" || model.gaugeValue == "hidden")
+        let bareRing: CGFloat = model.gaugeValue == "inside" ? 18 : 12
+        let presenter = NotchQuotaPresenter(now: Date())
+        func statusUnitW(_ p: ProviderUsage) -> CGFloat {
+            guard hidesSide else { return 48 }
+            return presenter.quotaState(for: p).mode == .healthy ? bareRing : 48
+        }
+
         switch model.silentStyle {
         case "ambient":
-            leftW = (count >= 2) ? 7 : 0
-            rightW = (count >= 3) ? 20 : 7
+            // Lane widths track the gauge style: the classic dot is 7pt, a
+            // bare ring/liquid circle is 12pt, and the Minimal solo 5H | WK
+            // glance flanks a 17pt labeled gauge on each shoulder
+            // (soloDualWindowMinimalView). Undersized lanes push the gauges
+            // under the physical notch.
+            if shapedGaugeStyle && notchUsesSoloDualWindowGlance(model.providers) {
+                leftW = 17
+                rightW = 17
+            } else {
+                let unit: CGFloat = shapedGaugeStyle ? 12 : 7
+                leftW = (count >= 2) ? unit : 0
+                rightW = (count >= 3) ? (unit * 2 + 6) : unit
+            }
         case "lowest":
             leftW = 0
-            rightW = 48
-        default: // "all"
-            if count == 1 {
-                leftW = 0
-                rightW = 48
-            } else if count == 2 {
-                leftW = 48
-                rightW = 48
+            if hidesSide {
+                let allHealthy = !model.providers.isEmpty
+                    && model.providers.allSatisfy { presenter.quotaState(for: $0).mode == .healthy }
+                rightW = allHealthy ? bareRing : 48
             } else {
-                leftW = 48
-                rightW = 102
+                rightW = 48
+            }
+        default: // "all"
+            if notchUsesSoloDualWindowGlance(model.providers), let provider = model.providers.first {
+                if hidesSide {
+                    // Sides size independently: a depleted window's countdown
+                    // (or the hidden placement's side ∞) restores that side's
+                    // text lane.
+                    let state = presenter.quotaState(for: provider)
+                    let ring: CGFloat = model.gaugeValue == "inside" ? 18 : 17
+                    if (state.fiveHour?.remaining ?? 100) <= 0 {
+                        leftW = 58
+                    } else if isCodexFiveHourTemporarilyUncapped(provider) && model.gaugeValue == "hidden" {
+                        leftW = 34
+                    } else {
+                        leftW = ring
+                    }
+                    rightW = (state.weekly?.remaining ?? 100) <= 0 ? 58 : ring
+                } else {
+                    // `5H 100%` / `WK 100%` normally fit well inside 48pt, but a
+                    // depleted window swaps the value for a timer (`4d 17h`). Give
+                    // both shoulders a stable 58pt content lane so state changes
+                    // never resize the strip or crowd the camera.
+                    leftW = 58
+                    rightW = 58
+                }
+            } else if notchIsSoloSplit(model.providers), let provider = model.providers.first {
+                // One provider's two pools flank the camera. Pool trouble
+                // (a blocked pool's countdown or credits) restores the lanes.
+                let state = presenter.quotaState(for: provider)
+                let bad = state.mode != .healthy || !state.blockedPools.isEmpty
+                let unit = (hidesSide && !bad) ? bareRing : 48
+                leftW = unit
+                rightW = unit
+            } else if count == 1 {
+                leftW = 0
+                rightW = model.providers.first.map(statusUnitW) ?? 48
+            } else if count == 2 {
+                leftW = statusUnitW(model.providers[0])
+                rightW = statusUnitW(model.providers[1])
+            } else {
+                leftW = statusUnitW(model.providers[0])
+                rightW = statusUnitW(model.providers[1]) + 6 + statusUnitW(model.providers[2])
             }
         }
         
         let gOuter: CGFloat = 13
-        let gNotch: CGFloat = 10
+        // AppKit's auxiliary top areas stop slightly inside the visible camera
+        // housing on some panels. Text layouts have spare lane width, but a
+        // gauge that occupies its entire lane (ambient's 7pt dot, or the
+        // number-suppressing ring styles' bare rings) would sit partly under
+        // the physical notch with the old 10pt allowance. Expand those tight
+        // layouts symmetrically; roomy text layouts keep their established
+        // geometry.
+        let gNotch: CGFloat = (model.silentStyle == "ambient" || hidesSide) ? 20 : 10
         
         let leftMargin = leftW > 0 ? (leftW + gOuter + gNotch) : (gOuter + gNotch)
         let rightMargin = rightW > 0 ? (rightW + gOuter + gNotch) : (gOuter + gNotch)
@@ -583,9 +800,11 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         case .collapsed:
             cardWidth = model.collapsedWidth
         case .peek:
-            cardWidth = hasNotch ? (model.collapsedWidth + 80) : model.peekWidthNoNotch(count: count)
+            cardWidth = hasNotch
+                ? model.peekWidthWithNotch(collapsedBase: model.collapsedWidth, count: count)
+                : model.peekWidthNoNotch(count: count)
         case .expanded:
-            cardWidth = notchExpandedWidth(providers: model.providers)
+            cardWidth = notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
         }
         
         let screenFrame = screen.frame
@@ -702,7 +921,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             // taller. peekReset is a stable preference (set before reposition),
             // so reading it from the model here is safe. Mirrors peekHeight,
             // including the upgrade caption row.
-            var extra: CGFloat = model.peekReset == "both" ? NotchDataModel.peekBothExtraHeight : 0
+            var extra = model.peekContentExtraHeight
             if model.isUpgradingBackend {
                 extra += NotchDataModel.upgradeCaptionHeight
             }
@@ -715,17 +934,19 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             let peekMarginW = Self.peekMarginW
             let peekMarginH = Self.peekMarginH
             if hasNotch {
-                // Mirror targetWidth's peek rule: only 3-provider non-Both keeps
-                // the +80; all others hug the collapsed width.
-                let bonus: CGFloat = (count == 3 && model.peekReset != "both") ? 80 : 0
-                w = getCollapsedWidth(screen: screen, count: count) + bonus
+                // Mirror targetWidth's peek rule (collapsed floor + measured
+                // content growth) so window and SwiftUI layout agree.
+                w = model.peekWidthWithNotch(
+                    collapsedBase: getCollapsedWidth(screen: screen, count: count),
+                    count: count
+                )
                 return NSSize(width: w + peekMarginW, height: safeAreaTop + 36 + extra + peekMarginH)
             } else {
                 w = model.peekWidthNoNotch(count: count)
                 return NSSize(width: w + peekMarginW, height: 44 + extra + peekMarginH)
             }
         case .expanded:
-            let w: CGFloat = notchExpandedWidth(providers: model.providers)
+            let w: CGFloat = notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
             // Add a transparent window margin (width + 60, height + 40) so the SwiftUI
             // card can bounce and overshoot freely without getting clipped by window borders.
             return NSSize(width: w + 60, height: model.expandedCardHeight + 40)
@@ -1089,6 +1310,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             }
         } else {
             allowsKeyWindow = true
+            // Refresh history the moment the user opens the panel: the
+            // launch-time retry chain gives up after ~8s (e.g. when the web
+            // server is still cold-starting), and waiting out the 30s poll
+            // with placeholders showing reads as "stuck". The endpoint is
+            // local and ~40ms warm, so an extra fetch per open is free.
+            fetchHistory()
+            appDelegate.refreshCodexQuotaForPanelIfNeeded()
             let targetSize = getWindowSize(for: .expanded)
             updateWindowFrame(to: targetSize)  // clears windowHasPeekHalo
 
