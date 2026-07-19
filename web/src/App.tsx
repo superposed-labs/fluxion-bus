@@ -492,7 +492,7 @@ export function App(): JSX.Element {
         <DetailPane task={selectedTask} onContinue={openContinue} />
 
         {tweaks.sideRail && (
-          <div className="pane scroll" style={{ overflowY: "auto" }}>
+          <div className="pane pane-side scroll" style={{ overflowY: "auto" }}>
             <ExecutorRail
               tasks={sanitizedTasks}
               usage={usage}

@@ -152,6 +152,22 @@ input, select { font-family: inherit; color: inherit; }
 }
 :root[data-side="off"] .shell-cols { grid-template-columns: var(--rail-w) 1fr; }
 
+/* Responsive shell: narrow windows (desktop-app WebView, split screens) keep
+   the detail pane usable by shrinking, then dropping, the side columns.
+   Density variants are listed so these widths win over their base values. */
+@media (max-width: 1280px) {
+  :root,
+  :root[data-density="compact"],
+  :root[data-density="comfy"] {
+    --rail-w: 320px;
+    --side-w: 290px;
+  }
+}
+@media (max-width: 1024px) {
+  .shell-cols { grid-template-columns: var(--rail-w) 1fr; }
+  .shell-cols > .pane-side { display: none; }
+}
+
 .pane {
   min-width: 0;
   min-height: 0;

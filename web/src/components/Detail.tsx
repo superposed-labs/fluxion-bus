@@ -104,7 +104,7 @@ function DetailHeader({
         <span className="sep">›</span>
         <span>{t("detail.conversation")}</span>
         <span className="sep">›</span>
-        <b>{task.conversation_key}</b>
+        <b title={task.conversation_key}>{task.conversation_key}</b>
       </div>
       <div
         style={{
@@ -114,12 +114,7 @@ function DetailHeader({
           gap: 16,
         }}
       >
-        <div className="detail-title" style={{ flex: 1 }}>
-          <MarkdownText
-            text={task.summary}
-            empty={<span className="muted">{t("common.noSummary")}</span>}
-          />
-        </div>
+        <ClampedSummary key={task.task_id} text={task.summary} />
         <div className="detail-actions">
           {onContinue && (
             <button
@@ -203,6 +198,46 @@ function DetailHeader({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* Summary clamped to a few lines so long results don't push the tabs and
+   cards below the fold on narrow windows; the full text stays one click
+   away (toggle here, plus the Summary tab). */
+function ClampedSummary({ text }: { text: string }): JSX.Element {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const check = () => setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, expanded]);
+
+  return (
+    <div className="detail-title" style={{ flex: 1 }}>
+      <div ref={bodyRef} className={expanded ? undefined : "detail-title-clamp"}>
+        <MarkdownText
+          text={text}
+          empty={<span className="muted">{t("common.noSummary")}</span>}
+        />
+      </div>
+      {(overflowing || expanded) && (
+        <button
+          type="button"
+          className="detail-title-toggle"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? t("detail.collapse") : t("detail.expand")}
+        </button>
+      )}
     </div>
   );
 }
