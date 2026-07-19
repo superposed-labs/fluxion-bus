@@ -30,7 +30,7 @@
 "menu.status.active" = "%d 件アクティブ";
 "menu.api_value" = "API 価値";
 "menu.tokens" = "tokens";
-"menu.cache" = "キャッシュ";
+"menu.cache" = "キャッシュヒット";
 "menu.live_quota" = "ライブクォータ";
 "menu.usage.loading" = "使用量を読み込み中...";
 "menu.usage.notes" = "使用量メモ";
