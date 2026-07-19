@@ -99,6 +99,7 @@ class UsageService:
                     windows=windows,
                     fetched_at=p_dict.get("fetched_at", ""),
                     detail=p_dict.get("detail", ""),
+                    resets=p_dict.get("resets") if isinstance(p_dict.get("resets"), dict) else None,
                 )
 
                 self._cached_usages[p_name] = pu
@@ -252,6 +253,16 @@ class UsageService:
 
             if not is_auth_error and not is_stale:
                 return last_good
+
+        # Codex quota and reset credits come from independent endpoints. If
+        # only the optional reset-credit request failed, keep the last confirmed
+        # count while accepting the fresh quota windows. A successful response
+        # with count=0 is represented by a non-nil resets payload and clears the
+        # old value normally.
+        if provider == "codex" and usage.resets_fetch_failed:
+            previous = self._last_good.get(provider)
+            if previous is not None and previous.resets is not None:
+                usage.resets = previous.resets
 
         if usage.status != STATUS_ERROR and usage.windows:
             self._last_good[provider] = usage

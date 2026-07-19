@@ -294,6 +294,46 @@ def test_aggregate_totals_and_breakdowns(fixed_prices):
     assert out["by_model"][0]["model"] == "sonnet"  # sorted desc
 
 
+def test_provider_hour_series_is_trailing_seven_days_and_provider_scoped():
+    entries = [
+        _entry("2026-06-05T14:00:00Z", "c1"),
+        _entry("2026-06-06T14:10:00Z", "c2"),
+        _entry("2026-06-07T14:20:00Z", "c3"),
+        _entry("2026-06-08T10:00:00Z", "c4"),
+        UsageEntry(
+            provider="codex",
+            ts=datetime(2026, 6, 6, 9, tzinfo=UTC),
+            model="gpt",
+            session_id="s",
+            input_tokens=100,
+            output_tokens=0,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+            dedup_key="x1",
+        ),
+        UsageEntry(
+            provider="codex",
+            ts=datetime(2026, 6, 7, 9, tzinfo=UTC),
+            model="gpt",
+            session_id="s",
+            input_tokens=100,
+            output_tokens=0,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+            dedup_key="x2",
+        ),
+        # Outside the trailing seven local days and therefore excluded.
+        _entry("2026-06-03T14:00:00Z", "old"),
+    ]
+
+    out = aggregate(entries, window="1d", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+    rows = {(row["provider"], row["hour"]): row for row in out["by_provider_hour"]}
+
+    assert rows[("claude", 14)]["messages"] == 3
+    assert rows[("claude", 10)]["messages"] == 1
+    assert rows[("codex", 9)]["messages"] == 2
+
+
 def test_cost_resolves_per_model_family(fixed_prices):
     # Same provider, three tiers — each priced from its own family rate, so the
     # cheap model isn't billed at the flagship's rate.

@@ -3,12 +3,14 @@ import Foundation
 import SwiftUI
 
 // Internal (not file-private) so NotchIslandView+Expanded can read the page
-// height it reports.
-struct ExpandedPageHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+// heights it reports. Keyed by page index: the expanded island sizes to the
+// CURRENT page's natural height (like the design, whose hidden page is
+// display:none and contributes nothing), not the taller of the two.
+struct ExpandedPageHeightsKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [:]
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: max)
     }
 }
 
@@ -82,12 +84,73 @@ func notchIsSoloSplit(_ providers: [ProviderUsage]) -> Bool {
     return pools.count >= 2
 }
 
+/// True when exactly one healthy provider is connected and it meters a weekly
+/// window (single Claude/Codex). With the panel to itself, the lone centred
+/// ring gives way to the solo card: ring on the left, an info column (binding
+/// window's reset hero, weekly bar, Today/Cache/Reserve foot) spending the
+/// freed width on the right. A 5-hour window is NOT required: Codex drops its
+/// 5-hour window while temporarily uncapped, and the card then headlines the
+/// weekly reset instead — falling back to the narrow single-ring column just
+/// for that state would flip the whole layout style whenever the cap toggles.
+/// Requires status "ok": error/loading keep the narrow single card, whose
+/// full-ring red/pending treatment reads clearer than a card wrapped around
+/// broken data.
+func notchIsSoloDualWindow(_ providers: [ProviderUsage]) -> Bool {
+    guard providers.count == 1, let p = providers.first, p.status == "ok" else { return false }
+    if notchIsSoloSplit(providers) { return false }
+    return p.windows.contains { window in
+        window.usedPercent != nil && notchWindowKind(window) == .weekly
+    }
+}
+
+/// The collapsed default for one subscription provider can use the physical
+/// notch as a natural divider: 5-hour on the left, weekly on the right. Keep
+/// this separate from the expanded-card predicate because the compact glance
+/// also represents Codex's temporarily uncapped 5-hour window as `5H ∞`.
+func notchUsesSoloDualWindowGlance(_ providers: [ProviderUsage]) -> Bool {
+    guard providers.count == 1, let provider = providers.first, provider.status == "ok" else {
+        return false
+    }
+    if notchIsSoloSplit(providers) { return false }
+    let hasFiveHour = provider.windows.contains {
+        $0.usedPercent != nil && notchWindowKind($0) == .fiveHour
+    }
+    let hasWeekly = provider.windows.contains {
+        $0.usedPercent != nil && notchWindowKind($0) == .weekly
+    }
+    return hasWeekly && (hasFiveHour || isCodexFiveHourTemporarilyUncapped(provider))
+}
+
+/// The two-provider peek can give the short and long quota windows distinct
+/// visual jobs: a 5H ring in the content row and a WK rail following the
+/// island's lower corner. Keep the richer treatment to healthy, comparable
+/// provider data; loading/error cards and providers without a weekly window
+/// continue through the generic peek renderer.
+func notchUsesDualAgentArcPeek(_ providers: [ProviderUsage]) -> Bool {
+    guard providers.count == 2 else { return false }
+    return providers.allSatisfy { provider in
+        guard provider.status == "ok" else { return false }
+        let hasFiveHour = provider.windows.contains {
+            $0.usedPercent != nil && notchWindowKind($0) == .fiveHour
+        }
+        let hasWeekly = provider.windows.contains {
+            $0.usedPercent != nil && notchWindowKind($0) == .weekly
+        }
+        return hasWeekly && (hasFiveHour || isCodexFiveHourTemporarilyUncapped(provider))
+    }
+}
+
 /// Expanded panel width. Solo split needs the 2-provider width so each pool
-/// column has room for a full ring + detail band; everything else keeps the
-/// existing per-count widths.
-func notchExpandedWidth(providers: [ProviderUsage]) -> CGFloat {
+/// column has room for a full ring + detail band. A detailed solo dual-window
+/// card needs extra width for its ring + info column, while Compact deliberately
+/// restores the pre-card 300pt single-column width used by the multi-provider
+/// component. Everything with 2+ providers keeps its existing width.
+func notchExpandedWidth(providers: [ProviderUsage], expandedStyle: String = "detailed") -> CGFloat {
     let count = max(1, providers.count)
-    if count == 1 { return notchIsSoloSplit(providers) ? 436 : 300 }
+    if count == 1 {
+        if notchIsSoloSplit(providers) { return 436 }
+        return notchIsSoloDualWindow(providers) && expandedStyle == "detailed" ? 384 : 300
+    }
     return count == 3 ? 564 : 436
 }
 
@@ -108,6 +171,13 @@ struct NotchIslandView: View {
     /// Neon purple of the backend-upgrade indicator; matches the menu bar dot
     /// drawn in AppDelegate+Rendering.
     static let upgradeTint = Color(red: 0.58, green: 0.38, blue: 0.95)
+
+    // Geometry uses a spring, but opacity must not inherit that spring: a
+    // spring can keep a removing layer alive after the card has visually
+    // collapsed. Content enters just behind the growing silhouette and exits
+    // quickly enough to stay inside the shrinking one.
+    static let contentInsertionAnimation = Animation.easeOut(duration: 0.13).delay(0.045)
+    static let contentRemovalAnimation = Animation.linear(duration: 0.055)
 
     /// Current time, updated every second when the notch is visible.
     /// Reading `now` inside time-display functions makes them proper @State
@@ -144,17 +214,15 @@ struct NotchIslandView: View {
             return model.collapsedWidth
         case .peek:
             if model.hasNotch {
-                // Keep the +80 breathing room only where the inline content
-                // actually needs it (3 providers, single-line timers). Every
-                // other case hugs the collapsed width so narrow content isn't
-                // lost in a notch-wide tray — but never goes narrower than it.
-                let bonus: CGFloat = (count == 3 && model.peekReset != "both") ? 80 : 0
-                return model.collapsedWidth + bonus
+                // Collapsed width (+ the 3-provider bonus) is the floor;
+                // content that measures wider grows the tray instead of
+                // clipping at the window edges (peekWidthWithNotch).
+                return model.peekWidthWithNotch(collapsedBase: model.collapsedWidth, count: count)
             } else {
                 return model.peekWidthNoNotch(count: count)
             }
         case .expanded:
-            return notchExpandedWidth(providers: model.providers)
+            return notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
         }
     }
 
@@ -244,19 +312,32 @@ struct NotchIslandView: View {
                 switch model.notchState {
                 case .collapsed:
                     collapsedView
-                        .transition(.opacity)
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(Self.contentInsertionAnimation),
+                            removal: .opacity.animation(Self.contentRemovalAnimation)
+                        ))
                 case .peek:
                     peekView
-                        .transition(.opacity)
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(Self.contentInsertionAnimation),
+                            removal: .opacity.animation(Self.contentRemovalAnimation)
+                        ))
                 case .expanded:
                     expandedView
                         .transition(.asymmetric(
-                            insertion: .scale(scale: 0.93, anchor: .top).combined(with: .opacity),
-                            removal: .opacity
+                            insertion: .scale(scale: 0.93, anchor: .top)
+                                .combined(with: .opacity)
+                                .animation(Self.contentInsertionAnimation),
+                            removal: .opacity.animation(Self.contentRemovalAnimation)
                         ))
                 }
             }
             .frame(width: targetWidth, height: targetHeight, alignment: .top)
+            // The state-specific view is replaced immediately while the card
+            // geometry animates. Without this live silhouette clip, the old
+            // content can draw for a frame outside a card that has already
+            // shrunk — perceived as a text/rail afterimage.
+            .clipShape(BottomRoundedRectangle(cornerRadius: targetCornerRadius))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Collapsed/peek: only the visible card is tappable so taps on the
@@ -312,6 +393,7 @@ struct NotchIslandView: View {
     func awaitingReset(_ snapshot: QuotaWindowSnapshot?) -> Bool { quota.awaitingReset(snapshot) }
     func isSubscription(for provider: ProviderUsage) -> Bool { quota.isSubscription(for: provider) }
     func timerString(for snapshot: QuotaWindowSnapshot?) -> String { quota.timerString(for: snapshot) }
+    func compactTimerString(for snapshot: QuotaWindowSnapshot?) -> String { quota.compactTimerString(for: snapshot) }
     func get5hResetTimer(for provider: ProviderUsage) -> String { quota.get5hResetTimer(for: provider) }
     func getWeeklyResetTimer(for provider: ProviderUsage) -> String { quota.getWeeklyResetTimer(for: provider) }
     func resetsAtDate(from isoString: String?) -> Date? { quota.resetsAtDate(from: isoString) }
@@ -356,5 +438,3 @@ struct LoadingSweep: View {
         }
     }
 }
-
-

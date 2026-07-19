@@ -49,6 +49,10 @@ class ProviderUsage:
     fetched_at: str = ""  # ISO8601, when this snapshot was produced
     detail: str = ""  # human note: error reason or why unavailable
     resets: dict[str, Any] | None = None
+    # Internal probe signal: the main quota request succeeded but the optional
+    # reset-credit request did not. Omitted from to_dict(); UsageService uses it
+    # only to retain the last confirmed reset-credit snapshot.
+    resets_fetch_failed: bool = False
     # Internal probe metadata used for observability. These fields are
     # intentionally omitted from to_dict() so the public usage API is stable.
     source: str = ""

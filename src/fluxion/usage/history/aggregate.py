@@ -19,6 +19,18 @@ from fluxion.usage.history.entry import UsageEntry
 # counted in the local timezone (inclusive of today).
 WINDOW_DAYS: dict[str, int | None] = {"all": None, "30d": 30, "7d": 7, "1d": 1}
 
+# Trailing days covered by `by_provider_day`, which (like `by_day`) is computed
+# over the full history regardless of `window`: the desktop notch fetches
+# window=1d for today's numbers and still needs this short per-provider series
+# as the reference frame for its week chart. Two weeks: the trailing 7 days
+# draw the bars, the 7 before them anchor the week-over-week delta.
+PROVIDER_DAY_SERIES_DAYS = 14
+# Provider-local hourly activity for the detailed notch card. Seven trailing
+# local days are long enough to describe a habit without making the result
+# feel stale; message count (rather than token volume) prevents one huge turn
+# from claiming the entire "peak hour" metric.
+PROVIDER_HOUR_SERIES_DAYS = 7
+
 
 @dataclass
 class _Bucket:
@@ -146,10 +158,18 @@ def aggregate(
             unique_entries[e.dedup_key] = e
 
     by_day_full: dict[str, _Bucket] = {}
+    provider_day_cutoff = today - timedelta(days=PROVIDER_DAY_SERIES_DAYS - 1)
+    provider_hour_cutoff = today - timedelta(days=PROVIDER_HOUR_SERIES_DAYS - 1)
+    by_provider_day: dict[tuple[str, str], _Bucket] = {}
+    by_provider_hour: dict[tuple[str, int], _Bucket] = {}
     for e in unique_entries.values():
         local = e.ts.astimezone(tz) if tz is not None else e.ts.astimezone()
         day = local.date()
         by_day_full.setdefault(day.isoformat(), _Bucket()).add(e)
+        if day >= provider_day_cutoff:
+            by_provider_day.setdefault((day.isoformat(), e.provider), _Bucket()).add(e)
+        if day >= provider_hour_cutoff:
+            by_provider_hour.setdefault((e.provider, local.hour), _Bucket()).add(e)
 
         if cutoff is not None and day < cutoff:
             continue
@@ -238,6 +258,24 @@ def aggregate(
                 "total_tokens": by_day_full[d].total_tokens,
             }
             for d in day_list_full
+        ],
+        "by_provider_day": [
+            {
+                "date": d,
+                "provider": p,
+                "total_tokens": bucket.total_tokens,
+                "generated_tokens": bucket.generated_tokens,
+            }
+            for (d, p), bucket in sorted(by_provider_day.items())
+        ],
+        "by_provider_hour": [
+            {
+                "provider": provider,
+                "hour": hour,
+                "messages": bucket.messages,
+                "total_tokens": bucket.total_tokens,
+            }
+            for (provider, hour), bucket in sorted(by_provider_hour.items())
         ],
         "by_hour": [
             {"hour": h, "messages": by_hour[h].messages, "total_tokens": by_hour[h].total_tokens}

@@ -162,7 +162,14 @@ export function App(): JSX.Element {
   const [spark, setSpark] = useState<number[]>(INITIAL_SPARK);
   const [usage, setUsage] = useState<ProviderUsage[]>([]);
   const [executors, setExecutors] = useState<ExecutorInfo[]>([]);
-  const [view, setView] = useState<AppView>("tasks");
+  // ?view=stats deep-links straight to the usage page — the desktop app's
+  // quota surfaces (notch panel) use it so "see more detail" is one step.
+  const [view, setView] = useState<AppView>(() => {
+    if (typeof window === "undefined") return "tasks";
+    return new URLSearchParams(window.location.search).get("view") === "stats"
+      ? "stats"
+      : "tasks";
+  });
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [runPrefill, setRunPrefill] = useState<RunTaskPrefill | null>(null);
   const [schedulesActive, setSchedulesActive] = useState(0);

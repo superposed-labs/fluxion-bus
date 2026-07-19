@@ -6,6 +6,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from typing import Any
 
 from fluxion.usage.models import (
@@ -22,6 +24,9 @@ from fluxion.usage.probes._common import (
     _normalize_reset,
     _now_iso,
 )
+from fluxion.utils.logger import get_logger
+
+logger = get_logger("fluxion.usage.probes.codex")
 
 
 class CodexUsageProbe:
@@ -71,6 +76,7 @@ class CodexUsageProbe:
         access_token, account_id = creds
         base = (self._config.codex_usage_base_url or CODEX_DEFAULT_BASE_URL).rstrip("/")
         url = f"{base}/wham/usage"
+        credits_url = f"{base}/wham/rate-limit-reset-credits"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "User-Agent": self._config.codex_user_agent,
@@ -78,6 +84,21 @@ class CodexUsageProbe:
         }
         if account_id:
             headers["ChatGPT-Account-Id"] = account_id
+        # The reset-credit endpoint is independent of the quota endpoint. Start
+        # it on a daemon thread while the required quota request runs here. Once
+        # quota is ready, give credits only a short grace period: a slow optional
+        # endpoint must never hold the main quota snapshot for a full HTTP
+        # timeout. A later refresh can recover credits, while UsageService keeps
+        # the last confirmed value in the meantime.
+        resets_result: Queue[tuple[dict[str, Any] | None, Exception | None]] = Queue(maxsize=1)
+
+        def fetch_resets() -> None:
+            try:
+                resets_result.put((self._http_get_json(credits_url, headers), None))
+            except Exception as exc:  # noqa: BLE001 - reported on the quota thread below
+                resets_result.put((None, exc))
+
+        Thread(target=fetch_resets, name="codex-reset-credits", daemon=True).start()
         try:
             data = self._http_get_json(url, headers)
         except urllib.error.HTTPError as exc:
@@ -94,11 +115,19 @@ class CodexUsageProbe:
         if isinstance(rate_limit, dict) and rate_limit.get("limit_reached"):
             detail = "live · limit reached"
 
-        # Fetch rate-limit reset credits
+        # Map rate-limit reset credits. A successful empty response is an
+        # explicit count of zero; None is reserved for request failure so the
+        # service can retain the last confirmed value without confusing the UI.
         resets_payload = None
+        resets_fetch_failed = False
         try:
-            credits_url = f"{base}/wham/rate-limit-reset-credits"
-            credits_data = self._http_get_json(credits_url, headers)
+            # Both requests normally finish together. The small grace period
+            # absorbs ordinary response-order jitter without letting this
+            # optional endpoint dictate the refresh latency.
+            grace = min(0.35, max(0.05, self._config.http_timeout_sec * 0.1))
+            credits_data, credits_error = resets_result.get(timeout=grace)
+            if credits_error is not None:
+                raise credits_error
             if isinstance(credits_data, dict):
                 avail_count = credits_data.get("available_count", 0)
                 credits_list = credits_data.get("credits", [])
@@ -131,14 +160,17 @@ class CodexUsageProbe:
                         except Exception:
                             pass
                 expiries.sort()
-                if avail_count > 0 or expiries or credits_out:
-                    resets_payload = {
-                        "count": avail_count,
-                        "expiries": expiries,
-                        "credits": credits_out,
-                    }
-        except Exception:
-            pass
+                resets_payload = {
+                    "count": avail_count,
+                    "expiries": expiries,
+                    "credits": credits_out,
+                }
+        except Empty:
+            resets_fetch_failed = True
+            logger.warning("Codex reset-credit fetch did not finish with the quota request")
+        except Exception as exc:  # noqa: BLE001 - quota remains usable without this add-on
+            resets_fetch_failed = True
+            logger.warning("Codex reset-credit fetch failed: %s", exc)
 
         return (
             ProviderUsage(
@@ -149,6 +181,7 @@ class CodexUsageProbe:
                 fetched_at=_now_iso(),
                 detail=detail,
                 resets=resets_payload,
+                resets_fetch_failed=resets_fetch_failed,
             ),
             "",
         )

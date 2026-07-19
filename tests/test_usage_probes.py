@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 
@@ -220,6 +222,84 @@ def test_codex_live_maps_resets(monkeypatch):
     assert usage.resets is not None
     assert usage.resets["count"] == 1
     assert len(usage.resets["expiries"]) == 1
+
+
+def test_codex_live_records_successful_zero_resets(monkeypatch):
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(
+        CodexUsageProbe,
+        "_http_get_json",
+        lambda self, url, headers: {} if "rate-limit-reset-credits" in url else _LIVE_PAYLOAD,
+    )
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.resets == {"count": 0, "expiries": [], "credits": []}
+    assert usage.resets_fetch_failed is False
+
+
+def test_codex_live_marks_reset_credit_failure(monkeypatch, caplog):
+    def fake_get(self, url, headers):
+        if "rate-limit-reset-credits" in url:
+            raise TimeoutError("credits timed out")
+        return _LIVE_PAYLOAD
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(CodexUsageProbe, "_http_get_json", fake_get)
+    caplog.set_level("WARNING", logger="fluxion.usage.probes.codex")
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.status == STATUS_OK
+    assert usage.resets is None
+    assert usage.resets_fetch_failed is True
+    assert "Codex reset-credit fetch failed" in caplog.text
+
+
+def test_codex_live_fetches_quota_and_reset_credits_concurrently(monkeypatch):
+    started: set[str] = set()
+    started_lock = Lock()
+    both_started = Event()
+
+    def fake_get(self, url, headers):
+        kind = "resets" if "rate-limit-reset-credits" in url else "usage"
+        with started_lock:
+            started.add(kind)
+            if len(started) == 2:
+                both_started.set()
+        assert both_started.wait(timeout=1), "Codex requests were started sequentially"
+        return {} if kind == "resets" else _LIVE_PAYLOAD
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(CodexUsageProbe, "_http_get_json", fake_get)
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.status == STATUS_OK
+    assert started == {"usage", "resets"}
+
+
+def test_codex_live_does_not_wait_for_slow_reset_credits(monkeypatch):
+    reset_release = Event()
+
+    def fake_get(self, url, headers):
+        if "rate-limit-reset-credits" in url:
+            reset_release.wait(timeout=2)
+            return {"available_count": 1, "credits": []}
+        return _LIVE_PAYLOAD
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(CodexUsageProbe, "_http_get_json", fake_get)
+
+    started_at = time.monotonic()
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+    elapsed = time.monotonic() - started_at
+    reset_release.set()
+
+    assert usage.status == STATUS_OK
+    assert usage.resets is None
+    assert usage.resets_fetch_failed is True
+    assert elapsed < 0.75
 
 
 def test_codex_live_mode_errors_when_no_token(monkeypatch):
@@ -1068,6 +1148,84 @@ def test_usage_service_serves_last_good_on_error(monkeypatch):
 
     second = svc.get_usage(force=True)  # probe now errors
     assert second[0].status == STATUS_OK  # last-good snapshot retained
+
+
+def test_usage_service_retains_codex_resets_only_when_secondary_fetch_failed(monkeypatch):
+    counter = {"n": 0}
+    initial = _ok("codex")
+    initial.resets = {"count": 2, "expiries": [], "credits": []}
+    partial = ProviderUsage(
+        provider="codex",
+        status=STATUS_OK,
+        windows=[UsageWindow(key="5h", label="5-hour", used_percent=20.0)],
+        resets_fetch_failed=True,
+    )
+    confirmed_zero = ProviderUsage(
+        provider="codex",
+        status=STATUS_OK,
+        windows=[UsageWindow(key="5h", label="5-hour", used_percent=30.0)],
+        resets={"count": 0, "expiries": [], "credits": []},
+    )
+    probe = _ScriptedProbe("codex", [initial, partial, confirmed_zero], counter)
+    monkeypatch.setattr(service_mod, "build_probe", lambda provider, config: probe)
+
+    svc = UsageService(providers=["codex"], probe_config=ProbeConfig(), refresh_sec=60)
+    assert svc.get_usage(force=True)[0].resets["count"] == 2
+
+    after_failure = svc.get_usage(force=True)[0]
+    assert after_failure.windows[0].used_percent == 20.0
+    assert after_failure.resets["count"] == 2
+
+    after_success = svc.get_usage(force=True)[0]
+    assert after_success.windows[0].used_percent == 30.0
+    assert after_success.resets["count"] == 0
+
+
+def test_usage_service_restores_resets_before_secondary_fetch_failure(monkeypatch, tmp_path):
+    cache_file = tmp_path / "usage_cache.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "providers": [
+                    {
+                        "provider": "codex",
+                        "status": STATUS_OK,
+                        "account_label": "Plus",
+                        "windows": [
+                            {
+                                "key": "5h",
+                                "label": "5-hour",
+                                "used_percent": 10.0,
+                            }
+                        ],
+                        "resets": {"count": 2, "expiries": [], "credits": []},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    partial = ProviderUsage(
+        provider="codex",
+        status=STATUS_OK,
+        windows=[UsageWindow(key="5h", label="5-hour", used_percent=20.0)],
+        resets_fetch_failed=True,
+    )
+    counter = {"n": 0}
+    probe = _ScriptedProbe("codex", [partial], counter)
+    monkeypatch.setattr(service_mod, "build_probe", lambda provider, config: probe)
+
+    svc = UsageService(
+        providers=["codex"],
+        probe_config=ProbeConfig(),
+        refresh_sec=60,
+        cache_file=cache_file,
+    )
+    usage = svc.get_usage(force=True)[0]
+
+    assert usage.windows[0].used_percent == 20.0
+    assert usage.resets == {"count": 2, "expiries": [], "credits": []}
 
 
 def test_usage_service_logs_antigravity_source_changes_and_401_once_per_episode(

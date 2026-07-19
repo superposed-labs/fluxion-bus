@@ -103,6 +103,32 @@ struct CoinIcon: View {
     }
 }
 
+// A day bar for the usage page's week chart: rounded on top only, so the
+// bar sits flush on the chart's baseline instead of lifting off it with a
+// bottom radius. (UnevenRoundedRectangle needs macOS 13; this app targets 12.)
+struct TopRoundedBar: Shape {
+    var radius: CGFloat = 2
+
+    func path(in rect: CGRect) -> Path {
+        let r = min(radius, min(rect.width, rect.height) / 2)
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.minX + r, y: rect.minY),
+            control: CGPoint(x: rect.minX, y: rect.minY)
+        )
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + r),
+            control: CGPoint(x: rect.maxX, y: rect.minY)
+        )
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
 // One pool's 5-hour arc in a dual-pool ring (Antigravity GEM/EXT). A blocked
 // pool renders as a muted red track with a lock badge instead of a fill.
 struct RingPoolArc {

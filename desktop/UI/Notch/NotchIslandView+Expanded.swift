@@ -9,42 +9,49 @@ extension NotchIslandView {
     // expanded surfaces: the regular ring column, the solo-split panel, and the
     // token-usage page. `centered` flanks it with Spacers (solo split centers a
     // single header over both pool columns); the column surfaces leave it leading.
+    // `subtle` lowers the identity one visual level in detailed solo dashboards,
+    // where it provides context but must not compete with the primary metrics.
     @ViewBuilder
-    func providerHeaderRow(for p: ProviderUsage, visual: ProviderVisual, centered: Bool = false) -> some View {
-        HStack(spacing: 8) {
+    func providerHeaderRow(
+        for p: ProviderUsage,
+        visual: ProviderVisual,
+        centered: Bool = false,
+        subtle: Bool = false
+    ) -> some View {
+        HStack(spacing: subtle ? 6 : 8) {
             if centered { Spacer(minLength: 0) }
             Circle()
                 .fill(Color(visual.brandColor))
-                .shadow(color: Color(visual.brandColor).opacity(0.8), radius: 3)
-                .frame(width: 10, height: 10)
-                .frame(width: 20, height: 20)
+                .shadow(color: Color(visual.brandColor).opacity(subtle ? 0.55 : 0.8), radius: subtle ? 2 : 3)
+                .frame(width: subtle ? 6 : 10, height: subtle ? 6 : 10)
+                .frame(width: subtle ? 14 : 20, height: subtle ? 14 : 20)
 
             Text(providerDisplayName(for: p.provider))
-                .font(.system(size: 13.5, weight: .bold))
-                .foregroundColor(.white)
+                .font(.system(size: subtle ? 11.5 : 13.5, weight: subtle ? .semibold : .bold))
+                .foregroundColor(.white.opacity(subtle ? 0.82 : 1))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             if let label = p.accountLabel,
                !label.trimmingCharacters(in: .whitespaces).isEmpty {
                 Text(planTierLabel(label))
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.3)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color(visual.brandColor).opacity(0.16))
-                    .cornerRadius(5)
-                    .foregroundColor(.white.opacity(0.86))
+                    .font(.system(size: subtle ? 8.5 : 10, weight: .semibold))
+                    .tracking(subtle ? 0.2 : 0.3)
+                    .padding(.horizontal, subtle ? 5 : 7)
+                    .padding(.vertical, subtle ? 1 : 2)
+                    .background(Color(visual.brandColor).opacity(subtle ? 0.11 : 0.16))
+                    .cornerRadius(subtle ? 4 : 5)
+                    .foregroundColor(.white.opacity(subtle ? 0.68 : 0.86))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color(visual.brandColor).opacity(0.3), lineWidth: 0.5)
+                        RoundedRectangle(cornerRadius: subtle ? 4 : 5)
+                            .stroke(Color(visual.brandColor).opacity(subtle ? 0.2 : 0.3), lineWidth: 0.5)
                     )
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             if centered { Spacer(minLength: 0) }
         }
-        .frame(height: 38, alignment: .center)
+        .frame(height: subtle ? 28 : 38, alignment: .center)
     }
 
     // MARK: - 3. Expanded View
@@ -84,34 +91,33 @@ extension NotchIslandView {
             .padding(.top, 11 + model.expandedHeaderNotchInset)
             .padding(.bottom, 7)
 
-            // Paged views. Both pages stay in the same layout cell so the
-            // container naturally sizes to the taller page, matching the
-            // prototype's grid-stacked page model.
+            // Both pages share one measured cell. Async usage modules reserve
+            // their completed geometry behind a loading layer, so history can
+            // fade in without changing the natural page height. Real quota
+            // structure (lock notes, credits, reset rows) remains free to grow.
             ZStack(alignment: .top) {
                 quotaRemainingView
+                    .background(pageHeightReader(page: 0))
                     .opacity(model.page == 0 ? 1 : 0)
                     .offset(x: model.page == 0 ? 0 : -16)
                     .allowsHitTesting(model.page == 0)
                 tokenUsageView
+                    .background(pageHeightReader(page: 1))
                     .opacity(model.page == 1 ? 1 : 0)
                     .offset(x: model.page == 1 ? 0 : 16)
                     .allowsHitTesting(model.page == 1)
             }
-            .animation(.easeInOut(duration: 0.24), value: model.page)
             .fixedSize(horizontal: false, vertical: true)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: ExpandedPageHeightKey.self, value: proxy.size.height)
+            .frame(height: resolvedExpandedPageHeight(), alignment: .top)
+            .animation(.easeInOut(duration: 0.24), value: model.page)
+            .onPreferenceChange(ExpandedPageHeightsKey.self) { heights in
+                for (idx, height) in heights where ceil(height) > 1 {
+                    model.pageHeights[idx] = ceil(height)
                 }
-            )
-            .onPreferenceChange(ExpandedPageHeightKey.self) { height in
-                let rounded = ceil(height)
-                guard rounded > 1 else { return }
-                guard abs(model.expandedPageHeight - rounded) > 0.5 else { return }
-                model.expandedPageHeight = rounded
-                if model.notchState == .expanded {
-                    controller?.repositionWindow()
-                }
+                syncExpandedHeight()
+            }
+            .onChange(of: model.page) { _ in
+                syncExpandedHeight()
             }
             
             // Page Indicator Dots
@@ -132,12 +138,42 @@ extension NotchIslandView {
             HStack(spacing: 0) {
                 NotchFooterLinkButton(text: L10n.tr("menu.open_console"), systemImage: "arrow.up.right", action: {
                     controller?.collapse {
-                        MainWindow.shared.show()
+                        // The notch is a quota surface, so its console link
+                        // lands on the usage page, not the default task view.
+                        MainWindow.shared.show(view: "stats")
                     }
                 })
             }
             .frame(maxWidth: .infinity)
             .frame(height: 46)
+        }
+    }
+
+    func pageHeightReader(page: Int) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: ExpandedPageHeightsKey.self, value: [page: proxy.size.height])
+        }
+    }
+
+    // Keep the window-sizing height in step with the current page's measured
+    // height (both when a page re-measures and when the user switches pages).
+    // Both pages use the taller measured height. Even carefully balanced
+    // detailed pages can differ by a fractional point after localization;
+    // locking their shared frame prevents a visible bump during page flips.
+    func resolvedExpandedPageHeight() -> CGFloat? {
+        if let remaining = model.pageHeights[0], remaining > 1,
+           let used = model.pageHeights[1], used > 1 {
+            return max(remaining, used)
+        }
+        return model.pageHeights[model.page]
+    }
+
+    func syncExpandedHeight() {
+        guard let height = resolvedExpandedPageHeight(), height > 1 else { return }
+        guard abs(model.expandedPageHeight - height) > 0.5 else { return }
+        model.expandedPageHeight = height
+        if model.notchState == .expanded {
+            controller?.repositionWindow()
         }
     }
 
@@ -322,7 +358,7 @@ extension NotchIslandView {
             } else if isCodexFiveHourTemporarilyUncapped(provider) {
                 quotaStatusLine(
                     title: L10n.tr("notch.row.5h"),
-                    status: L10n.tr("menu.five_hour_temporarily_uncapped")
+                    status: L10n.tr("notch.five_hour_uncapped")
                 )
             }
             if state.weekly != nil {
@@ -356,12 +392,12 @@ extension NotchIslandView {
                 .lineLimit(1)
             Spacer(minLength: 8)
             // Match the timer rows' right column: leading-aligned in the same
-            // 56pt box so a short status ("一時解除") starts at the same x as the
-            // "6d 04h" timer in the weekly row directly below, instead of hugging
-            // the panel's right edge. There's no clock glyph (nothing counts down
-            // for an uncapped window), so that column is simply left empty. A long
-            // string (en "Temporarily uncapped") grows past 56pt and still lands
-            // against the trailing edge, unchanged.
+            // 56pt box so a short status ("Uncapped" / "一時解除") starts at the
+            // same x as the "6d 04h" timer in the weekly row directly below,
+            // instead of hugging the panel's right edge. There's no clock glyph
+            // (nothing counts down for an uncapped window), so that column is
+            // simply left empty. A status wider than 56pt would grow past the
+            // box and still land against the trailing edge, unchanged.
             Text(status)
                 .font(.system(size: 9.5, weight: .semibold))
                 .lineLimit(1)
@@ -624,7 +660,13 @@ extension NotchIslandView {
     var quotaRemainingView: some View {
         if notchIsSoloSplit(model.providers) {
             soloSplitQuotaView
+        } else if notchIsSoloDualWindow(model.providers), model.expandedStyle == "detailed" {
+            soloCardQuotaView
         } else {
+            // Compact solo mode intentionally falls through to the exact same
+            // one-ring column used by 2+ providers (and by the pre-solo-card
+            // implementation), so the layouts stay visually and structurally
+            // identical instead of drifting as two copies evolve.
             regularQuotaRemainingView
         }
     }
@@ -664,7 +706,9 @@ extension NotchIslandView {
                 let footerVisible = reserveVisible || state.note != nil
 
                 VStack(spacing: 0) {
-                    providerHeaderRow(for: p, visual: visual)
+                    if !(model.providers.count == 1 && model.expandedStyle == "compact") {
+                        providerHeaderRow(for: p, visual: visual)
+                    }
 
                     CircularProgressRing(
                         percentage: ringPercentage,
@@ -705,11 +749,17 @@ extension NotchIslandView {
                             )
                         )
                         .frame(width: 0.5)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 20)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
+        // Three-provider cards can route the shell header around the physical
+        // notch, while one- and two-provider cards must push their whole body
+        // below it. Reinvest a little of that saved vertical room here so the
+        // quota content does not look pinned to the top with all of the shared
+        // page-height slack collected above the pager.
+        .padding(.top, model.providers.count == 3 ? 10 : 0)
         .padding(.horizontal, 16)
     }
 
@@ -725,9 +775,12 @@ extension NotchIslandView {
         let visual = providerVisual(for: p.provider)
         let units = soloPoolUnits()
         return VStack(spacing: 0) {
-            // Provider header — once, centered over both pool columns.
-            providerHeaderRow(for: p, visual: visual, centered: true)
-                .padding(.horizontal, 14)
+            // Provider identity is redundant in Compact solo mode. Detailed
+            // keeps it as quiet context over the two pool columns.
+            if model.expandedStyle != "compact" {
+                providerHeaderRow(for: p, visual: visual, centered: true, subtle: true)
+                    .padding(.horizontal, 14)
+            }
 
             HStack(alignment: .top, spacing: 0) {
                 ForEach(Array(units.enumerated()), id: \.offset) { idx, unit in
@@ -814,19 +867,913 @@ extension NotchIslandView {
         .frame(maxWidth: .infinity, alignment: .top)
     }
 
+    // MARK: - Solo card (single Claude/Codex provider, 5h + weekly)
+    // One provider metering a 5-hour and a weekly window gets the full panel
+    // width as one ring + a real info column, so the freed width carries
+    // information instead of a second ring: the ring keeps the regular
+    // column's metric (5-hour remaining while healthy, lock treatment bound
+    // to the blocking window), the info column headlines the 5-hour reset
+    // countdown, carries weekly as a labelled bar row, and closes with a
+    // Today / Cache / Reserve foot strip. Depletion stays inside the same
+    // shell: the hero swaps to the blocking window's countdown and the
+    // state note sits above the foot. Scoped model caps (e.g. Claude's
+    // Fable weekly) keep their rows under the weekly bar — they are
+    // weekly-window sub-limits.
+    var soloCardQuotaView: some View {
+        let p = model.providers[0]
+        let visual = providerVisual(for: p.provider)
+        let state = quotaState(for: p)
+        // Same ring metric as regularQuotaRemainingView's single-pool path.
+        let ringPercentage = state.mode == .healthy
+            ? (state.fiveHour?.remaining ?? state.bindingRemaining)
+            : state.bindingRemaining
+        let ringSubtitle = state.mode == .healthy
+            ? (state.fiveHour.map { $0.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left") }
+                ?? (state.weekly != nil ? L10n.tr("notch.weekly_left") : L10n.tr("notch.unavailable")))
+            : state.lockReason
+        return VStack(spacing: 0) {
+            providerHeaderRow(for: p, visual: visual, centered: true, subtle: true)
+
+            HStack(alignment: .center, spacing: 16) {
+                CircularProgressRing(
+                    percentage: ringPercentage,
+                    mode: state.mode,
+                    credits: state.credits,
+                    creditsIsDollar: p.provider != "antigravity",
+                    color: Color(visual.brandColor),
+                    glowColor: Color(visual.brandColor).opacity(0.5),
+                    subtitle: ringSubtitle,
+                    lockCountdown: timerString(for: state.lockSnapshot)
+                )
+                .frame(width: 104)
+
+                // Faint boundary between the graphic zone and the data zone —
+                // the design's .card-info::before (0.075 vs the multi-column
+                // dividers' 0.13, longer fade, deeper inset: it ties two halves
+                // of ONE card together rather than separating two providers).
+                // Deliberately in-flow and height-flexible: it soaks up the
+                // height the paging ZStack proposes from the taller usage page,
+                // stretching this page to match it — see the paging comment.
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: Color.white.opacity(0.075), location: 0.24),
+                                .init(color: Color.white.opacity(0.075), location: 0.76),
+                                .init(color: .clear, location: 1.0)
+                            ]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 0.5)
+                    .padding(.vertical, 14)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    soloCardHero(state: state)
+                    soloCardWeeklyBlock(for: p, state: state, visual: visual)
+                    if let note = state.note,
+                       note != L10n.tr("notch.five_hour_spent") {
+                        Text(note)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(state.mode == .credits
+                                ? Color(NSColor.systemGreen).opacity(0.85)
+                                : Color(NSColor.systemRed))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 10)
+
+            // A full-width bottom summary anchors the detailed quota page and
+            // balances the ring/ledger composition above. Until history loads,
+            // dashes reserve the final band without presenting fake zeros.
+            soloCardFootRow(for: p, placeholder: !model.historyLoaded)
+                .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .padding(.horizontal, 24)
+    }
+
+    // Hero stat: while healthy, the binding window's reset countdown ("when do
+    // I get quota back") headlines the column — the 5-hour window when it's
+    // metered, else weekly (Codex drops its 5-hour window while temporarily
+    // uncapped). A depleted provider swaps in the blocking window's countdown
+    // so the big number is never a stale healthy figure. The weekly outlasts
+    // the 5h, so weekly-blocked states count the weekly reset.
+    @ViewBuilder
+    func soloCardHero(state: ProviderQuotaState) -> some View {
+        let depleted = state.mode == .credits || state.mode == .locked
+        let snapshot = depleted ? state.lockSnapshot : (state.fiveHour ?? state.weekly)
+        let idle = snapshot?.idle ?? false
+        let fiveZero = (state.fiveHour?.remaining ?? 100) <= 0
+        let weekZero = (state.weekly?.remaining ?? 100) <= 0
+        let title: String = depleted
+            ? (fiveZero && weekZero
+                ? L10n.tr("notch.card.all_spent")
+                : (weekZero ? L10n.tr("notch.card.weekly_reached") : L10n.tr("notch.five_hour_spent")))
+            : (state.fiveHour == nil
+                ? L10n.tr("notch.card.week_resets_in")
+                : (idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.card.five_resets_in")))
+        let titleColor: Color = depleted
+            ? (state.mode == .credits ? Color(NSColor.systemGreen).opacity(0.85) : Color(NSColor.systemRed))
+            : Color.white.opacity(0.5)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: idle ? "moon.zzz.fill" : "clock")
+                    .font(.system(size: 10))
+                    .opacity(0.8)
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.5)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundColor(titleColor)
+
+            soloCardHeroCountdown(for: snapshot)
+
+            if let abs = absoluteResetText(for: snapshot) {
+                Text(L10n.tr("notch.card.resets_at", abs))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.42))
+            }
+        }
+    }
+
+    @ViewBuilder
+    func soloCardHeroCountdown(for snapshot: QuotaWindowSnapshot?) -> some View {
+        if let snapshot = snapshot, snapshot.idle {
+            // Unanchored window: static window length, not a sawtooth timer.
+            Text(windowLengthText(snapshot))
+                .font(.system(size: 27, weight: .bold))
+                .foregroundColor(.white.opacity(0.55))
+                .monospacedDigit()
+        } else if let snapshot = snapshot,
+                  let date = resetsAtDate(from: snapshot.window.resetsAt) {
+            let dur = formatDuration(date.timeIntervalSince(now))
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(dur.primary)
+                    .font(.system(size: 27, weight: .bold))
+                    .tracking(-0.5)
+                    .foregroundColor(.white)
+                if !dur.secondary.isEmpty {
+                    Text(dur.secondary)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+            .monospacedDigit()
+        } else {
+            Text(L10n.tr("notch.now"))
+                .font(.system(size: 27, weight: .bold))
+                .foregroundColor(.white)
+        }
+    }
+
+    // Weekly as a labelled bar row: caption + remaining % (same "left"
+    // semantics as every other WEEKLY row) + countdown, the bar underneath,
+    // and the absolute reset time as a sub-line. Scoped weekly sub-caps keep
+    // their own rows below the bar.
+    @ViewBuilder
+    func soloCardWeeklyBlock(for provider: ProviderUsage, state: ProviderQuotaState, visual: ProviderVisual) -> some View {
+        let scopedRows = scopedWindows(for: provider)
+        // No 5-hour window while healthy → the ring already shows weekly-left
+        // and the hero counts the weekly reset, so a weekly row + bar here
+        // would repeat both numbers (mirrors regularQuotaRows' bar skip). The
+        // slot instead reports why the 5-hour window is absent.
+        let ringHeadlinesWeekly = state.mode == .healthy && state.fiveHour == nil
+        VStack(alignment: .leading, spacing: 5) {
+            if ringHeadlinesWeekly {
+                if isCodexFiveHourTemporarilyUncapped(provider) {
+                    quotaStatusLine(
+                        title: L10n.tr("notch.row.5h"),
+                        status: L10n.tr("notch.five_hour_uncapped")
+                    )
+                }
+            } else if let weekly = state.weekly {
+                let depleted = weekly.remaining <= 0
+                quotaInfoLine(
+                    title: L10n.tr("notch.row.weekly"),
+                    snapshot: weekly,
+                    showPercent: true,
+                    color: depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
+                )
+                quotaProgressBar(
+                    remaining: weekly.remaining,
+                    color: quotaBarColor(remaining: weekly.remaining, brand: Color(visual.brandColor))
+                )
+                if let abs = absoluteResetText(for: weekly) {
+                    Text(L10n.tr("notch.card.resets_at", abs))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.42))
+                }
+            }
+            if !scopedRows.isEmpty {
+                VStack(spacing: 7) {
+                    ForEach(Array(scopedRows.enumerated()), id: \.offset) { _, row in
+                        scopedQuotaRow(row, visual: visual)
+                    }
+                }
+                .padding(.top, 3)
+            }
+            // Codex reset credits as a full ledger row (the same chip the
+            // multi-column layout uses, hover schedule and granted flash
+            // included) — a single "RESETS …… 2 available" line matches the
+            // column's label-…-value language, where a stat cell in the foot
+            // squeezed it into a box and lost the chip's affordances. Keeps
+            // the foot trio (Today/Cache/This week) identical across
+            // subscription providers.
+            if provider.provider == "codex", let resets = provider.resets, resets.count > 0 {
+                ResetChipView(
+                    resets: resets,
+                    brandColor: Color(visual.brandColor),
+                    justGranted: model.justGranted
+                )
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    // Foot strip: three same-period figures as one muted row — today's token
+    // volume, cache hit rate, and API-equivalent value. Keeping every item on
+    // today's time scale avoids mixing a rolling seven-day total into an
+    // otherwise immediate quota snapshot.
+    // `placeholder` (first history fetch still in flight) keeps the strip's
+    // frame with dashes so the card doesn't jump when the data lands.
+    @ViewBuilder
+    func soloCardFootRow(for provider: ProviderUsage, placeholder: Bool = false) -> some View {
+        let stats = model.todayStats[provider.provider.lowercased()]
+        let denom = stats.map { $0.cacheRead + $0.input + $0.cacheCreation } ?? 0
+        let cachePct: Int? = (stats != nil && denom > 0)
+            ? Int((Double(stats!.cacheRead) / Double(denom) * 100).rounded())
+            : nil
+        let isSub = isSubscription(for: provider)
+        let items: [(label: String, value: String)] = {
+            if placeholder {
+                // The loaded strip's usual trio, with dashes for the numbers.
+                return [
+                    (L10n.tr("notch.tokens_today.upper"), "–"),
+                    (L10n.tr("notch.card.cache_hit"), "–"),
+                    (L10n.tr("notch.card.api_value"), "–")
+                ]
+            }
+            let value: String = {
+                guard let stats = stats, denom > 0 else { return "—" }
+                if stats.cost > 0 {
+                    return String(format: isSub ? "≈$%.1f" : "~$%.1f", stats.cost)
+                }
+                return isSub ? L10n.tr("notch.in_plan") : "~$0.0"
+            }()
+            return [
+                (L10n.tr("notch.tokens_today.upper"), formatTokenCount(stats?.tokens ?? 0)),
+                (L10n.tr("notch.card.cache_hit"), cachePct.map { "\($0)%" } ?? "—"),
+                (L10n.tr("notch.card.api_value"), value)
+            ]
+        }()
+        // Equal thirds inside one quiet surface: this is a summary band, not
+        // three buttons, so the shared border stays deliberately understated.
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { idx, item in
+                if idx > 0 {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.075))
+                        .frame(width: 0.5, height: 24)
+                        .padding(.horizontal, 10)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.label.uppercased())
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundColor(.white.opacity(0.4))
+                    Text(item.value)
+                        .font(.system(size: 12.5, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundColor(.white.opacity(placeholder ? 0.35 : 0.9))
+                        .placeholderPulse(placeholder)
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.02))
+        .cornerRadius(9)
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color.white.opacity(0.065), lineWidth: 0.5)
+        )
+    }
+
+    // Absolute reset moment ("resets 2:09 AM" / "resets Mon 5 AM") backing a
+    // relative countdown: within 24h a bare clock time is unambiguous, beyond
+    // that the weekday disambiguates. Nil for idle/unanchored windows, whose
+    // reset moment would drift with every poll.
+    func absoluteResetText(for snapshot: QuotaWindowSnapshot?) -> String? {
+        guard let snapshot = snapshot, !snapshot.idle,
+              let date = resetsAtDate(from: snapshot.window.resetsAt) else { return nil }
+        let formatter = DateFormatter()
+        // Follow the app language (which may differ from the system locale).
+        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
+        let within24h = date.timeIntervalSince(now) < 24 * 3600
+        formatter.setLocalizedDateFormatFromTemplate(within24h ? "jmm" : "Ejmm")
+        return formatter.string(from: date)
+    }
+
+    // The backend returns a rolling 14-day series. The compact page displays
+    // its trailing seven days; unlike the old decorative sparkline, an empty
+    // week still has useful meaning and therefore keeps its labelled frame.
+    func tokenSparklineSeries(for provider: ProviderUsage) -> [Int]? {
+        guard let full = model.dailyTokens[provider.provider.lowercased()] else { return nil }
+        let series = Array(full.suffix(7))
+        return series.count > 1 ? series : nil
+    }
+
+    func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
+        formatter.setLocalizedDateFormatFromTemplate(narrow ? "EEEEE" : "EEE")
+        let calendar = Calendar.current
+        return (0..<count).map { index in
+            if index == count - 1, !narrow {
+                return L10n.tr("notch.card.today")
+            }
+            let offset = index - (count - 1)
+            let date = calendar.date(byAdding: .day, value: offset, to: now) ?? now
+            return formatter.string(from: date)
+        }
+    }
+
+    func peakHourText(for provider: String) -> String {
+        guard let hour = model.peakHours[provider.lowercased()] else { return "—" }
+        var components = DateComponents()
+        components.calendar = Calendar.current
+        components.timeZone = TimeZone.current
+        components.year = 2001
+        components.month = 1
+        components.day = 1
+        components.hour = hour
+        guard let start = components.date,
+              let end = Calendar.current.date(byAdding: .hour, value: 1, to: start)
+        else { return "—" }
+
+        let formatter = DateIntervalFormatter()
+        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: start, to: end)
+    }
+
+    @ViewBuilder
+    func compactUsageTrend(
+        _ series: [Int],
+        visual: ProviderVisual,
+        narrow: Bool,
+        placeholder: Bool = false
+    ) -> some View {
+        let peak = max(1, series.max() ?? 1)
+        let labels = compactTrendLabels(count: series.count, narrow: narrow)
+        VStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(L10n.tr("notch.card.last_7_days").uppercased())
+                    .font(.system(size: narrow ? 7.2 : 8, weight: .semibold))
+                    .tracking(narrow ? 0.35 : 0.65)
+                    .foregroundColor(.white.opacity(0.4))
+                Spacer(minLength: 4)
+                Text(placeholder ? "—" : formatTokenCount(series.reduce(0, +)))
+                    .font(.system(size: narrow ? 10 : 11, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
+            }
+
+            HStack(alignment: .bottom, spacing: narrow ? 2 : 4) {
+                ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
+                    let isToday = idx == series.count - 1
+                    VStack(spacing: 4) {
+                        ZStack(alignment: .bottom) {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(height: 0.5)
+                            TopRoundedBar(radius: 2)
+                                .fill(placeholder
+                                    ? Color.white.opacity(0.08)
+                                    : (isToday ? Color(visual.brandColor) : Color.white.opacity(0.22)))
+                                .frame(
+                                    width: narrow ? 8 : 11,
+                                    height: placeholder
+                                        ? 5
+                                        : (value == 0 ? 1 : max(isToday ? 5 : 3, 25 * CGFloat(value) / CGFloat(peak)))
+                                )
+                                .shadow(
+                                    color: !placeholder && isToday
+                                        ? Color(visual.brandColor).opacity(0.45)
+                                        : .clear,
+                                    radius: 3
+                                )
+                        }
+                        .frame(height: 25, alignment: .bottom)
+
+                        Text(labels[idx])
+                            .font(.system(size: narrow ? 6.5 : 7.5, weight: isToday ? .bold : .medium))
+                            .foregroundColor(placeholder
+                                ? .white.opacity(0.18)
+                                : (isToday ? Color(visual.brandColor).opacity(0.9) : .white.opacity(0.34)))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    func compactUsagePair(input: Int, output: Int, inline: Bool) -> some View {
+        HStack(spacing: 0) {
+            compactUsageFigure(
+                label: L10n.tr("notch.card.input"),
+                value: formatTokenCount(input),
+                inline: inline
+            )
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 0.5, height: inline ? 15 : 24)
+                .padding(.horizontal, inline ? 6 : 8)
+            compactUsageFigure(
+                label: L10n.tr("notch.card.output"),
+                value: formatTokenCount(output),
+                inline: inline
+            )
+        }
+    }
+
+    @ViewBuilder
+    func detailedUsageFlow(input: Int, cacheHit: Int?, output: Int) -> some View {
+        HStack(spacing: 0) {
+            detailedUsageFlowFigure(
+                label: L10n.tr("notch.card.fresh_input"),
+                value: formatTokenCount(input)
+            )
+            detailedUsageFlowDivider
+            detailedUsageFlowFigure(
+                label: L10n.tr("notch.card.cache_hit"),
+                value: cacheHit.map { "\($0)%" } ?? "—",
+                secondary: true
+            )
+            detailedUsageFlowDivider
+            detailedUsageFlowFigure(
+                label: L10n.tr("notch.card.output"),
+                value: formatTokenCount(output)
+            )
+        }
+    }
+
+    var detailedUsageFlowDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.075))
+            .frame(width: 0.5, height: 18)
+            .padding(.horizontal, 5)
+    }
+
+    @ViewBuilder
+    func detailedUsageFlowFigure(label: String, value: String, secondary: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(value)
+                .font(.system(size: secondary ? 11.5 : 13, weight: secondary ? .semibold : .bold))
+                .monospacedDigit()
+                .foregroundColor(.white.opacity(secondary ? 0.68 : 0.9))
+            Text(label.uppercased())
+                .font(.system(size: secondary ? 7 : 7.5, weight: .semibold))
+                .tracking(secondary ? 0.35 : 0.5)
+                .foregroundColor(.white.opacity(secondary ? 0.32 : 0.38))
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    func compactUsageFigure(label: String, value: String, inline: Bool) -> some View {
+        if inline {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(value)
+                    .font(.system(size: 13, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(0.9))
+                Text(label.uppercased())
+                    .font(.system(size: 7.5, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(0.38))
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .frame(maxWidth: .infinity)
+        } else {
+            VStack(spacing: 2) {
+                Text(value)
+                    .font(.system(size: 13, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(0.9))
+                Text(label.uppercased())
+                    .font(.system(size: 7.5, weight: .semibold))
+                    .tracking(0.55)
+                    .foregroundColor(.white.opacity(0.38))
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    func compactUsageMetric(
+        label: String,
+        value: String,
+        accent: Color? = nil,
+        inline: Bool,
+        condensed: Bool = false
+    ) -> some View {
+        Group {
+            if inline {
+                HStack(alignment: .firstTextBaseline, spacing: condensed ? 3 : 5) {
+                    Text(label.uppercased())
+                        .font(.system(size: condensed ? 7 : 7.2, weight: .semibold))
+                        .tracking(condensed ? 0.25 : 0.35)
+                        .foregroundColor(.white.opacity(0.38))
+                    Spacer(minLength: 3)
+                    Text(value)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundColor(accent ?? .white.opacity(0.86))
+                        .layoutPriority(1)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(label.uppercased())
+                        .font(.system(size: 7.5, weight: .semibold))
+                        .tracking(0.45)
+                        .foregroundColor(.white.opacity(0.38))
+                    Text(value)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundColor(accent ?? .white.opacity(0.86))
+                }
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, condensed ? 6 : 8)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.045))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.075), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
     var tokenUsageView: some View {
-        HStack(alignment: .top, spacing: 0) {
-            let padding: CGFloat = model.providers.count == 3 ? 8 : 14
-            ForEach(0..<model.providers.count, id: \.self) { idx in
+        // Detailed solo mode gets the richer full-width usage dashboard.
+        // Compact solo mode deliberately falls through to the exact same
+        // usage column as 2+ providers, matching page 1's component reuse so
+        // both pages keep one coherent density and hierarchy.
+        if model.providers.count == 1, model.expandedStyle == "detailed" {
+            soloTokenUsageView
+        } else {
+            multiTokenUsageView
+        }
+    }
+
+    // MARK: - Solo usage page (single provider: hero + This-week + tiles)
+    var soloTokenUsageView: some View {
+        let p = model.providers[0]
+        let visual = providerVisual(for: p.provider)
+        let stats = model.todayStats[p.provider.lowercased()] ?? ProviderHistoryStats(tokens: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0.0)
+        let state = quotaState(for: p)
+        // 14-day series: the trailing 7 are displayed, and the prior 7 form
+        // the comparison baseline. An old backend sends 7 → no baseline.
+        let fullSeries = model.dailyTokens[p.provider.lowercased()] ?? []
+        let series = Array(fullSeries.suffix(7))
+        // The trend and analytics are permanent layout modules. Before
+        // history arrives (or for a genuinely empty history), seven zero days
+        // preserve their final geometry instead of removing the whole block.
+        let displaySeries = series.count > 1 ? series : Array(repeating: 0, count: 7)
+        let prevTotal = fullSeries.count >= 14 ? fullSeries.prefix(7).reduce(0, +) : 0
+        let weekTotal = displaySeries.reduce(0, +)
+        let denom = stats.cacheRead + stats.input + stats.cacheCreation
+        let cachePct = denom > 0
+            ? Int((Double(stats.cacheRead) / Double(denom) * 100).rounded())
+            : nil
+        return VStack(spacing: 0) {
+            providerHeaderRow(for: p, visual: visual, centered: true, subtle: true)
+
+            ZStack {
+                soloTokenUsageContent(
+                    provider: p,
+                    visual: visual,
+                    state: state,
+                    stats: stats,
+                    cachePct: cachePct,
+                    denom: denom,
+                    series: displaySeries,
+                    weekTotal: weekTotal,
+                    prevTotal: prevTotal
+                )
+                .opacity(model.historyLoaded ? 1 : 0)
+                .allowsHitTesting(model.historyLoaded)
+                .accessibilityHidden(!model.historyLoaded)
+
+                if !model.historyLoaded {
+                    // The complete dashboard above remains in layout while
+                    // transparent; this centered layer is only the visible
+                    // loading treatment and therefore cannot affect height.
+                    VStack(spacing: 9) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .environment(\.colorScheme, .dark)
+                        Text(L10n.tr("notch.loading.upper"))
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundColor(Color.white.opacity(0.42))
+                    }
+                    .transition(.opacity)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: model.historyLoaded)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    func soloTokenUsageContent(
+        provider p: ProviderUsage,
+        visual: ProviderVisual,
+        state: ProviderQuotaState,
+        stats: ProviderHistoryStats,
+        cachePct: Int?,
+        denom: Int,
+        series: [Int],
+        weekTotal: Int,
+        prevTotal: Int
+    ) -> some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 4) {
+                Text(formatTokenCount(stats.tokens))
+                    .font(.system(size: 32, weight: .bold, design: .default))
+                    .foregroundColor(Color(visual.brandColor))
+                Text(L10n.tr("notch.tokens_today.upper"))
+                    .font(.system(size: 8.5, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundColor(Color.white.opacity(0.36))
+            }
+            .padding(.top, 10)
+
+            // Empty usage and the regular Input/Cache/Output flow occupy one
+            // identical slot. A true zero state changes its message, not the
+            // page's geometry.
+            Group {
+                if denom == 0 {
+                    Text(L10n.tr("notch.no_consumption"))
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                        )
+                        .foregroundColor(.white.opacity(0.48))
+                } else {
+                    detailedUsageFlow(input: stats.input, cacheHit: cachePct, output: stats.output)
+                }
+            }
+            .frame(maxWidth: 310)
+            .frame(height: 20)
+            .padding(.top, 10)
+
+            soloWeekSection(series: series, weekTotal: weekTotal, prevTotal: prevTotal, visual: visual)
+                .padding(.top, 12)
+
+            soloUsageTiles(provider: p.provider, series: series, weekTotal: weekTotal)
+                .padding(.top, 10)
+
+            if state.mode == .credits, let creds = state.credits {
+                HStack(spacing: 5) {
+                    CoinIcon(size: 9)
+                    Text("\(L10n.tr("notch.on_credits")) · \(p.provider != "antigravity" ? String(format: "$%.2f", creds) : "\(Int(creds))")")
+                }
+                .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color(NSColor.systemGreen).opacity(0.12))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(NSColor.systemGreen).opacity(0.26), lineWidth: 0.5)
+                )
+                .foregroundColor(Color(NSColor.systemGreen))
+                .padding(.top, 12)
+            }
+        }
+    }
+
+    // Rolling seven-day trend: seven equal-width bars with localized weekday
+    // labels. The explicit time range matches the backend's trailing window;
+    // calling it "this week" would incorrectly imply a calendar-week total.
+    @ViewBuilder
+    func soloWeekSection(series: [Int], weekTotal: Int, prevTotal: Int, visual: ProviderVisual) -> some View {
+        let peak = max(1, series.max() ?? 1)
+        let labels = compactTrendLabels(count: series.count, narrow: false)
+        // Week-over-week: this week's total against the 7 days before it.
+        // Consumption up reads warm (spending faster), down reads green.
+        let delta: Int? = prevTotal > 0
+            ? Int((Double(weekTotal - prevTotal) / Double(prevTotal) * 100).rounded())
+            : nil
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.bottom, 10)
+
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(L10n.tr("notch.card.last_7_days").uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(.white.opacity(0.42))
+                Spacer()
+                if let delta = delta {
+                    let up = delta >= 0
+                    Text("\(up ? "▲" : "▼")\(abs(delta))%")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background((up ? Color(NSColor.systemOrange) : Color(NSColor.systemGreen)).opacity(0.13))
+                        .cornerRadius(5)
+                        .foregroundColor(up
+                            ? Color(NSColor.systemOrange).opacity(0.95)
+                            : Color(NSColor.systemGreen).opacity(0.92))
+                }
+                Text(formatTokenCount(weekTotal))
+                    .font(.system(size: 13, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white)
+            }
+
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.09))
+                    .frame(height: 0.5)
+                HStack(alignment: .bottom, spacing: 4) {
+                    ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
+                        let isToday = idx == series.count - 1
+                        TopRoundedBar(radius: 2)
+                            .fill(isToday ? Color(visual.brandColor) : Color.white.opacity(0.12))
+                            .frame(height: max(isToday ? 6 : 3, 35 * CGFloat(value) / CGFloat(peak)))
+                            .frame(maxWidth: .infinity)
+                            .shadow(color: isToday ? Color(visual.brandColor).opacity(0.5) : .clear, radius: 3)
+                    }
+                }
+            }
+            .frame(height: 35, alignment: .bottom)
+            .padding(.top, 8)
+
+            HStack(spacing: 4) {
+                ForEach(Array(labels.enumerated()), id: \.offset) { idx, label in
+                    let isToday = idx == labels.count - 1
+                    Text(label)
+                        .font(.system(size: 10, weight: isToday ? .bold : .medium))
+                        .foregroundColor(isToday
+                            ? Color(visual.brandColor).opacity(0.9)
+                            : .white.opacity(0.46))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // Three compact analytics derived from the same rolling seven-day series.
+    // The quota page already summarizes today's cache and API value, so these
+    // tiles add depth instead of repeating it: calendar-day average, peak day,
+    // and the provider's habitual peak local hour.
+    @ViewBuilder
+    func soloUsageTiles(provider: String, series: [Int], weekTotal: Int) -> some View {
+        let labels = compactTrendLabels(count: series.count, narrow: false)
+        let average = series.isEmpty
+            ? 0
+            : Int((Double(weekTotal) / Double(series.count)).rounded())
+        let peakIndex = series.indices.max(by: { series[$0] < series[$1] })
+        let peakValue = peakIndex.map { series[$0] } ?? 0
+        let peakLabel = weekTotal > 0
+            ? (peakIndex.flatMap { labels.indices.contains($0) ? labels[$0] : nil } ?? "—")
+            : "—"
+        let peakDisplay = weekTotal > 0
+            ? "\(peakLabel) · \(formatTokenCount(peakValue))"
+            : "—"
+        let tiles: [(label: String, value: String)] = [
+            (L10n.tr("notch.card.daily_avg"), formatTokenCount(average)),
+            (L10n.tr("notch.card.peak_day"), peakDisplay),
+            (L10n.tr("notch.card.peak_hour"), peakHourText(for: provider))
+        ]
+        if !series.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(tile.label.uppercased())
+                            .font(.system(size: 8, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundColor(.white.opacity(0.42))
+                        Text(tile.value)
+                            .font(.system(size: 13, weight: .bold))
+                            .monospacedDigit()
+                            .foregroundColor(.white)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.045))
+                    .cornerRadius(9)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                    )
+                }
+            }
+        }
+    }
+
+    var multiTokenUsageView: some View {
+        ZStack {
+            // Always lay out the complete dashboard, even while it is hidden
+            // behind the loading state. This invisible sizing twin includes
+            // the trend block, so the real content can fade in without ever
+            // changing the page or window height.
+            HStack(alignment: .top, spacing: 0) {
+                let padding: CGFloat = model.providers.count == 3 ? 8 : 14
+                ForEach(0..<model.providers.count, id: \.self) { idx in
                 let p = model.providers[idx]
                 let visual = providerVisual(for: p.provider)
                 let stats = model.todayStats[p.provider.lowercased()] ?? ProviderHistoryStats(tokens: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0.0)
                 let state = quotaState(for: p)
                 let credits = state.credits
                 let isSub = isSubscription(for: p)
+                let sparkline = tokenSparklineSeries(for: p)
+                let denom = stats.cacheRead + stats.input + stats.cacheCreation
+                let cacheValue = denom > 0
+                    ? "\(Int(round(Double(stats.cacheRead) / Double(denom) * 100)))%"
+                    : "—"
+                // Three provider columns are too narrow for translated labels
+                // and values to stay legible on one line. One and two columns
+                // use the denser inline treatment; three retain two-line rows.
+                let inlineMetrics = model.providers.count < 3
+                let condensedMetrics = model.providers.count == 2
+                let condensedCacheLabel = L10n.resolvedAppLanguage.hasPrefix("zh")
+                    ? L10n.tr("notch.card.cache_hit")
+                    : L10n.tr("notch.card.cache")
+                let valueMetric: (label: String, value: String, accent: Color?) = {
+                    if state.mode == .credits, let creds = credits {
+                        let value = p.provider != "antigravity"
+                            ? String(format: condensedMetrics ? "$%.1f" : "$%.2f", creds)
+                            : "\(Int(creds))"
+                        return (L10n.tr("notch.card.reserve"), value, Color(NSColor.systemGreen))
+                    }
+                    if denom == 0 {
+                        return (L10n.tr("notch.card.api_value"), "—", nil)
+                    }
+                    if isSub, stats.cost == 0 {
+                        return (L10n.tr("notch.card.api_value"), L10n.tr("notch.in_plan"), nil)
+                    }
+                    let value = isSub
+                        ? String(format: condensedMetrics ? "≈$%.1f" : "≈$%.2f", stats.cost)
+                        : String(format: condensedMetrics ? "~$%.1f" : "~$%.2f", stats.cost)
+                    return (
+                        L10n.tr("notch.card.api_value"),
+                        value,
+                        isSub ? nil : Color(NSColor.systemGreen)
+                    )
+                }()
 
                 VStack(spacing: 0) {
-                    providerHeaderRow(for: p, visual: visual)
+                    if !(model.providers.count == 1 && model.expandedStyle == "compact") {
+                        providerHeaderRow(for: p, visual: visual)
+                    }
 
                     VStack(spacing: 4) {
                         Text(formatTokenCount(stats.tokens))
@@ -838,90 +1785,53 @@ extension NotchIslandView {
                             .foregroundColor(Color.white.opacity(0.36))
                     }
                     .frame(height: 54)
-                    .padding(.top, 28)
-                    
+                    .padding(.top, model.providers.count == 1 ? 16 : 18)
+
+                    compactUsagePair(
+                        input: stats.input,
+                        output: stats.output,
+                        inline: inlineMetrics
+                    )
+                        .padding(.top, 12)
+
                     HStack(spacing: 6) {
-                        Text(formatTokenCount(stats.input))
-                            .fontWeight(.bold)
-                        Text("→")
-                            .foregroundColor(.white.opacity(0.3))
-                        Text(formatTokenCount(stats.output))
-                            .fontWeight(.bold)
+                        compactUsageMetric(
+                            label: condensedMetrics
+                                ? condensedCacheLabel
+                                : L10n.tr("notch.card.cache_hit"),
+                            value: cacheValue,
+                            inline: inlineMetrics,
+                            condensed: condensedMetrics
+                        )
+                        compactUsageMetric(
+                            label: condensedMetrics && valueMetric.label == L10n.tr("notch.card.api_value")
+                                ? L10n.tr("notch.card.value_short")
+                                : valueMetric.label,
+                            value: valueMetric.value,
+                            accent: valueMetric.accent,
+                            inline: inlineMetrics,
+                            condensed: condensedMetrics
+                        )
                     }
-                    .font(.system(size: 13, design: .default))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.top, 22)
-                    
-                    let denom = stats.cacheRead + stats.input + stats.cacheCreation
-                    if denom > 0 {
-                        let hitPct = Int(round(Double(stats.cacheRead) / Double(denom) * 100))
-                        Text(L10n.tr("notch.cache_hit", hitPct))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.48))
-                            .padding(.top, 3)
+                    .padding(.top, 10)
+
+                    // History arrives a few seconds after quota data. Keep the
+                    // complete trend module in the layout from the first frame
+                    // so loading only replaces values and bars — it never adds
+                    // a new block that can increase the island's height.
+                    VStack(spacing: 0) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.075))
+                            .frame(height: 0.5)
+                            .padding(.bottom, 10)
+                        compactUsageTrend(
+                            sparkline ?? Array(repeating: 0, count: 7),
+                            visual: visual,
+                            narrow: model.providers.count > 1,
+                            placeholder: !model.historyLoaded
+                        )
                     }
-                    
-                    VStack(spacing: 3) {
-                        if denom == 0 {
-                            Text(L10n.tr("notch.no_consumption"))
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.08))
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                                )
-                                .foregroundColor(.white.opacity(0.48))
-                        } else if state.mode == .credits, let creds = credits {
-                            HStack(spacing: 5) {
-                                CoinIcon(size: 9)
-                                Text("\(L10n.tr("notch.on_credits")) · \(p.provider != "antigravity" ? String(format: "$%.2f", creds) : "\(Int(creds))")")
-                            }
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Color(NSColor.systemGreen).opacity(0.12))
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color(NSColor.systemGreen).opacity(0.26), lineWidth: 0.5)
-                            )
-                            .foregroundColor(Color(NSColor.systemGreen))
-                        } else if isSub {
-                            if stats.cost > 0 {
-                                Text(L10n.tr("notch.api_value", stats.cost))
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.4))
-                            } else {
-                                Text(L10n.tr("notch.in_plan"))
-                                    .font(.system(size: 10, weight: .bold))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(Color.white.opacity(0.08))
-                                    .cornerRadius(8)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                                    )
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                        } else {
-                            Text(L10n.tr("notch.api_value_est", stats.cost))
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color(NSColor.systemGreen).opacity(0.12))
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color(NSColor.systemGreen).opacity(0.26), lineWidth: 0.5)
-                                )
-                                .foregroundColor(Color(NSColor.systemGreen))
-                        }
-                    }
-                    .padding(.top, 24)
+                    .padding(.top, 13)
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
                 .padding(.horizontal, padding)
@@ -941,14 +1851,61 @@ extension NotchIslandView {
                             )
                         )
                         .frame(width: 0.5)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 20)
+                }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(.horizontal, 16)
+            .opacity(model.historyLoaded ? 1 : 0)
+            .allowsHitTesting(model.historyLoaded)
+            .accessibilityHidden(!model.historyLoaded)
+
+            if !model.historyLoaded {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .environment(\.colorScheme, .dark)
+                    Text(L10n.tr("notch.loading.upper"))
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(Color.white.opacity(0.42))
+                }
+                .transition(.opacity)
+                .accessibilityElement(children: .combine)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .padding(.horizontal, 16)
+        .animation(.easeOut(duration: 0.18), value: model.historyLoaded)
     }
     
+}
+
+// Gentle opacity breathing for loading placeholders — signals "pending"
+// without adding a spinner to a page whose other content is already live.
+private struct PlaceholderPulse: ViewModifier {
+    @State private var dim = false
+    func body(content: Content) -> some View {
+        content
+            .opacity(dim ? 0.45 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
+            }
+    }
+}
+
+extension View {
+    // Conditional wrapper: the placeholder branch gets its own view identity,
+    // so the repeat-forever animation dies with it when real data lands.
+    @ViewBuilder
+    func placeholderPulse(_ active: Bool) -> some View {
+        if active {
+            modifier(PlaceholderPulse())
+        } else {
+            self
+        }
+    }
 }
 
 struct ResetChipView: View {
