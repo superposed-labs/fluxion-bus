@@ -260,6 +260,10 @@ extension NotchIslandView {
             return -3
         case .locked:
             return -2
+        case .recovering:
+            // Still critical (depleted) but on the verge of recovering — keep it
+            // in the attention slot alongside locked.
+            return -2
         case .credits:
             return -1
         case .healthy:
@@ -305,9 +309,14 @@ extension NotchIslandView {
                 // The pool tag (EXT) and the locked window tag (WK/5H) are detail
                 // for the wider peek/expanded surfaces — in the narrow strip beside
                 // the notch they overflowed into the camera and wrapped vertically.
-                Text("\(Int(state.mode == .locked ? 0 : state.bindingRemaining))%")
+                let depletedGlance = state.mode == .locked || state.mode == .recovering
+                Text("\(Int(depletedGlance ? 0 : state.bindingRemaining))%")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(state.mode == .locked ? Color(NSColor.systemRed) : .white)
+                    // Recovering = predicted reset elapsed, confirming: amber, not
+                    // the red of a hard lock, so the glance reads "coming back".
+                    .foregroundColor(state.mode == .locked ? Color(NSColor.systemRed)
+                        : state.mode == .recovering ? Color(NSColor.systemYellow)
+                        : .white)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -374,7 +383,13 @@ extension NotchIslandView {
             let fiveZero = five.remaining <= 0
             let weekZero = (weekly?.remaining ?? 100) <= 0
             let depleted = fiveZero || weekZero
-            let mode: ProviderDisplayMode = depleted ? (hasCredits ? .credits : .locked) : .healthy
+            let blocking: QuotaWindowSnapshot? = weekZero ? weekly : five
+            let mode: ProviderDisplayMode
+            if depleted {
+                mode = hasCredits ? .credits : (awaitingReset(blocking) ? .recovering : .locked)
+            } else {
+                mode = .healthy
+            }
             return SoloPoolUnit(
                 color: splitQuotaNSColor(for: five, visual: visual),
                 remaining: five.remaining,
@@ -412,9 +427,12 @@ extension NotchIslandView {
                         .fixedSize(horizontal: true, vertical: false)
                 }
             } else {
-                Text("\(Int(u.mode == .locked ? 0 : u.remaining))%")
+                let depletedGlance = u.mode == .locked || u.mode == .recovering
+                Text("\(Int(depletedGlance ? 0 : u.remaining))%")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(u.mode == .locked ? Color(NSColor.systemRed) : .white)
+                    .foregroundColor(u.mode == .locked ? Color(NSColor.systemRed)
+                        : u.mode == .recovering ? Color(NSColor.systemYellow)
+                        : .white)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }

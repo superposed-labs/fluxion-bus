@@ -77,6 +77,9 @@
 "notch.pool.all_spent_reserve" = "Both pools spent · on reserve";
 "notch.pool.back_first" = "%@ back first";
 "notch.loading.upper" = "LOADING";
+"notch.recovering.upper" = "CONFIRMING";
+"notch.confirming" = "Confirming…";
+"notch.recovering.note" = "Reset time reached — confirming…";
 "menu.reset.now" = "now";
 "menu.reset.minutes" = "%dm";
 "menu.reset.hours" = "%dh%02dm";

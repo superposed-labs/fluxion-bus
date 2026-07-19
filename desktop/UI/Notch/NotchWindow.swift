@@ -309,6 +309,7 @@ struct NotchIslandView: View {
     func scopedWindows(for provider: ProviderUsage) -> [QuotaWindowSnapshot] { quota.scopedWindows(for: provider) }
     func getCredits(for provider: ProviderUsage) -> Double? { quota.getCredits(for: provider) }
     func quotaState(for provider: ProviderUsage) -> ProviderQuotaState { quota.quotaState(for: provider) }
+    func awaitingReset(_ snapshot: QuotaWindowSnapshot?) -> Bool { quota.awaitingReset(snapshot) }
     func isSubscription(for provider: ProviderUsage) -> Bool { quota.isSubscription(for: provider) }
     func timerString(for snapshot: QuotaWindowSnapshot?) -> String { quota.timerString(for: snapshot) }
     func get5hResetTimer(for provider: ProviderUsage) -> String { quota.get5hResetTimer(for: provider) }

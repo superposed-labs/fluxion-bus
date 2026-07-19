@@ -77,6 +77,9 @@
 "notch.pool.all_spent_reserve" = "両プールとも使用済み · 予備クレジット使用中";
 "notch.pool.back_first" = "%@ が先に回復";
 "notch.loading.upper" = "読み込み中";
+"notch.recovering.upper" = "確認中";
+"notch.confirming" = "確認中…";
+"notch.recovering.note" = "リセット時刻に到達 — 確認中…";
 "menu.reset.now" = "今";
 "menu.reset.minutes" = "%d分";
 "menu.reset.hours" = "%d時間%02d分";

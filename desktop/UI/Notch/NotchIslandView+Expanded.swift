@@ -609,7 +609,9 @@ extension NotchIslandView {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity)
-                        .foregroundColor(state.mode == .credits ? Color(NSColor.systemGreen) : Color(NSColor.systemRed))
+                        .foregroundColor(state.mode == .credits ? Color(NSColor.systemGreen)
+                            : state.mode == .recovering ? Color(NSColor.systemYellow)
+                            : Color(NSColor.systemRed))
                 } else if hasResets, let resets = provider.resets {
                     ResetChipView(resets: resets, brandColor: Color(visual.brandColor), justGranted: model.justGranted)
                 }
@@ -765,7 +767,9 @@ extension NotchIslandView {
         // back to the shared reserve when available, else locks; weekly otherwise
         // stays in the row below.
         let lockReason = (u.weekZero && u.fiveZero) ? L10n.tr("notch.all_spent") : (u.weekZero ? L10n.tr("notch.weekly_cap") : L10n.tr("notch.five_hour_empty"))
-        let subtitle = u.mode == .locked ? lockReason : (u.five.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left"))
+        let subtitle = (u.mode == .locked || u.mode == .recovering)
+            ? (u.mode == .recovering ? L10n.tr("notch.recovering.upper") : lockReason)
+            : (u.five.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left"))
         // When locked, headline the blocking window's countdown (weekly outlasts 5h).
         let lockTimer = u.weekZero ? timerString(for: u.weekly) : timerString(for: u.five)
         VStack(spacing: 0) {

@@ -165,6 +165,22 @@ extension AppDelegate {
             isPendingRefresh = true
         }
 
+        // 1b. Eager reset confirmation. When a locked provider's predicted reset
+        // instant has elapsed but the cached snapshot still reports it spent, the
+        // notch shows the transitional "confirming…" state. Force a
+        // provider-scoped refresh so recovery lands within seconds instead of
+        // waiting out the (possibly backed-off) poll interval. The 60s throttle
+        // below still applies, so a chronically-past reset can't hammer the API,
+        // and this only reads the predicted time — it never asserts recovery.
+        let presenter = NotchQuotaPresenter(now: now)
+        for provider in lastCachedProviders where provider.status == "ok" {
+            if presenter.quotaState(for: provider).mode == .recovering {
+                pendingForceProviders.insert(provider.provider)
+                currentInterval = PollingConfig.defaultInterval
+                isPendingRefresh = true
+            }
+        }
+
         // 2. Determine if we should refresh
         var shouldRefresh = false
         if isPendingRefresh {

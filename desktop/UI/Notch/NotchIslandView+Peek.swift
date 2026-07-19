@@ -52,6 +52,23 @@ extension NotchIslandView {
         .lineLimit(1)
     }
 
+    // Transitional glance for the recovering state: the predicted reset has
+    // elapsed and we're confirming with the provider. Replaces the vanished
+    // countdown + stuck red "0%" with a neutral amber "confirming…" so the
+    // peek never freezes on a finished timer.
+    @ViewBuilder
+    func peekConfirming() -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 8.5, weight: .semibold))
+            Text(L10n.tr("notch.confirming"))
+                .font(.system(size: 11, weight: .medium))
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundColor(Color(NSColor.systemYellow).opacity(0.9))
+        .lineLimit(1)
+    }
+
     @ViewBuilder
     func peekSeg(for p: ProviderUsage) -> some View {
         let visual = providerVisual(for: p.provider)
@@ -117,6 +134,11 @@ extension NotchIslandView {
                         peekTimer(lockTimer, label: lockLabel, locked: true)
                     }
                 }
+            }
+        } else if state.mode == .recovering {
+            HStack(spacing: 6) {
+                peekDot(visual.brandColor)
+                peekConfirming()
             }
         } else if model.peekReset == "both" {
             // Both timers: header row over two labeled countdowns, stacked so
@@ -196,6 +218,11 @@ extension NotchIslandView {
                     zero
                     if hasTimer { peekTimer(lockTimer, label: lockLabel, locked: true) }
                 }
+            }
+        } else if u.mode == .recovering {
+            HStack(spacing: 6) {
+                peekDot(u.color)
+                peekConfirming()
             }
         } else if model.peekReset == "both" {
             let t5 = timerString(for: u.five)
