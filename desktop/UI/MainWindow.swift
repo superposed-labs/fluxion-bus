@@ -291,7 +291,8 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         let port = appDelegate.envVals["FLUXION_UI_PORT"] ?? "8765"
         let langCode = L10n.pythonLocale
         let viewParam = initialView.map { "&view=\($0)" } ?? ""
-        if let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)\(viewParam)") {
+        let tokenParam = consoleTokenQueryParam()
+        if let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)\(viewParam)\(tokenParam)") {
             web.load(URLRequest(url: url))
         }
     }
@@ -327,8 +328,21 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
     @objc func openConsoleInBrowser() {
         let port = appDelegate.envVals["FLUXION_UI_PORT"] ?? "8765"
         let langCode = L10n.pythonLocale
-        guard let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)") else { return }
+        let tokenParam = consoleTokenQueryParam()
+        guard let url = URL(string: "http://127.0.0.1:\(port)/?lang=\(langCode)\(tokenParam)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// FLUXION_UI_TOKEN as a `&token=` suffix for the web console URL — the
+    /// gateway's auth gate rejects /api/* once the token is set, and the
+    /// WKWebView has no way to attach an Authorization header on page load,
+    /// so the frontend picks it up from this query param instead (see
+    /// `initTokenFromLocation` in web/src/main.tsx).
+    private func consoleTokenQueryParam() -> String {
+        guard let token = appDelegate.envVals["FLUXION_UI_TOKEN"], !token.isEmpty,
+              let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+        else { return "" }
+        return "&token=\(encoded)"
     }
 
     @objc func forceStartServices() {
