@@ -425,7 +425,7 @@ final class RichMenuPanelView: NSView {
         let rowX = outerPad + innerPad
         let status = L10n.tr("menu.five_hour_temporarily_uncapped")
         drawSymbol("infinity", x: rowX + 5, y: y + 8, size: 14, color: muted)
-        draw(L10n.tr("preferences.reset.5h"), x: rowX + 36, y: y + 6, size: 13.0, weight: .regular, color: text)
+        draw(L10n.tr("preferences.window.5h"), x: rowX + 36, y: y + 6, size: 13.0, weight: .regular, color: text)
         let statusWidth = width(status, size: 12.5, weight: .medium)
         draw(status, x: bounds.width - outerPad - innerPad - statusWidth, y: y + 6, size: 12.5, weight: .medium, color: muted)
     }
@@ -967,10 +967,10 @@ final class RichMenuPanelView: NSView {
         }
         let raw = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
-            return L10n.tr("preferences.notch.weekly")
+            return L10n.tr("preferences.window.weekly")
         }
         if raw.contains("5") || raw.contains("hour") || raw.contains("rolling") {
-            return L10n.tr("preferences.reset.5h")
+            return L10n.tr("preferences.window.5h")
         }
         return richWindowLabel(w)
     }

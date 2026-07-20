@@ -489,7 +489,7 @@ extension AppDelegate {
         var maxResetW: CGFloat = 0
         for p in filtered where p.status == "ok" {
             if isCodexFiveHourTemporarilyUncapped(p) {
-                maxNameW = max(maxNameW, textWidth(L10n.tr("preferences.reset.5h")))
+                maxNameW = max(maxNameW, textWidth(L10n.tr("preferences.window.5h")))
             }
             if p.provider == "codex", let resets = p.resets, resets.count > 0 {
                 maxNameW = max(maxNameW, textWidth(L10n.tr("menu.resets")))
@@ -679,7 +679,7 @@ extension AppDelegate {
                     // compact phrase, not the full "Temporarily uncapped":
                     // that column is only as wide as "NN% left", and the long
                     // form would stretch the whole menu to fit one row.
-                    let rowStr = "  \(L10n.tr("preferences.reset.5h"))\t\t\(L10n.tr("notch.five_hour_uncapped"))"
+                    let rowStr = "  \(L10n.tr("preferences.window.5h"))\t\t\(L10n.tr("notch.five_hour_uncapped"))"
                     uncappedItem.attributedTitle = NSAttributedString(
                         string: rowStr,
                         attributes: rowAttributes(NSColor.secondaryLabelColor)
@@ -897,10 +897,10 @@ extension AppDelegate {
         }
         let raw = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
-            return L10n.tr("preferences.notch.weekly")
+            return L10n.tr("preferences.window.weekly")
         }
         if raw.contains("5") || raw.contains("hour") || raw.contains("rolling") {
-            return L10n.tr("preferences.reset.5h")
+            return L10n.tr("preferences.window.5h")
         }
         return w.label ?? w.key ?? ""
     }
