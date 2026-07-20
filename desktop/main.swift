@@ -427,6 +427,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
                 case .suppress:
                     break
                 }
+                // The welcome window is asking about these providers right now,
+                // so record them as seen. Without this baseline they would all
+                // look new on the next launch.
+                self.seedKnownWatchableProviders()
             } else {
                 if case .advanceSetupWindow = onboarding {
                     // Preserved configuration from an earlier install: nothing

@@ -267,9 +267,11 @@
 "preferences.notify.macos.desc" = "Show macOS Notification Center alerts on quota reset, credit grants, and expiry warnings.";
 "notification.quota_reset.title" = "Quota Reset";
 "notification.credit_grant.title" = "Credit Grant";
-"notification.reminder_coverage.title" = "Weekly reminders are off for a new agent";
-"notification.reminder_coverage.body" = "%@ now reports quota, but its weekly reset reminder is off. Turn it on?";
-"notification.reminder_coverage.body_many" = "%@ now report quota, but their weekly reset reminders are off. Turn them on?";
+"notification.reminder_coverage.title" = "Weekly reminders are off for %@";
+"notification.reminder_coverage.title_many" = "Weekly reminders are off for some agents";
+"notification.reminder_coverage.body" = "You won't be notified when its weekly quota window resets.";
+"notification.reminder_coverage.body_many" = "You won't be notified when the weekly quota windows for %@ reset.";
+"list.separator" = ", ";
 "notification.reminder_coverage.enable" = "Turn on";
 "notification.credit_expiry.title" = "Credit Expiring";
 "preferences.credit_grant.title" = "Notify on credit grant";

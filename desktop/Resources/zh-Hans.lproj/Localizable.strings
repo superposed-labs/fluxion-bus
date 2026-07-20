@@ -264,9 +264,11 @@
 "preferences.notify.macos.desc" = "配额重置、点数发放和过期预警时在 macOS 通知中心显示提醒。";
 "notification.quota_reset.title" = "配额重置";
 "notification.credit_grant.title" = "点数发放";
-"notification.reminder_coverage.title" = "新 Agent 尚未开启每周提醒";
-"notification.reminder_coverage.body" = "%@ 已开始上报配额，但它的每周重置提醒是关闭的。要开启吗？";
-"notification.reminder_coverage.body_many" = "%@ 已开始上报配额，但它们的每周重置提醒都是关闭的。要开启吗？";
+"notification.reminder_coverage.title" = "%@ 尚未开启每周提醒";
+"notification.reminder_coverage.title_many" = "有 Agent 尚未开启每周提醒";
+"notification.reminder_coverage.body" = "它的配额窗口每周重置时，不会通知你。";
+"notification.reminder_coverage.body_many" = "%@ 的配额窗口每周重置时，不会通知你。";
+"list.separator" = "、";
 "notification.reminder_coverage.enable" = "开启";
 "notification.credit_expiry.title" = "点数即将过期";
 "preferences.credit_grant.title" = "点数发放时通知";

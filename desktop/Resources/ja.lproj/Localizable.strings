@@ -264,9 +264,11 @@
 "preferences.notify.macos.desc" = "クォータリセット・クレジット付与・失効警告時に macOS 通知センターへアラートを表示します。";
 "notification.quota_reset.title" = "クォータリセット";
 "notification.credit_grant.title" = "クレジット付与";
-"notification.reminder_coverage.title" = "新しいエージェントの週次通知がオフです";
-"notification.reminder_coverage.body" = "%@ がクォータの報告を開始しましたが、週次リセット通知はオフのままです。オンにしますか？";
-"notification.reminder_coverage.body_many" = "%@ がクォータの報告を開始しましたが、週次リセット通知はいずれもオフのままです。オンにしますか？";
+"notification.reminder_coverage.title" = "%@ の週次通知はオフです";
+"notification.reminder_coverage.title_many" = "一部のエージェントの週次通知がオフです";
+"notification.reminder_coverage.body" = "週次クォータ枠がリセットされても通知されません。";
+"notification.reminder_coverage.body_many" = "%@ の週次クォータ枠がリセットされても通知されません。";
+"list.separator" = "、";
 "notification.reminder_coverage.enable" = "オンにする";
 "notification.credit_expiry.title" = "クレジット失効間近";
 "preferences.credit_grant.title" = "クレジット付与時に通知";
