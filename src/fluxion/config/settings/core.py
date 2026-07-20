@@ -103,8 +103,6 @@ class Settings:
     codex_usage_mode: str
     codex_usage_base_url: str
     codex_history_reconciliation: bool
-    antigravity_usage_models: tuple[str, ...]
-    antigravity_group_models: bool
     scheduler_enabled: bool
     scheduler_tick_sec: int
     menu_slack_notify_refresh: bool
@@ -347,14 +345,6 @@ class Settings:
             codex_usage_base_url=os.environ.get("FLUXION_CODEX_USAGE_BASE_URL", "").strip(),
             codex_history_reconciliation=_parse_bool(
                 os.environ.get("FLUXION_CODEX_HISTORY_RECONCILIATION"), default=False
-            ),
-            antigravity_usage_models=tuple(
-                m.strip()
-                for m in os.environ.get("FLUXION_ANTIGRAVITY_USAGE_MODELS", "").split(",")
-                if m.strip()
-            ),
-            antigravity_group_models=_parse_bool(
-                os.environ.get("FLUXION_ANTIGRAVITY_GROUP_MODELS"), default=True
             ),
             scheduler_enabled=_parse_bool(
                 os.environ.get("FLUXION_SCHEDULER_ENABLED"), default=True

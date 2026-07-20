@@ -50,10 +50,7 @@ def detect_all(settings: Settings) -> dict[str, Any]:
         claude_auto_refresh=False,
         codex_usage_mode=settings.codex_usage_mode,
         codex_usage_base_url=settings.codex_usage_base_url,
-        antigravity_group_models=settings.antigravity_group_models,
     )
-    if settings.antigravity_usage_models:
-        probe_config.antigravity_models = settings.antigravity_usage_models
 
     executors = {
         "claude": asdict(detect_executor("claude", configured_command=settings.claude_command)),

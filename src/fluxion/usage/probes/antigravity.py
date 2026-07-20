@@ -53,68 +53,67 @@ class AntigravityUsageProbe:
     def probe(self) -> ProviderUsage:
         fallback_reason = ""
 
-        # 1. Prioritize direct cloud API query (only if grouping is enabled)
-        if self._config.antigravity_group_models:
-            token = self._read_active_token()
-            if token:
-                try:
-                    result = self._query_cloud_api(token)
-                    if result is not None:
-                        summary, assist = result
-                        windows = mapping.map_quota_summary(summary)
-                        if any(window.used_percent is not None for window in windows):
-                            paid_tier = assist.get("paidTier")
-                            plan = (
-                                str(paid_tier.get("name") or "Pro")
-                                if isinstance(paid_tier, dict)
-                                else "Pro"
-                            )
-                            if isinstance(paid_tier, dict):
-                                for credit in paid_tier.get("availableCredits") or []:
-                                    if not isinstance(credit, dict):
-                                        continue
-                                    amount = mapping.num(credit.get("creditAmount"))
-                                    if amount is not None:
-                                        windows.append(
-                                            UsageWindow(
-                                                key="ai_credits",
-                                                label="AI Credits",
-                                                remaining=amount,
-                                            )
-                                        )
-                                        break
-                            return ProviderUsage(
-                                provider="antigravity",
-                                status=STATUS_OK,
-                                account_label=plan,
-                                windows=windows,
-                                fetched_at=_now_iso(),
-                                detail="live",
-                                source="cloud",
-                            )
-                        logger.warning(
-                            "Antigravity cloud quota response contained no recognized "
-                            "quota buckets; keys=%s; falling back to sidecar",
-                            sorted(summary),
+        # 1. Prioritize direct cloud API query
+        token = self._read_active_token()
+        if token:
+            try:
+                result = self._query_cloud_api(token)
+                if result is not None:
+                    summary, assist = result
+                    windows = mapping.map_quota_summary(summary)
+                    if any(window.used_percent is not None for window in windows):
+                        paid_tier = assist.get("paidTier")
+                        plan = (
+                            str(paid_tier.get("name") or "Pro")
+                            if isinstance(paid_tier, dict)
+                            else "Pro"
                         )
-                        fallback_reason = "cloud response contained no recognized quota buckets"
-                except urllib.error.HTTPError as exc:
-                    if exc.code == 401:
-                        fallback_reason = "cloud HTTP 401"
-                    else:
-                        # If it's a transient network/HTTP error other than 401, return error
-                        # instead of spawning sidecar to avoid spamming subprocesses when offline
+                        if isinstance(paid_tier, dict):
+                            for credit in paid_tier.get("availableCredits") or []:
+                                if not isinstance(credit, dict):
+                                    continue
+                                amount = mapping.num(credit.get("creditAmount"))
+                                if amount is not None:
+                                    windows.append(
+                                        UsageWindow(
+                                            key="ai_credits",
+                                            label="AI Credits",
+                                            remaining=amount,
+                                        )
+                                    )
+                                    break
                         return ProviderUsage(
                             provider="antigravity",
-                            status=STATUS_ERROR,
+                            status=STATUS_OK,
+                            account_label=plan,
+                            windows=windows,
                             fetched_at=_now_iso(),
-                            detail=f"Cloud API HTTP error {exc.code}",
+                            detail="live",
+                            source="cloud",
                         )
-                except Exception as exc:
-                    # Other transient network exceptions (socket timeout etc), proceed to fallback
-                    fallback_reason = f"cloud request failed: {type(exc).__name__}"
-            else:
-                fallback_reason = "cloud token unavailable"
+                    logger.warning(
+                        "Antigravity cloud quota response contained no recognized "
+                        "quota buckets; keys=%s; falling back to sidecar",
+                        sorted(summary),
+                    )
+                    fallback_reason = "cloud response contained no recognized quota buckets"
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    fallback_reason = "cloud HTTP 401"
+                else:
+                    # If it's a transient network/HTTP error other than 401, return error
+                    # instead of spawning sidecar to avoid spamming subprocesses when offline
+                    return ProviderUsage(
+                        provider="antigravity",
+                        status=STATUS_ERROR,
+                        fetched_at=_now_iso(),
+                        detail=f"Cloud API HTTP error {exc.code}",
+                    )
+            except Exception as exc:
+                # Other transient network exceptions (socket timeout etc), proceed to fallback
+                fallback_reason = f"cloud request failed: {type(exc).__name__}"
+        else:
+            fallback_reason = "cloud token unavailable"
 
         # 2. Fallback to local sidecar query (spawns it on-demand if closed)
         discovered = self._discover()
@@ -150,13 +149,11 @@ class AntigravityUsageProbe:
                 except Exception as exc:  # noqa: BLE001 - wrong port/non-HTTP, try next
                     last_err = str(exc)
                     continue
-                windows, plan = mapping.map_user_status(data, self._config)
+                windows, plan = mapping.map_user_status(data)
                 try:
                     quota_summary = self._get_quota_summary(port, csrf)
                     summary_windows = mapping.map_quota_summary(quota_summary)
-                    windows = mapping.merge_sidecar_summary(
-                        windows, summary_windows, self._config.antigravity_group_models
-                    )
+                    windows = mapping.merge_sidecar_summary(windows, summary_windows)
                 except Exception as exc:  # noqa: BLE001 - older sidecars lack this RPC
                     logger.debug("Antigravity sidecar quota summary unavailable: %s", exc)
                 if windows:

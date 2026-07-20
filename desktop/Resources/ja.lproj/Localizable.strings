@@ -238,12 +238,6 @@
 "preferences.keychain.desc" = "macOS キーチェーンから Claude トークンを自動的に読み取ります。";
 "preferences.claude_refresh.title" = "Claude Token 自動更新";
 "preferences.claude_refresh.desc" = "期限切れの Claude クォータ認証情報を更新して書き戻します。";
-"preferences.group_antigravity.title" = "Antigravity モデルをグループ化";
-"preferences.group_antigravity.desc" = "モデルを Gemini と外部モデルのカテゴリにまとめます。";
-"preferences.group_antigravity.required" = "必須（個別モデル詳細には Antigravity app が必要）。";
-"preferences.models.placeholder" = "Gemini, Sonnet, Opus";
-"preferences.models.title" = "Antigravity モデル候補";
-"preferences.models.desc" = "カンマ区切りのホワイトリスト。例: Gemini, Sonnet。";
 "preferences.section.api_models" = "API とモデル";
 "preferences.projects.title" = "サブエージェントプロジェクト";
 

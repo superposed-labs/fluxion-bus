@@ -238,12 +238,6 @@
 "preferences.keychain.desc" = "自动从 macOS 钥匙串读取 Claude token。";
 "preferences.claude_refresh.title" = "自动刷新 Claude Token";
 "preferences.claude_refresh.desc" = "刷新过期的 Claude 配额凭据并写回。";
-"preferences.group_antigravity.title" = "合并 Antigravity 模型";
-"preferences.group_antigravity.desc" = "把模型合并到 Gemini 和外部模型分类。";
-"preferences.group_antigravity.required" = "必需（单个模型详情需要 Antigravity app）。";
-"preferences.models.placeholder" = "Gemini, Sonnet, Opus";
-"preferences.models.title" = "Antigravity 模型白名单";
-"preferences.models.desc" = "逗号分隔的白名单，例如 Gemini, Sonnet。";
 "preferences.section.api_models" = "API 与模型";
 "preferences.projects.title" = "子 Agent 项目";
 
