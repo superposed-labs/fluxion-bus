@@ -179,6 +179,7 @@ swiftc -O \
     desktop/AppDelegate/AppDelegate+Services.swift \
     desktop/AppDelegate/AppDelegate+Polling.swift \
     desktop/AppDelegate/AppDelegate+Rendering.swift \
+    desktop/AppDelegate/AppDelegate+ReminderPrompt.swift \
     desktop/UI/Localization.swift \
     desktop/UI/UpdaterController.swift \
     desktop/UI/QuotaFormatter.swift \

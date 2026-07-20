@@ -267,6 +267,10 @@
 "preferences.notify.macos.desc" = "Show macOS Notification Center alerts on quota reset, credit grants, and expiry warnings.";
 "notification.quota_reset.title" = "Quota Reset";
 "notification.credit_grant.title" = "Credit Grant";
+"notification.reminder_coverage.title" = "Alert you when %@ weekly quota resets?";
+"notification.reminder_coverage.body" = "You'll know the moment the quota is usable again, including off-schedule resets.";
+"list.separator" = ", ";
+"notification.reminder_coverage.enable" = "Turn on";
 "notification.credit_expiry.title" = "Credit Expiring";
 "preferences.credit_grant.title" = "Notify on credit grant";
 "preferences.credit_grant.desc" = "Codex hands out reset credits irregularly — ping the moment new ones land, via your Reset Notification channels above. Codex only.";
@@ -436,9 +440,9 @@
 "welcome.keychain.title" = "Show Claude Code usage";
 "welcome.keychain.desc" = "Claude Code keeps its login in the macOS Keychain. Allow Fluxion to read it, show your quota, and refresh the credential when needed.";
 "welcome.section.alerts" = "Quota Alerts";
-"welcome.weekly.title" = "Weekly reset reminders";
-"welcome.weekly.desc" = "Get a macOS notification when a provider's weekly quota window resets. You'll be asked for notification permission.";
-"welcome.weekly.desc.unavailable" = "Available once an agent with usage reporting is detected — there is no quota window to watch yet. You can turn this on later in Preferences.";
+"welcome.weekly.title" = "Weekly quota reset alerts";
+"welcome.weekly.desc" = "Get a macOS notification the moment a weekly quota is usable again, including off-schedule resets. You'll be asked for notification permission.";
+"welcome.weekly.desc.unavailable" = "Available once an agent with usage reporting is detected — there is no weekly quota to watch yet. You can turn this on later in Preferences.";
 "welcome.section.display" = "Display";
 "welcome.display.title" = "Display style";
 "welcome.display.desc" = "Native blends into the menu bar; Rich adds colors and progress bars; Notch shows a Dynamic Island-style overlay.";
