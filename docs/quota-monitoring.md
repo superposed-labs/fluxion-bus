@@ -53,10 +53,11 @@ FLUXION_CODEX_USAGE_MODE=auto  # auto | live | logs
 
 ### Antigravity
 
-Fluxion reads AI credits and per-model quota from Antigravity's local
-`language_server` sidecar. Live quota is available only while the Antigravity
-IDE/sidecar is running. Choose surfaced models with
-`FLUXION_ANTIGRAVITY_USAGE_MODELS`.
+Fluxion reads AI credits and quota from Antigravity's cloud API, falling back
+to the local `language_server` sidecar when no token is available or the cloud
+response is unusable. The sidecar path needs the Antigravity IDE running.
+Quota is reported the way Antigravity itself groups it — Gemini and External
+Models — rather than per individual model.
 
 ## Web console
 

@@ -44,8 +44,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var defaultExecutorPopup: NSPopUpButton!
     var checkKeychain: NSSwitch!
     var checkClaudeAutoRefresh: NSSwitch!
-    var checkGroupAntigravity: NSSwitch!
-    var modelsEntry: NSTextField!
     var checkWeb: NSSwitch!
     var checkScheduler: NSSwitch!
     var checkSlack: NSSwitch!
@@ -163,8 +161,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     // Visibility containers for dynamic rendering
     var keychainRow: CardRow!
     var claudeAutoRefreshRow: CardRow!
-    var groupAntigravityRow: CardRow!
-    var modelsRow: CardRowStacked!
     var appearanceRow: CardRowStacked!
     var silentStyleRow: CardRow!
     var gaugeStyleRow: CardRow!
@@ -446,8 +442,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     // Save when user ends editing (loses focus or presses Enter)
     func controlTextDidEndEditing(_ obj: Notification) {
         if let textField = obj.object as? NSTextField {
-            if textField == modelsEntry ||
-               textField == slackBotTokenEntry ||
+            if textField == slackBotTokenEntry ||
                textField == slackAppTokenEntry ||
                textField == slackSigningSecretEntry ||
                textField == slackAllowedUsersEntry ||
@@ -546,18 +541,10 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     func updateVisibility(animated: Bool) {
         let targetKeychainHidden = (checkClaude.state == .off)
         let targetClaudeAutoRefreshHidden = (checkClaude.state == .off)
-        let targetAntigravityHidden = (checkAntigravity.state == .off)
-
-        let targetGroupAntigravityHidden = targetAntigravityHidden
-        let targetModelsHidden = targetAntigravityHidden || (checkGroupAntigravity.state == .on)
-        let targetSectionHidden = targetKeychainHidden && targetClaudeAutoRefreshHidden && targetAntigravityHidden
+        let targetSectionHidden = targetKeychainHidden && targetClaudeAutoRefreshHidden
 
         // Separators: hide the separator for whichever row becomes first visible.
         claudeAutoRefreshRow.separator.isHidden = targetKeychainHidden
-        groupAntigravityRow.separator.isHidden = targetKeychainHidden && targetClaudeAutoRefreshHidden
-
-        // Separator of modelsRow: hide if every row before it is hidden.
-        modelsRow.separator.isHidden = targetKeychainHidden && targetClaudeAutoRefreshHidden && targetGroupAntigravityHidden
 
         let targetNotchSilentStyleHidden = (displayStyleSegmented.selectedSegment == 0)
         let activeProviderCount = [checkClaude, checkCodex, checkAntigravity]
@@ -598,8 +585,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
 
                 self.keychainRow.isHidden = targetKeychainHidden
                 self.claudeAutoRefreshRow.isHidden = targetClaudeAutoRefreshHidden
-                self.groupAntigravityRow.isHidden = targetGroupAntigravityHidden
-                self.modelsRow.isHidden = targetModelsHidden
                 self.appearanceRow.isHidden = targetAppearanceHidden
                 self.silentStyleRow.isHidden = targetNotchSilentStyleHidden
                 self.gaugeStyleRow.isHidden = targetNotchSilentStyleHidden
@@ -670,8 +655,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         } else {
             self.keychainRow.isHidden = targetKeychainHidden
             self.claudeAutoRefreshRow.isHidden = targetClaudeAutoRefreshHidden
-            self.groupAntigravityRow.isHidden = targetGroupAntigravityHidden
-            self.modelsRow.isHidden = targetModelsHidden
             self.appearanceRow.isHidden = targetAppearanceHidden
             self.silentStyleRow.isHidden = targetNotchSilentStyleHidden
             self.gaugeStyleRow.isHidden = targetNotchSilentStyleHidden
@@ -930,10 +913,8 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         updates["FLUXION_CLAUDE_USAGE_AUTO_REFRESH"] = checkClaudeAutoRefresh.state == .on ? "true" : "false"
 
         // Group Models
-        updates["FLUXION_ANTIGRAVITY_GROUP_MODELS"] = checkGroupAntigravity.state == .on ? "true" : "false"
 
         // Models shortlist
-        updates["FLUXION_ANTIGRAVITY_USAGE_MODELS"] = modelsEntry.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Autostart Services
         updates["FLUXION_MENU_AUTOSTART_WEB"] = checkWeb.state == .on ? "true" : "false"

@@ -279,10 +279,7 @@ def usage_service_from_settings(settings: Settings) -> UsageService:
         claude_auto_refresh=settings.claude_usage_auto_refresh,
         codex_usage_mode=settings.codex_usage_mode,
         codex_usage_base_url=settings.codex_usage_base_url,
-        antigravity_group_models=settings.antigravity_group_models,
     )
-    if settings.antigravity_usage_models:
-        probe_config.antigravity_models = settings.antigravity_usage_models
     return UsageService(
         providers=settings.usage_providers,
         probe_config=probe_config,

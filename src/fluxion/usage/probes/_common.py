@@ -81,13 +81,6 @@ class ProbeConfig:
     antigravity_host: str = "127.0.0.1"
     antigravity_port: int = 0  # 0 → auto-discover from the running sidecar
     antigravity_csrf_token: str = ""  # "" → auto-discover from the process args
-    # Which models to surface (label substrings). Empty → show all.
-    antigravity_models: tuple[str, ...] = (
-        "Gemini 3.1 Pro (High)",
-        "Claude Opus 4.6",
-        "Claude Sonnet 4.6",
-    )
-    antigravity_group_models: bool = False
     antigravity_sidecar_path: Path = field(
         default_factory=lambda: Path(
             "/Applications/Antigravity.app/Contents/Resources/bin/language_server"

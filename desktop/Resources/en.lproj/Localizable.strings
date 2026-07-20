@@ -237,12 +237,6 @@
 "preferences.keychain.desc" = "Read Claude token from the macOS Keychain automatically.";
 "preferences.claude_refresh.title" = "Auto Refresh Claude Token";
 "preferences.claude_refresh.desc" = "Refresh expired Claude quota credentials and write them back.";
-"preferences.group_antigravity.title" = "Group Antigravity Models";
-"preferences.group_antigravity.desc" = "Combine models into Gemini and External Models categories.";
-"preferences.group_antigravity.required" = "Required (individual model details require Antigravity app).";
-"preferences.models.placeholder" = "Gemini, Sonnet, Opus";
-"preferences.models.title" = "Antigravity Models Shortlist";
-"preferences.models.desc" = "Comma-separated whitelist, e.g. Gemini, Sonnet.";
 "preferences.section.api_models" = "API & Models";
 "preferences.projects.title" = "Sub-agent Projects";
 

@@ -841,43 +841,9 @@ extension PreferencesWindow {
             isFirst: false
         )
 
-        checkGroupAntigravity = NSSwitch()
-        let sidecarExists = FileManager.default.fileExists(atPath: "/Applications/Antigravity.app/Contents/Resources/bin/language_server")
-        if !sidecarExists {
-            checkGroupAntigravity.state = .on
-            checkGroupAntigravity.isEnabled = false
-        } else {
-            checkGroupAntigravity.state = (appDelegate.envVals["FLUXION_ANTIGRAVITY_GROUP_MODELS"] ?? "true").lowercased() == "true" ? .on : .off
-            checkGroupAntigravity.isEnabled = true
-        }
-        checkGroupAntigravity.target = self
-        checkGroupAntigravity.action = #selector(autosave)
-        let groupAntigravityRow = CardRow(
-            title: L10n.tr("preferences.group_antigravity.title"),
-            desc: sidecarExists ? L10n.tr("preferences.group_antigravity.desc") : L10n.tr("preferences.group_antigravity.required"),
-            control: checkGroupAntigravity,
-            isFirst: false
-        )
-
-        modelsEntry = NSTextField()
-        modelsEntry.stringValue = appDelegate.envVals["FLUXION_ANTIGRAVITY_USAGE_MODELS"] ?? ""
-        modelsEntry.placeholderString = L10n.tr("preferences.models.placeholder")
-        modelsEntry.bezelStyle = .roundedBezel
-        // Saved via the text-field delegate (controlTextDidEndEditing) only, to
-        // avoid the double-fire of both an action and the delegate on Return.
-        modelsEntry.delegate = self
-        let modelsRow = CardRowStacked(
-            title: L10n.tr("preferences.models.title"),
-            desc: L10n.tr("preferences.models.desc"),
-            control: modelsEntry,
-            isFirst: false
-        )
-
         self.keychainRow = keychainRow
         self.claudeAutoRefreshRow = claudeAutoRefreshRow
-        self.groupAntigravityRow = groupAntigravityRow
-        self.modelsRow = modelsRow
-        self.apiModelsSection = addSection(title: L10n.tr("preferences.section.api_models"), rows: [keychainRow, claudeAutoRefreshRow, groupAntigravityRow, modelsRow], into: documentStack)
+        self.apiModelsSection = addSection(title: L10n.tr("preferences.section.api_models"), rows: [keychainRow, claudeAutoRefreshRow], into: documentStack)
     }
 
     // MARK: - Section 4b: Sub-agent Projects

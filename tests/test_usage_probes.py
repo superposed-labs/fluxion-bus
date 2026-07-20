@@ -645,36 +645,12 @@ _ANTIGRAVITY_STATUS = {
 }
 
 
-def test_antigravity_maps_credits_and_models(monkeypatch):
+def test_antigravity_maps_credits_and_grouped_models(monkeypatch):
     monkeypatch.setattr(AntigravityUsageProbe, "_discover", lambda self: ("csrf", [1234]))
     monkeypatch.setattr(
         AntigravityUsageProbe, "_get_user_status", lambda self, port, csrf: _ANTIGRAVITY_STATUS
     )
-    usage = AntigravityUsageProbe(ProbeConfig()).probe()
-
-    assert usage.status == STATUS_OK
-    assert usage.account_label == "Pro"
-    by_key = {w.key: w for w in usage.windows}
-
-    # AI Credits pool — a raw balance, no percent/reset.
-    assert by_key["ai_credits"].remaining == 1000.0
-    assert by_key["ai_credits"].used_percent is None
-    assert by_key["ai_credits"].total is None
-
-    # Per-model time-based quota (remainingFraction → used%, resetTime → reset).
-    assert by_key["Gemini 3.1 Pro (High)"].used_percent == 0.0
-    assert by_key["Gemini 3.1 Pro (High)"].resets_at == "2026-06-02T11:08:52Z"
-    assert by_key["Claude Opus 4.6 (Thinking)"].used_percent == 50.0
-    # GPT-OSS is not in the default premium shortlist.
-    assert "GPT-OSS 120B (Medium)" not in by_key
-
-
-def test_antigravity_grouping_mode(monkeypatch):
-    monkeypatch.setattr(AntigravityUsageProbe, "_discover", lambda self: ("csrf", [1234]))
-    monkeypatch.setattr(
-        AntigravityUsageProbe, "_get_user_status", lambda self, port, csrf: _ANTIGRAVITY_STATUS
-    )
-    cfg = ProbeConfig(antigravity_group_models=True)
+    cfg = ProbeConfig()
     usage = AntigravityUsageProbe(cfg).probe()
 
     assert usage.status == STATUS_OK
@@ -743,7 +719,7 @@ def test_antigravity_sidecar_quota_summary_adds_weekly_windows(monkeypatch):
         },
     )
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     assert usage.source == "sidecar"
     by_key = {window.key: window for window in usage.windows}
@@ -754,38 +730,6 @@ def test_antigravity_sidecar_quota_summary_adds_weekly_windows(monkeypatch):
     assert by_key["External Models (Weekly)"].used_percent == 10.0
     assert "Gemini" not in by_key
     assert "External Models" not in by_key
-
-
-def test_antigravity_sidecar_quota_summary_keeps_only_weekly_in_individual_mode(monkeypatch):
-    monkeypatch.setattr(AntigravityUsageProbe, "_discover", lambda self: ("csrf", [1234]))
-    monkeypatch.setattr(
-        AntigravityUsageProbe, "_get_user_status", lambda self, port, csrf: _ANTIGRAVITY_STATUS
-    )
-    monkeypatch.setattr(
-        AntigravityUsageProbe,
-        "_get_quota_summary",
-        lambda self, port, csrf: {
-            "buckets": [
-                {
-                    "bucketId": "gemini-weekly",
-                    "window": "weekly",
-                    "remainingFraction": 0.75,
-                },
-                {
-                    "bucketId": "gemini-5h",
-                    "window": "5h",
-                    "remainingFraction": 0.5,
-                },
-            ]
-        },
-    )
-
-    usage = AntigravityUsageProbe(ProbeConfig()).probe()
-
-    by_key = {window.key: window for window in usage.windows}
-    assert "Gemini (Weekly)" in by_key
-    assert "Gemini (5h)" not in by_key
-    assert "Gemini 3.1 Pro (High)" in by_key
 
 
 def test_antigravity_old_sidecar_without_quota_summary_still_works(monkeypatch):
@@ -801,7 +745,7 @@ def test_antigravity_old_sidecar_without_quota_summary_still_works(monkeypatch):
         ),
     )
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     by_key = {window.key: window for window in usage.windows}
     assert "Gemini" in by_key
@@ -817,7 +761,7 @@ def test_antigravity_grouping_treats_reset_only_gemini_as_exhausted(monkeypatch)
     monkeypatch.setattr(AntigravityUsageProbe, "_discover", lambda self: ("csrf", [1234]))
     monkeypatch.setattr(AntigravityUsageProbe, "_get_user_status", lambda self, port, csrf: payload)
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     by_key = {w.key: w for w in usage.windows}
     assert by_key["Gemini"].used_percent == 100.0
@@ -932,7 +876,7 @@ def test_antigravity_cloud_api_success(monkeypatch):
 
     monkeypatch.setattr(AntigravityUsageProbe, "_query_cloud_api", mock_query_cloud_api)
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     assert usage.status == STATUS_OK
     assert usage.account_label == "Google AI Pro"
@@ -986,7 +930,7 @@ def test_antigravity_cloud_api_dedupes_starter_repeated_buckets(monkeypatch):
         ),
     )
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     assert usage.status == STATUS_OK
     assert usage.account_label == "Antigravity Starter Quota"
@@ -1018,7 +962,7 @@ def test_antigravity_cloud_api_supports_legacy_top_level_buckets(monkeypatch):
         ),
     )
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     assert usage.status == STATUS_OK
     assert usage.windows[0].key == "Gemini (5h)"
@@ -1049,7 +993,7 @@ def test_antigravity_cloud_api_without_quota_buckets_falls_back_to_sidecar(monke
         },
     )
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     assert usage.status == STATUS_OK
     assert usage.account_label == "Google AI Pro"
@@ -1082,7 +1026,7 @@ def test_antigravity_cloud_api_401_fallback_to_sidecar(monkeypatch):
 
     monkeypatch.setattr(AntigravityUsageProbe, "_get_user_status", mock_get_user_status)
 
-    usage = AntigravityUsageProbe(ProbeConfig(antigravity_group_models=True)).probe()
+    usage = AntigravityUsageProbe(ProbeConfig()).probe()
 
     # Verify we fell back to the sidecar response
     assert usage.status == STATUS_OK
