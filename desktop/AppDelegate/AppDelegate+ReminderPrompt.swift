@@ -103,21 +103,20 @@ extension AppDelegate {
     }
 
     private func deliverReminderCoveragePrompt(for providers: [String]) {
-        // Named in the title, consequence in the body. Deliberately never says
-        // "new agent" to the user: what it can prove is that this is the first
-        // time the provider has been seen, which is not the same claim.
+        // An offer in the title, what the user gets in the body. Two things it
+        // deliberately does not say: that the agent is "new" (what this can
+        // prove is a first sighting, not the same claim), and "weekly alert"
+        // — detection is edge-driven, never scheduled, so "weekly" describes
+        // the quota window and off-schedule resets are caught like any other.
+        //
+        // Naming the providers in the title keeps one phrasing for any count;
+        // there are at most three.
         let names = providers.map { PROVIDER_NAMES[$0] ?? $0.capitalized }
         let joined = names.joined(separator: L10n.tr("list.separator"))
-        let title = names.count == 1
-            ? L10n.tr("notification.reminder_coverage.title", names[0])
-            : L10n.tr("notification.reminder_coverage.title_many")
-        let body = names.count == 1
-            ? L10n.tr("notification.reminder_coverage.body")
-            : L10n.tr("notification.reminder_coverage.body_many", joined)
 
         deliverLocalNotification(
-            title: title,
-            body: body,
+            title: L10n.tr("notification.reminder_coverage.title", joined),
+            body: L10n.tr("notification.reminder_coverage.body"),
             userInfo: ["reminder_providers": providers],
             categoryIdentifier: AppDelegate.reminderPromptCategoryId
         )

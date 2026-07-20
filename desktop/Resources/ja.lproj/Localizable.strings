@@ -264,10 +264,8 @@
 "preferences.notify.macos.desc" = "クォータリセット・クレジット付与・失効警告時に macOS 通知センターへアラートを表示します。";
 "notification.quota_reset.title" = "クォータリセット";
 "notification.credit_grant.title" = "クレジット付与";
-"notification.reminder_coverage.title" = "%@ の週次通知はオフです";
-"notification.reminder_coverage.title_many" = "一部のエージェントの週次通知がオフです";
-"notification.reminder_coverage.body" = "週次クォータ枠がリセットされても通知されません。";
-"notification.reminder_coverage.body_many" = "%@ の週次クォータ枠がリセットされても通知されません。";
+"notification.reminder_coverage.title" = "%@ の週間クォータのリセットを通知しますか？";
+"notification.reminder_coverage.body" = "クォータが再び使えるようになった時点で通知します。予定外のリセットも見逃しません。";
 "list.separator" = "、";
 "notification.reminder_coverage.enable" = "オンにする";
 "notification.credit_expiry.title" = "クレジット失効間近";
@@ -439,9 +437,9 @@
 "welcome.keychain.title" = "Claude Code の使用量を表示";
 "welcome.keychain.desc" = "Claude Code のログイン情報は macOS キーチェーンに保存されています。Fluxion に読み取りを許可すると、クォータを表示し、必要に応じて認証情報を更新します。";
 "welcome.section.alerts" = "クォータ通知";
-"welcome.weekly.title" = "週次リセット通知";
-"welcome.weekly.desc" = "各プロバイダーの週次クォータがリセットされたとき macOS 通知を受け取ります。通知の許可を求められます。";
-"welcome.weekly.desc.unavailable" = "監視できるクォータ枠がまだありません。使用量を報告できるエージェントが検出されると有効になります。後から環境設定でオンにもできます。";
+"welcome.weekly.title" = "週間クォータのリセット通知";
+"welcome.weekly.desc" = "週間クォータが再び使えるようになった時点で macOS 通知を受け取ります。予定外のリセットも見逃しません。通知の許可を求められます。";
+"welcome.weekly.desc.unavailable" = "監視できる週間クォータがまだありません。使用量を報告できるエージェントが検出されると有効になります。後から環境設定でオンにもできます。";
 "welcome.section.display" = "表示";
 "welcome.display.title" = "表示スタイル";
 "welcome.display.desc" = "ネイティブはメニューバーに溶け込み、リッチは色とプログレスバー付き、ノッチは Dynamic Island 風のオーバーレイ表示です。";

@@ -264,10 +264,8 @@
 "preferences.notify.macos.desc" = "配额重置、点数发放和过期预警时在 macOS 通知中心显示提醒。";
 "notification.quota_reset.title" = "配额重置";
 "notification.credit_grant.title" = "点数发放";
-"notification.reminder_coverage.title" = "%@ 尚未开启每周提醒";
-"notification.reminder_coverage.title_many" = "有 Agent 尚未开启每周提醒";
-"notification.reminder_coverage.body" = "它的配额窗口每周重置时，不会通知你。";
-"notification.reminder_coverage.body_many" = "%@ 的配额窗口每周重置时，不会通知你。";
+"notification.reminder_coverage.title" = "要为 %@ 开启周额度重置提醒吗？";
+"notification.reminder_coverage.body" = "额度恢复可用时通知你，突发重置也能第一时间知道。";
 "list.separator" = "、";
 "notification.reminder_coverage.enable" = "开启";
 "notification.credit_expiry.title" = "点数即将过期";
@@ -439,9 +437,9 @@
 "welcome.keychain.title" = "显示 Claude Code 用量";
 "welcome.keychain.desc" = "Claude Code 的登录凭据保存在 macOS 钥匙串中。允许 Fluxion 读取后，可显示配额，并在需要时刷新凭据。";
 "welcome.section.alerts" = "配额提醒";
-"welcome.weekly.title" = "每周重置提醒";
-"welcome.weekly.desc" = "当某个服务的每周配额窗口重置时收到 macOS 通知。将会请求通知权限。";
-"welcome.weekly.desc.unavailable" = "暂无可监控的配额窗口，检测到可上报用量的 Agent 后即可开启。之后也可以在偏好设置中打开。";
+"welcome.weekly.title" = "周额度重置提醒";
+"welcome.weekly.desc" = "周额度恢复可用时收到 macOS 通知，突发重置也能第一时间知道。首次开启需要允许通知权限。";
+"welcome.weekly.desc.unavailable" = "暂无可监控的周额度，检测到可上报用量的 Agent 后即可开启。之后也可以在偏好设置中打开。";
 "welcome.section.display" = "显示";
 "welcome.display.title" = "显示样式";
 "welcome.display.desc" = "原生样式与菜单栏融为一体；增强样式带颜色和进度条；刘海样式以灵动岛形式悬浮显示。";
