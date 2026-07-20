@@ -9,6 +9,35 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-07-20
+
+### Added
+
+- **Reminder coverage** — weekly quota-reset reminders default on when an
+  agent is available, and Fluxion offers to cover agents detected after
+  onboarding.
+- **First-run display choice** — fresh installs choose the best menu-bar
+  display for the active hardware: Notch on compatible built-in displays and
+  the richer panel elsewhere.
+- **Square app icon asset** — added a full-bleed icon variant for platforms
+  that require square artwork.
+
+### Changed
+
+- **Antigravity quotas** — the obsolete model-grouping toggle and related
+  environment settings have been removed; Fluxion now consistently uses the
+  upstream grouped quota view.
+- **Quota wording** — Auto-Ping, Notch, and menu surfaces now use distinct,
+  context-appropriate labels for quota windows.
+
+### Fixed
+
+- **Desktop menu** — native quota rows now retain precise column alignment
+  across English, Simplified Chinese, and Japanese.
+- **Branding** — corrected a small vertical offset in the Fluxion logo paths.
+- **Reminder setup** — the weekly reminder toggle no longer requests
+  notification permission or promises reminders when no agent can be watched.
+
 ## [1.0.7] - 2026-07-19
 
 ### Added
@@ -160,7 +189,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.4...v1.0.5
