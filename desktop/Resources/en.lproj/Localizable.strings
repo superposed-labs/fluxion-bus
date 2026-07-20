@@ -438,6 +438,7 @@
 "welcome.section.alerts" = "Quota Alerts";
 "welcome.weekly.title" = "Weekly reset reminders";
 "welcome.weekly.desc" = "Get a macOS notification when a provider's weekly quota window resets. You'll be asked for notification permission.";
+"welcome.weekly.desc.unavailable" = "Available once an agent with usage reporting is detected — there is no quota window to watch yet. You can turn this on later in Preferences.";
 "welcome.section.display" = "Display";
 "welcome.display.title" = "Display style";
 "welcome.display.desc" = "Native blends into the menu bar; Rich adds colors and progress bars; Notch shows a Dynamic Island-style overlay.";
