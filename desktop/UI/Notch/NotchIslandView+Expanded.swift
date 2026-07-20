@@ -286,6 +286,45 @@ extension NotchIslandView {
         }
     }
 
+    /// Ring subtitle for a dual-pool card: pool tag + the window the ring
+    /// meters. Naming the pool tells the reader which of the two arcs the
+    /// headline belongs to; naming the window keeps it from being confused
+    /// with that pool's weekly percent on the bar rows right below.
+    func splitRingSubtitle(for snapshot: QuotaWindowSnapshot) -> String {
+        let tag = snapshot.tag ?? splitQuotaName(for: snapshot).uppercased()
+        return L10n.tr("notch.ring.pool_five_hour", tag)
+    }
+
+    /// The 5h pool the ring headline is not bound to, for the faint line under
+    /// the subtitle. A blocked pool shows its unlock countdown instead of a
+    /// percent — its arc is a red lock track, and this is the only place the
+    /// card says when it comes back.
+    func splitRingSecondaryPool(
+        for provider: ProviderUsage,
+        state: ProviderQuotaState,
+        bound: QuotaWindowSnapshot?,
+        visual: ProviderVisual
+    ) -> RingSecondaryPool? {
+        guard let bound else { return nil }
+        let pools = antigravityFiveHourPools(for: provider).prefix(2)
+        guard pools.count >= 2, let other = pools.first(where: { $0.tag != bound.tag }) else { return nil }
+        let tag = other.tag ?? splitQuotaName(for: other).uppercased()
+        if let lock = state.blockedPools.first(where: { $0.tag == tag }) {
+            return RingSecondaryPool(
+                tag: tag,
+                value: timerString(for: lock.snapshot),
+                color: Color(NSColor.systemRed),
+                blocked: true
+            )
+        }
+        return RingSecondaryPool(
+            tag: tag,
+            value: "\(Int(other.remaining))%",
+            color: splitQuotaColor(for: other, visual: visual),
+            blocked: false
+        )
+    }
+
     func splitRingSnapshot(for provider: ProviderUsage, state: ProviderQuotaState) -> QuotaWindowSnapshot? {
         guard state.mode == .healthy else { return nil }
         let rows = antigravityFiveHourPools(for: provider)
@@ -683,7 +722,7 @@ extension NotchIslandView {
                 let ringPercentage = splitRing?.remaining ?? (state.mode == .healthy ? (state.fiveHour?.remaining ?? state.bindingRemaining) : state.bindingRemaining)
                 let ringColor = splitRing.map { splitQuotaColor(for: $0, visual: visual) } ?? Color(visual.brandColor)
                 let ringSubtitle = state.mode == .healthy
-                    ? (splitRing.map { splitQuotaName(for: $0) }
+                    ? (splitRing.map { splitRingSubtitle(for: $0) }
                         ?? (state.fiveHour.map { $0.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left") }
                             ?? (state.weekly != nil ? L10n.tr("notch.weekly_left") : L10n.tr("notch.unavailable"))))
                     : state.lockReason
@@ -702,6 +741,9 @@ extension NotchIslandView {
                         )
                     }
                     : []
+                let secondaryPool = poolArcs.isEmpty
+                    ? nil
+                    : splitRingSecondaryPool(for: p, state: state, bound: splitRing, visual: visual)
                 let reserveVisible = state.mode == .healthy && credits != nil
                 let footerVisible = reserveVisible || state.note != nil
 
@@ -719,7 +761,8 @@ extension NotchIslandView {
                         glowColor: ringColor.opacity(0.5),
                         subtitle: ringSubtitle,
                         lockCountdown: timerString(for: state.lockSnapshot),
-                        poolArcs: poolArcs
+                        poolArcs: poolArcs,
+                        secondaryPool: secondaryPool
                     )
                     .frame(height: 128, alignment: .center)
                     

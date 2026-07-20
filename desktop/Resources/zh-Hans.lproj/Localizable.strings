@@ -71,6 +71,7 @@
 "notch.weekly_cap_blocks" = "5小时额度仍有剩余，但周额度已达上限";
 "notch.five_hour_spent" = "5小时额度已用尽";
 "notch.group.external" = "外部";
+"notch.ring.pool_five_hour" = "%@ · 5H";
 "notch.pool.five_hour_spent" = "%1$@ 5小时额度已用尽 — %2$@ 可用";
 "notch.pool.weekly_cap" = "%1$@ 周额度已满 — %2$@ 可用";
 "notch.pool.all_spent" = "两个池都已用尽 — 等待重置";

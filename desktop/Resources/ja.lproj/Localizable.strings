@@ -71,6 +71,7 @@
 "notch.weekly_cap_blocks" = "5時間枠は残っていますが週次上限で利用不可";
 "notch.five_hour_spent" = "5時間枠を使用済み";
 "notch.group.external" = "外部";
+"notch.ring.pool_five_hour" = "%@ · 5H";
 "notch.pool.five_hour_spent" = "%1$@ 5時間枠を使用済み — %2$@ 利用可";
 "notch.pool.weekly_cap" = "%1$@ 週次上限に到達 — %2$@ 利用可";
 "notch.pool.all_spent" = "両プールとも使用済み — リセット待ち";

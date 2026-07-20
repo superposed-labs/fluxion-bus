@@ -71,6 +71,7 @@
 "notch.weekly_cap_blocks" = "5-hour has room — weekly cap blocks use";
 "notch.five_hour_spent" = "5-hour window spent";
 "notch.group.external" = "External";
+"notch.ring.pool_five_hour" = "%@ · 5H";
 "notch.pool.five_hour_spent" = "%1$@ 5-hour spent — %2$@ available";
 "notch.pool.weekly_cap" = "%1$@ weekly cap — %2$@ available";
 "notch.pool.all_spent" = "Both pools spent — waiting on reset";
