@@ -468,19 +468,51 @@ extension AppDelegate {
         let spinner = spinnerFrames[spinnerIndex]
         let filtered = filteredProviders()
 
-        // Calculate max name length dynamically to avoid truncation
-        var maxNameLen = 12
+        // Column geometry for the quota rows: name, bar, "NN% left", countdown.
+        //
+        // The columns are tab stops measured in points, not runs of padding
+        // spaces. Even in a monospace face the two aren't interchangeable: Menlo
+        // draws a CJK glyph at 1.66 cells, so no whole number of spaces can put
+        // a "5小时" row on the same column as an ASCII one. Tab stops sidestep
+        // the whole cell-counting question — every column lands where it was
+        // measured to land, in any language.
+        let barWidth = 10
+        let rowFont = menuRowFont
+        func textWidth(_ string: String) -> CGFloat {
+            (string as NSString).size(withAttributes: [.font: rowFont]).width
+        }
+        let cell = textWidth(" ")
+
+        // Widest name and widest countdown decide where the columns sit, so
+        // nothing is ever truncated or pushed off its stop.
+        var maxNameW = cell * 12
+        var maxResetW: CGFloat = 0
         for p in filtered where p.status == "ok" {
             if isCodexFiveHourTemporarilyUncapped(p) {
-                maxNameLen = max(maxNameLen, self.visualWidth(L10n.tr("preferences.reset.5h")))
+                maxNameW = max(maxNameW, textWidth(L10n.tr("preferences.reset.5h")))
+            }
+            if p.provider == "codex", let resets = p.resets, resets.count > 0 {
+                maxNameW = max(maxNameW, textWidth(L10n.tr("menu.resets")))
             }
             for w in p.windows {
-                let name = menuQuotaWindowLabel(w, provider: p.provider)
-                let wLen = self.visualWidth(name)
-                if wLen > maxNameLen {
-                    maxNameLen = wLen
-                }
+                maxNameW = max(maxNameW, textWidth(menuQuotaWindowLabel(w, provider: p.provider)))
+                maxResetW = max(maxResetW, textWidth(self.resetPhrase(window: w, fetchedAt: p.fetchedAt)))
             }
+        }
+
+        let barTab = cell * 2 + maxNameW + cell
+        let valueTab = barTab + textWidth(self.barStr(used: 0, width: barWidth)) + cell * 2
+        let resetTab = valueTab + textWidth("100% left") + cell * 2 + maxResetW
+        let rowStyle = NSMutableParagraphStyle()
+        rowStyle.tabStops = [
+            NSTextTab(textAlignment: .left, location: barTab, options: [:]),
+            NSTextTab(textAlignment: .left, location: valueTab, options: [:]),
+            // Right stop: countdowns hang off the row's trailing edge, so "46m"
+            // and "2d18h" end on the same column instead of starting on it.
+            NSTextTab(textAlignment: .right, location: resetTab, options: [:])
+        ]
+        func rowAttributes(_ color: NSColor) -> [NSAttributedString.Key: Any] {
+            [.font: rowFont, .foregroundColor: color, .paragraphStyle: rowStyle]
         }
 
         for p in filtered {
@@ -584,35 +616,25 @@ extension AppDelegate {
 
                 var rowStr = ""
                 if u == nil && (w.total != nil || w.remaining != nil) {
+                    // No percentage to bar: the raw balance takes the value
+                    // column, leaving the bar column empty.
+                    let amount: String
                     if let remaining = w.remaining, let tot = w.total {
-                        rowStr = "  \(displayName) · \(Int(remaining)) / \(Int(tot))"
+                        amount = "\(Int(remaining)) / \(Int(tot))"
                     } else if let remaining = w.remaining {
-                        rowStr = "  \(displayName) · \(Int(remaining))"
+                        amount = "\(Int(remaining))"
                     } else {
-                        rowStr = "  \(displayName) · —"
+                        amount = "—"
                     }
+                    rowStr = "  \(displayName)\t\t\(amount)"
                 } else {
                     let leftPct = u == nil ? "—" : "\(Int(round(100.0 - u!)))% left"
                     let reset = self.resetPhrase(window: w, fetchedAt: p.fetchedAt)
-                    let bar = self.barStr(used: u)
-
-                    // Pad displayName to align dynamically without truncation
-                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
-                    let paddedLeft = self.padString(leftPct, toVisualLength: 9)
-                    let prefix = "  \(paddedName) \(bar)  \(paddedLeft)  "
-                    let prefixWidth = 2 + maxNameLen + 1 + 10 + 2 + 9 + 2
-                    let targetWidth = maxNameLen + 34
-                    let resetWidth = self.visualWidth(reset)
-                    let paddingCount = max(0, targetWidth - prefixWidth - resetWidth)
-                    let padding = String(repeating: " ", count: paddingCount)
-                    rowStr = prefix + padding + reset
+                    let bar = self.barStr(used: u, width: barWidth)
+                    rowStr = "  \(displayName)\t\(bar)\t\(leftPct)\t\(reset)"
                 }
 
-                let attrTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                    .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                    .foregroundColor: winColor
-                ])
-                winItem.attributedTitle = attrTitle
+                winItem.attributedTitle = NSAttributedString(string: rowStr, attributes: rowAttributes(winColor))
                 menu.addItem(winItem)
             }
 
@@ -653,13 +675,15 @@ extension AppDelegate {
                     let uncappedItem = NSMenuItem()
                     uncappedItem.isEnabled = true
                     uncappedItem.image = self.imageForSymbol("infinity", color: NSColor.secondaryLabelColor)
-                    let displayName = L10n.tr("preferences.reset.5h")
-                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
-                    let rowStr = "  \(paddedName)            \(L10n.tr("menu.five_hour_temporarily_uncapped"))"
-                    uncappedItem.attributedTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                        .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                        .foregroundColor: NSColor.secondaryLabelColor
-                    ])
+                    // Skips the bar column and lands on the value column. The
+                    // compact phrase, not the full "Temporarily uncapped":
+                    // that column is only as wide as "NN% left", and the long
+                    // form would stretch the whole menu to fit one row.
+                    let rowStr = "  \(L10n.tr("preferences.reset.5h"))\t\t\(L10n.tr("notch.five_hour_uncapped"))"
+                    uncappedItem.attributedTitle = NSAttributedString(
+                        string: rowStr,
+                        attributes: rowAttributes(NSColor.secondaryLabelColor)
+                    )
                     menu.addItem(uncappedItem)
                 }
                 for w in p.windows {
@@ -677,20 +701,12 @@ extension AppDelegate {
                     let itemColor = soon ? NSColor.systemOrange : NSColor.secondaryLabelColor
                     resetsItem.image = self.imageForSymbol("arrow.counterclockwise", color: itemColor)
                     
-                    let displayName = L10n.tr("menu.resets")
-                    let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
                     let availableText = L10n.tr("menu.resets.available.compact", resets.count)
-                    
                     let infoPart = soon
                         ? "\(availableText) (\(L10n.tr("menu.resets.next_expires_in", nextDays)))"
                         : availableText
-                    let rowStr = "  \(paddedName)            \(infoPart)"
-                    
-                    let attrTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                        .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                        .foregroundColor: itemColor
-                    ])
-                    resetsItem.attributedTitle = attrTitle
+                    let rowStr = "  \(L10n.tr("menu.resets"))\t\t\(infoPart)"
+                    resetsItem.attributedTitle = NSAttributedString(string: rowStr, attributes: rowAttributes(itemColor))
                     menu.addItem(resetsItem)
                 }
             }
@@ -738,25 +754,10 @@ extension AppDelegate {
         return String(repeating: "■", count: fill) + String(repeating: "□", count: width - fill)
     }
 
-    func visualWidth(_ str: String) -> Int {
-        var w = 0
-        for char in str {
-            if char.unicodeScalars.first?.isASCII == true {
-                w += 1
-            } else {
-                w += 2
-            }
-        }
-        return w
-    }
-
-    func padString(_ str: String, toVisualLength targetLen: Int) -> String {
-        let currentLen = visualWidth(str)
-        if currentLen >= targetLen {
-            return str
-        }
-        let paddingCount = targetLen - currentLen
-        return str + String(repeating: " ", count: paddingCount)
+    /// The monospace font the quota rows are drawn in. Column positions are
+    /// measured against this exact font, so the two must never drift apart.
+    var menuRowFont: NSFont {
+        NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     }
 
     func resetPhrase(window: QuotaWindow, fetchedAt: String?) -> String {

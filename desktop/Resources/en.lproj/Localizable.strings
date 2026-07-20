@@ -195,8 +195,9 @@
 "notch.row.weekly" = "WEEKLY";
 "notch.card.five_resets_in" = "5-hour resets in";
 "notch.card.week_resets_in" = "Weekly resets in";
-/* Compact variant of menu.five_hour_temporarily_uncapped for the notch's
-   micro status rows, where the full phrase would span the whole column. */
+/* Compact variant of menu.five_hour_temporarily_uncapped for the narrow
+   status columns — the notch's micro rows and the menu-bar dropdown row —
+   where the full phrase would span or overflow the whole column. */
 "notch.five_hour_uncapped" = "Uncapped";
 "notch.peek.exhausted" = "Exhausted";
 "notch.card.weekly_reached" = "Weekly cap reached";
