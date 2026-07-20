@@ -137,6 +137,18 @@ struct RingPoolArc {
     let blocked: Bool
 }
 
+// The pool a dual ring's headline is NOT bound to, rendered as a faint line
+// under the subtitle. Without it that pool's 5-hour number appears nowhere on
+// the card — the detail band below the ring meters the weekly windows, so the
+// arc's length was the only clue.
+struct RingSecondaryPool {
+    let tag: String
+    /// Remaining percent while usable, or the unlock countdown when blocked.
+    let value: String
+    let color: Color
+    let blocked: Bool
+}
+
 // MARK: - SwiftUI Progress Ring
 // Internal (not file-private) so NotchIslandView+Expanded can build the rings.
 struct CircularProgressRing: View {
@@ -151,6 +163,9 @@ struct CircularProgressRing: View {
     // Two entries (outer, inner) switch the healthy ring to concentric
     // per-pool arcs; empty keeps the classic single ring.
     var poolArcs: [RingPoolArc] = []
+    // Dual rings only: the other pool's 5-hour standing, shown beneath the
+    // subtitle. Nil keeps the two-line center.
+    var secondaryPool: RingSecondaryPool? = nil
 
     @State private var pulseOpacity = 0.9
 
@@ -250,6 +265,11 @@ struct CircularProgressRing: View {
                 } else {
                     // The inner pool arc shrinks the center hole, so the dual
                     // ring steps the headline down a notch to keep clear of it.
+                    // A dual ring also tints the headline with the bound pool's
+                    // color: two arcs share one number, and the tint is what
+                    // says which arc it reads. Single rings keep the number
+                    // white — there is only one arc, so white costs no clarity
+                    // and buys contrast.
                     HStack(alignment: .firstTextBaseline, spacing: 0.5) {
                         Text("\(Int(percentage))")
                             .font(.system(size: isDual ? 22 : 27, weight: .bold, design: .default))
@@ -258,12 +278,35 @@ struct CircularProgressRing: View {
                             .font(.system(size: isDual ? 11 : 13, weight: .semibold))
                             .opacity(0.55)
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(isDual ? color : .white)
                     Text(subtitle.uppercased())
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.8)
-                        .foregroundColor(Color.white.opacity(0.42))
-                        .padding(.top, 3)
+                        .foregroundColor(isDual ? color.opacity(0.75) : Color.white.opacity(0.42))
+                        .padding(.top, isDual && secondaryPool != nil ? 2 : 3)
+                    if isDual, let other = secondaryPool {
+                        // Sits ~24pt below center, where the inner arc leaves
+                        // only ~59pt of clear width — hence the demoted tag
+                        // size, near-zero tracking, and space-stripped
+                        // countdown. The scale factor is the backstop for a
+                        // longer countdown ("1d 2h 14m") rather than the plan.
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(other.tag)
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.2)
+                            Text(other.value.replacingOccurrences(of: " ", with: ""))
+                                .font(.system(size: 9, weight: .bold))
+                                .monospacedDigit()
+                        }
+                        .foregroundColor(
+                            other.blocked
+                                ? Color(NSColor.systemRed).opacity(0.8)
+                                : other.color.opacity(0.62)
+                        )
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: 56)
+                    }
                 }
             }
         }
