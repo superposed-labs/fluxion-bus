@@ -468,6 +468,13 @@ extension AppDelegate {
         let spinner = spinnerFrames[spinnerIndex]
         let filtered = filteredProviders()
 
+        // Column geometry for the monospace quota rows: name, bar, "NN% left",
+        // countdown. The status-only rows (uncapped / resets) reuse
+        // `statusColumnGap` so their phrase starts on the "NN% left" column
+        // instead of a hand-counted approximation that drifts out of alignment.
+        let barWidth = 10
+        let statusColumnGap = String(repeating: " ", count: 1 + barWidth + 2)
+
         // Calculate max name length dynamically to avoid truncation
         var maxNameLen = 12
         for p in filtered where p.status == "ok" {
@@ -594,13 +601,13 @@ extension AppDelegate {
                 } else {
                     let leftPct = u == nil ? "—" : "\(Int(round(100.0 - u!)))% left"
                     let reset = self.resetPhrase(window: w, fetchedAt: p.fetchedAt)
-                    let bar = self.barStr(used: u)
+                    let bar = self.barStr(used: u, width: barWidth)
 
                     // Pad displayName to align dynamically without truncation
                     let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
                     let paddedLeft = self.padString(leftPct, toVisualLength: 9)
                     let prefix = "  \(paddedName) \(bar)  \(paddedLeft)  "
-                    let prefixWidth = 2 + maxNameLen + 1 + 10 + 2 + 9 + 2
+                    let prefixWidth = 2 + maxNameLen + 1 + barWidth + 2 + 9 + 2
                     let targetWidth = maxNameLen + 34
                     let resetWidth = self.visualWidth(reset)
                     let paddingCount = max(0, targetWidth - prefixWidth - resetWidth)
@@ -609,7 +616,7 @@ extension AppDelegate {
                 }
 
                 let attrTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                    .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                    .font: self.menuRowFont,
                     .foregroundColor: winColor
                 ])
                 winItem.attributedTitle = attrTitle
@@ -655,9 +662,12 @@ extension AppDelegate {
                     uncappedItem.image = self.imageForSymbol("infinity", color: NSColor.secondaryLabelColor)
                     let displayName = L10n.tr("preferences.reset.5h")
                     let paddedName = self.padString(displayName, toVisualLength: maxNameLen)
-                    let rowStr = "  \(paddedName)            \(L10n.tr("menu.five_hour_temporarily_uncapped"))"
+                    // The compact phrase, not the full "Temporarily uncapped":
+                    // this column is only as wide as "NN% left", and the long
+                    // form would stretch the whole menu to fit one row.
+                    let rowStr = "  \(paddedName)\(statusColumnGap)\(L10n.tr("notch.five_hour_uncapped"))"
                     uncappedItem.attributedTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                        .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                        .font: self.menuRowFont,
                         .foregroundColor: NSColor.secondaryLabelColor
                     ])
                     menu.addItem(uncappedItem)
@@ -684,10 +694,10 @@ extension AppDelegate {
                     let infoPart = soon
                         ? "\(availableText) (\(L10n.tr("menu.resets.next_expires_in", nextDays)))"
                         : availableText
-                    let rowStr = "  \(paddedName)            \(infoPart)"
+                    let rowStr = "  \(paddedName)\(statusColumnGap)\(infoPart)"
                     
                     let attrTitle = NSMutableAttributedString(string: rowStr, attributes: [
-                        .font: NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                        .font: self.menuRowFont,
                         .foregroundColor: itemColor
                     ])
                     resetsItem.attributedTitle = attrTitle
@@ -738,16 +748,23 @@ extension AppDelegate {
         return String(repeating: "■", count: fill) + String(repeating: "□", count: width - fill)
     }
 
+    /// The monospace font the quota rows are drawn in. Column padding is
+    /// measured against this exact font, so the two must never drift apart.
+    var menuRowFont: NSFont {
+        NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    }
+
+    /// Width of `str` in monospace cells, measured in the row font instead of
+    /// guessed from Unicode ranges. The old "non-ASCII counts as two" heuristic
+    /// was wrong for the "·" separator in labels like "Gemini · 5h" or
+    /// "Fable · wk" — Menlo renders it at one cell, so those rows got one pad
+    /// space too few and their bar/percent/countdown columns slid left.
     func visualWidth(_ str: String) -> Int {
-        var w = 0
-        for char in str {
-            if char.unicodeScalars.first?.isASCII == true {
-                w += 1
-            } else {
-                w += 2
-            }
-        }
-        return w
+        let font = menuRowFont
+        let cell = (" " as NSString).size(withAttributes: [.font: font]).width
+        guard cell > 0 else { return str.count }
+        let measured = (str as NSString).size(withAttributes: [.font: font]).width
+        return Int((measured / cell).rounded())
     }
 
     func padString(_ str: String, toVisualLength targetLen: Int) -> String {
