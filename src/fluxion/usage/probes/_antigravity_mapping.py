@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from fluxion.usage.models import UsageWindow
-from fluxion.usage.probes._common import ProbeConfig
 
 
 def num(value: Any) -> float | None:
