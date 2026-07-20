@@ -55,11 +55,16 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var checkAntigravityAutoping: NSPopUpButton!
 
     // Per-provider monitor scope. Order: Disabled, 5-Hour, Weekly, Both.
+    /// Own strings rather than the Notch labels these once borrowed: the two
+    /// surfaces name the same windows for different reasons and could not be
+    /// reworded apart. Here the pair reads as quotas, matching how the rest of
+    /// the app talks about them — reset detection is edge-driven, so "weekly"
+    /// describes the window, never a schedule.
     static let autoPingTitles = [
-        L10n.tr("preferences.status.disabled"),
-        L10n.tr("preferences.reset.5h_resets"),
-        L10n.tr("preferences.notch.weekly"),
-        L10n.tr("preferences.notch.both"),
+        L10n.tr("preferences.autoping.window.off"),
+        L10n.tr("preferences.autoping.window.5h"),
+        L10n.tr("preferences.autoping.window.weekly"),
+        L10n.tr("preferences.autoping.window.both"),
     ]
     static func autoPingModeIndex(_ mode: String) -> Int {
         switch mode.lowercased() {

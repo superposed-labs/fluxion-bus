@@ -127,7 +127,6 @@
 "preferences.page.automation.desc" = "クォータリセット通知、Auto-Ping、Codex クレジット付与通知を設定します。";
 "preferences.page.messaging.desc" = "チャット bot をメッセージ gateway に接続します。";
 "preferences.page.services.desc" = "ダッシュボード、scheduler、gateway を支えるローカルバックグラウンドデーモンです。";
-"preferences.status.disabled" = "無効";
 "preferences.status.available" = "利用可能";
 "preferences.status.not_available" = "利用不可";
 "preferences.status.detection_pending" = "検出待ち。";
@@ -190,7 +189,12 @@
 "preferences.notch.weekly" = "週次";
 "preferences.notch.both" = "両方";
 "preferences.reset.5h" = "5時間";
-"preferences.reset.5h_resets" = "5時間リセット";
+"preferences.autoping.window.off" = "オフ";
+"preferences.autoping.window.5h" = "5時間クォータ";
+"preferences.autoping.window.weekly" = "週間クォータ";
+"preferences.autoping.window.both" = "両方";
+"preferences.window.5h" = "5時間";
+"preferences.window.weekly" = "週次";
 "notch.row.5h" = "5時間";
 "notch.row.weekly" = "週次";
 "notch.card.five_resets_in" = "5時間枠リセットまで";

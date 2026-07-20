@@ -127,7 +127,6 @@
 "preferences.page.automation.desc" = "Configure quota reset alerts, Auto-Ping, and Codex credit grant notifications.";
 "preferences.page.messaging.desc" = "Connect chat bots to the messaging gateway.";
 "preferences.page.services.desc" = "Local background daemons that power the console, scheduler, and gateway.";
-"preferences.status.disabled" = "Disabled";
 "preferences.status.available" = "Available";
 "preferences.status.not_available" = "Not Available";
 "preferences.status.detection_pending" = "Detection pending.";
@@ -190,7 +189,12 @@
 "preferences.notch.weekly" = "Weekly";
 "preferences.notch.both" = "Both";
 "preferences.reset.5h" = "5-hour";
-"preferences.reset.5h_resets" = "5-Hour Resets";
+"preferences.autoping.window.off" = "Off";
+"preferences.autoping.window.5h" = "5-hour quota";
+"preferences.autoping.window.weekly" = "Weekly quota";
+"preferences.autoping.window.both" = "Both";
+"preferences.window.5h" = "5-hour";
+"preferences.window.weekly" = "Weekly";
 "notch.row.5h" = "5-HOUR";
 "notch.row.weekly" = "WEEKLY";
 "notch.card.five_resets_in" = "5-hour resets in";

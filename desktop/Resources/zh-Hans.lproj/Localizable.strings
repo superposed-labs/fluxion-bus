@@ -127,7 +127,6 @@
 "preferences.page.automation.desc" = "配置配额重置提醒、Auto-Ping 和 Codex 点数发放通知。";
 "preferences.page.messaging.desc" = "把聊天 bot 连接到消息网关。";
 "preferences.page.services.desc" = "为仪表盘、scheduler 和 gateway 提供能力的本地后台守护进程。";
-"preferences.status.disabled" = "已禁用";
 "preferences.status.available" = "可用";
 "preferences.status.not_available" = "不可用";
 "preferences.status.detection_pending" = "等待检测。";
@@ -190,7 +189,12 @@
 "preferences.notch.weekly" = "每周";
 "preferences.notch.both" = "两者";
 "preferences.reset.5h" = "5 小时";
-"preferences.reset.5h_resets" = "5 小时重置";
+"preferences.autoping.window.off" = "关闭";
+"preferences.autoping.window.5h" = "5 小时额度";
+"preferences.autoping.window.weekly" = "周额度";
+"preferences.autoping.window.both" = "两者";
+"preferences.window.5h" = "5 小时";
+"preferences.window.weekly" = "每周";
 "notch.row.5h" = "5 小时";
 "notch.row.weekly" = "每周";
 "notch.card.five_resets_in" = "5小时窗口重置倒计时";
