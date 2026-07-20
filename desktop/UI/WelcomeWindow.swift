@@ -35,6 +35,7 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private var keychainSwitch: NSSwitch?
     private var weeklySwitch: NSSwitch!
+    private weak var weeklyRow: CardRow?
     private var autoUpdateSwitch: NSSwitch?
     private var displaySegmented: NSSegmentedControl!
     private var displayHintLabel: NSTextField!
@@ -518,6 +519,8 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         if claudeTokenMissing {
             let toggle = NSSwitch()
             toggle.state = .on
+            toggle.target = self
+            toggle.action = #selector(keychainOptInChanged)
             keychainSwitch = toggle
             rows.insert(CardRow(
                 title: L10n.tr("welcome.keychain.title"),
@@ -556,17 +559,53 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         return rows
     }
 
+    /// Providers whose weekly window the reminder can actually watch. An empty
+    /// set means switching the reminder on would schedule nothing at all, so
+    /// the row disables itself rather than accepting a promise it cannot keep.
+    private func watchableProviders() -> Set<String> {
+        var watched = Set(
+            (snapshot?.usage ?? [:])
+                .filter { $0.value.status == "ok" }
+                .map { $0.key }
+        )
+        // The Keychain opt-in unlocks Claude's usage window, so an enabled
+        // switch makes claude watchable even though detection could not read it.
+        if keychainSwitch?.state == .on { watched.insert("claude") }
+        return watched
+    }
+
     private func buildWeeklyRow() -> NSView {
         weeklySwitch = NSSwitch()
         // Opt-in: off by default so a fresh install never schedules reminders
         // unless the user turns them on here.
         weeklySwitch.state = .off
-        return CardRow(
+        let row = CardRow(
             title: L10n.tr("welcome.weekly.title"),
             desc: L10n.tr("welcome.weekly.desc"),
             control: weeklySwitch,
             isFirst: true
         )
+        weeklyRow = row
+        updateWeeklyAvailability()
+        return row
+    }
+
+    /// Keeps the reminder row honest about whether it can do anything. Called
+    /// when the row is built and again whenever the Keychain opt-in changes,
+    /// since granting it makes Claude watchable (and revoking it can take the
+    /// last watchable provider away).
+    private func updateWeeklyAvailability() {
+        guard weeklySwitch != nil else { return }
+        let canWatch = !watchableProviders().isEmpty
+        weeklySwitch.isEnabled = canWatch
+        if !canWatch { weeklySwitch.state = .off }
+        weeklyRow?.descLabel?.stringValue = canWatch
+            ? L10n.tr("welcome.weekly.desc")
+            : L10n.tr("welcome.weekly.desc.unavailable")
+    }
+
+    @objc private func keychainOptInChanged() {
+        updateWeeklyAvailability()
     }
 
     /// Auto-update opt-in — shown only in distribution builds where the
@@ -799,16 +838,16 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
                 (autoUpdateSwitch.state == .on)
         }
 
-        if weeklySwitch.state == .on {
+        // Watch the weekly window of every provider that reports usage
+        // (including Claude when Keychain access was just granted). The empty
+        // case is filtered out before the permission prompt, not after: macOS
+        // only ever shows that prompt once, so asking for an authorization
+        // nothing would use risks a reflexive denial that permanently disables
+        // reminders. updateWeeklyAvailability() already disables the switch
+        // then, so this is a backstop rather than the only guard.
+        let watched = watchableProviders()
+        if weeklySwitch.state == .on, !watched.isEmpty {
             appDelegate.ensureNotificationPermission()
-            // Watch the weekly window of every provider that reports usage
-            // (including Claude when Keychain access was just granted).
-            var watched = Set(
-                (snapshot?.usage ?? [:])
-                    .filter { $0.value.status == "ok" }
-                    .map { $0.key }
-            )
-            if keychainEnabled { watched.insert("claude") }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
                 for provider in watched.sorted() {

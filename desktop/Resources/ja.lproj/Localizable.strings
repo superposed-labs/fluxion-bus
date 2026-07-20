@@ -435,6 +435,7 @@
 "welcome.section.alerts" = "クォータ通知";
 "welcome.weekly.title" = "週次リセット通知";
 "welcome.weekly.desc" = "各プロバイダーの週次クォータがリセットされたとき macOS 通知を受け取ります。通知の許可を求められます。";
+"welcome.weekly.desc.unavailable" = "監視できるクォータ枠がまだありません。使用量を報告できるエージェントが検出されると有効になります。後から環境設定でオンにもできます。";
 "welcome.section.display" = "表示";
 "welcome.display.title" = "表示スタイル";
 "welcome.display.desc" = "ネイティブはメニューバーに溶け込み、リッチは色とプログレスバー付き、ノッチは Dynamic Island 風のオーバーレイ表示です。";

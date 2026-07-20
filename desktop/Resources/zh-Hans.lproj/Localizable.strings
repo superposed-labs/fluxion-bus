@@ -435,6 +435,7 @@
 "welcome.section.alerts" = "配额提醒";
 "welcome.weekly.title" = "每周重置提醒";
 "welcome.weekly.desc" = "当某个服务的每周配额窗口重置时收到 macOS 通知。将会请求通知权限。";
+"welcome.weekly.desc.unavailable" = "暂无可监控的配额窗口，检测到可上报用量的 Agent 后即可开启。之后也可以在偏好设置中打开。";
 "welcome.section.display" = "显示";
 "welcome.display.title" = "显示样式";
 "welcome.display.desc" = "原生样式与菜单栏融为一体；增强样式带颜色和进度条；刘海样式以灵动岛形式悬浮显示。";
