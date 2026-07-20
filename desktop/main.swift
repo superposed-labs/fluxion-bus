@@ -427,10 +427,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
                 case .suppress:
                     break
                 }
-            } else if case .advanceSetupWindow = onboarding {
-                // Preserved configuration from an earlier install: nothing to
-                // onboard, so just dismiss the setup window.
-                WelcomeWindow.shared.finishSetupWithoutOnboarding()
+            } else {
+                if case .advanceSetupWindow = onboarding {
+                    // Preserved configuration from an earlier install: nothing
+                    // to onboard, so just dismiss the setup window.
+                    WelcomeWindow.shared.finishSetupWithoutOnboarding()
+                }
+                // Not a fresh install, so an agent may have appeared since the
+                // last launch with no reminder rule of its own. Skipped during
+                // onboarding, where the welcome window covers this itself.
+                self.promptForUnwatchedProvidersIfNeeded()
             }
             DispatchQueue.global(qos: .userInitiated).async {
                 // Sweep strays from a different checkout before starting ours,
@@ -886,7 +892,20 @@ extension AppDelegate {
             intentIdentifiers: [],
             options: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([pendingUser])
+        let enableReminders = UNNotificationAction(
+            identifier: AppDelegate.reminderPromptEnableActionId,
+            title: L10n.tr("notification.reminder_coverage.enable"),
+            options: []
+        )
+        let reminderCoverage = UNNotificationCategory(
+            identifier: AppDelegate.reminderPromptCategoryId,
+            actions: [enableReminders],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([
+            pendingUser, reminderCoverage,
+        ])
     }
 
     func userNotificationCenter(
@@ -911,11 +930,26 @@ extension AppDelegate {
         let channel = (info["channel"] as? String).flatMap(PendingUserChannel.init(key:))
         let userId = (info["user_id"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let reminderProviders = info["reminder_providers"] as? [String] ?? []
         let actionIdentifier = response.actionIdentifier
 
         DispatchQueue.main.async { [weak self] in
             defer { completionHandler() }
             guard let self = self else { return }
+            if !reminderProviders.isEmpty {
+                switch actionIdentifier {
+                case AppDelegate.reminderPromptEnableActionId:
+                    self.enableWeeklyReminders(for: reminderProviders)
+                case UNNotificationDefaultActionIdentifier:
+                    // Clicking the banner itself opens the page that owns the
+                    // setting, so the offer is never a dead end.
+                    PreferencesWindow.shared.show()
+                    PreferencesWindow.shared.switchPage(to: "automation")
+                default:
+                    break
+                }
+                return
+            }
             guard let channel = channel, !userId.isEmpty else {
                 // Not a pending-user notification: keep the pre-existing
                 // behavior of a click opening the console window.

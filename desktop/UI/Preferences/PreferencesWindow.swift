@@ -498,6 +498,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             self.window?.orderOut(nil)
             self.window = nil
             self.show()
+            // Re-checking is exactly how a user confirms a newly installed
+            // agent, so it is the other moment worth offering reminders for.
+            self.appDelegate.promptForUnwatchedProvidersIfNeeded()
         }
     }
 

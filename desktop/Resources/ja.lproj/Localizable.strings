@@ -264,6 +264,10 @@
 "preferences.notify.macos.desc" = "クォータリセット・クレジット付与・失効警告時に macOS 通知センターへアラートを表示します。";
 "notification.quota_reset.title" = "クォータリセット";
 "notification.credit_grant.title" = "クレジット付与";
+"notification.reminder_coverage.title" = "新しいエージェントの週次通知がオフです";
+"notification.reminder_coverage.body" = "%@ がクォータの報告を開始しましたが、週次リセット通知はオフのままです。オンにしますか？";
+"notification.reminder_coverage.body_many" = "%@ がクォータの報告を開始しましたが、週次リセット通知はいずれもオフのままです。オンにしますか？";
+"notification.reminder_coverage.enable" = "オンにする";
 "notification.credit_expiry.title" = "クレジット失効間近";
 "preferences.credit_grant.title" = "クレジット付与時に通知";
 "preferences.credit_grant.desc" = "Codex は不定期に reset credits を配布します。上のリセット通知チャンネル経由で、新しいクレジットが届いた瞬間に通知します。Codex のみ。";
