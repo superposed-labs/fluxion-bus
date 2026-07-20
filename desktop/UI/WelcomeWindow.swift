@@ -142,6 +142,18 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         addSection(title: L10n.tr("welcome.section.more"), rows: buildMoreRows(), into: content)
         pinContentWidths(content)
         installScaffold(content: content, footer: buildFooter(), in: win)
+
+        // A fresh install preselects a style the user never clicked, so apply
+        // it as a preview — otherwise the segmented control would claim Notch
+        // while nothing is on screen. Deferred so the notch window is created
+        // after this window finishes laying out. Skip/red-button close restores
+        // the captured (empty) originals in windowWillClose, as usual.
+        if originalNotchMode == nil, originalAppearance == nil {
+            DispatchQueue.main.async { [weak self] in
+                guard self?.displaySegmented != nil else { return }
+                self?.displayStyleChanged()
+            }
+        }
     }
 
     private func installSetupContent(in win: NSWindow) {
@@ -585,6 +597,18 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         )
     }
 
+    /// Whether the display the user is actually on has a physical notch.
+    /// Mirrors NotchWindowController.findTargetScreen() (mouse first, then
+    /// main) so the recommendation matches where the notch would render: on a
+    /// docked external display Notch mode draws a floating pill instead of
+    /// hiding in the safe area, which is not what we want to preselect. The
+    /// >25pt threshold is the same one getPhysicalNotchInfo() uses.
+    private static var hasBuiltInNotch: Bool {
+        let mouseLoc = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) }) ?? NSScreen.main
+        return (screen?.safeAreaInsets.top ?? 0) > 25
+    }
+
     private func buildDisplayRow() -> NSView {
         displaySegmented = NSSegmentedControl(
             labels: [
@@ -599,8 +623,18 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         displaySegmented.segmentStyle = .rounded
         if originalNotchMode == "true" {
             displaySegmented.selectedSegment = 2
+        } else if originalNotchMode == nil, originalAppearance == nil {
+            // Fresh install: recommend the style that fits the hardware. A
+            // built-in notch makes Notch mode nearly free (its collapsed strip
+            // hides in the safe area), so it leads there; everywhere else Rich
+            // shows what the app is actually for. installOnboardingContent()
+            // previews whichever one this picks so the screen matches it.
+            displaySegmented.selectedSegment = Self.hasBuiltInNotch ? 2 : 1
         } else {
-            displaySegmented.selectedSegment = originalAppearance == "rich" ? 1 : 0
+            // Only an explicit "native" selects Native: a half-written .env
+            // (notch key present, appearance key absent) must agree with the
+            // renderer, which falls back to rich.
+            displaySegmented.selectedSegment = originalAppearance == "native" ? 0 : 1
         }
         displaySegmented.segmentDistribution = .fillEqually
         displaySegmented.translatesAutoresizingMaskIntoConstraints = false

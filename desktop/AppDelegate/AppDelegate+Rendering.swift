@@ -20,7 +20,7 @@ extension AppDelegate {
         let isNotchActive = envVals["FLUXION_NOTCH_MODE"] == "true"
         statusItem.isVisible = !isNotchActive
 
-        let appearance = envVals["FLUXION_MENU_APPEARANCE"] ?? "native"
+        let appearance = envVals["FLUXION_MENU_APPEARANCE"] ?? "rich"
         let providers = filteredProviders()
 
         if isUpgradingBackend {

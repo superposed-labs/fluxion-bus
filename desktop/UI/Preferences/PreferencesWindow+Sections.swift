@@ -508,7 +508,7 @@ extension PreferencesWindow {
 
         appearanceSegmented = NSSegmentedControl(labels: [L10n.tr("preferences.appearance.native"), L10n.tr("preferences.appearance.rich")], trackingMode: .selectOne, target: self, action: #selector(autosave))
         appearanceSegmented.segmentStyle = .rounded
-        appearanceSegmented.selectedSegment = (appDelegate.envVals["FLUXION_MENU_APPEARANCE"] ?? "native") == "rich" ? 1 : 0
+        appearanceSegmented.selectedSegment = (appDelegate.envVals["FLUXION_MENU_APPEARANCE"] ?? "rich") == "rich" ? 1 : 0
         appearanceSegmented.translatesAutoresizingMaskIntoConstraints = false
         if #available(macOS 10.13, *) {
             appearanceSegmented.segmentDistribution = .fillEqually
