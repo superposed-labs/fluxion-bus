@@ -36,6 +36,11 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
     private var keychainSwitch: NSSwitch?
     private var weeklySwitch: NSSwitch!
     private weak var weeklyRow: CardRow?
+    /// Whether the user wants weekly reminders, independent of whether they are
+    /// possible right now. Reset reminders are the payoff of a quota tracker,
+    /// and most people never revisit Preferences, so this starts on; toggling
+    /// the Keychain opt-in re-derives the switch from it rather than losing it.
+    private var weeklyIntent = true
     private var autoUpdateSwitch: NSSwitch?
     private var displaySegmented: NSSegmentedControl!
     private var displayHintLabel: NSTextField!
@@ -588,9 +593,10 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private func buildWeeklyRow() -> NSView {
         weeklySwitch = NSSwitch()
-        // Opt-in: off by default so a fresh install never schedules reminders
-        // unless the user turns them on here.
-        weeklySwitch.state = .off
+        weeklySwitch.target = self
+        weeklySwitch.action = #selector(weeklyReminderChanged)
+        // State comes from updateWeeklyAvailability() below, which combines the
+        // default with whether anything is watchable at all.
         let row = CardRow(
             title: L10n.tr("welcome.weekly.title"),
             desc: L10n.tr("welcome.weekly.desc"),
@@ -610,10 +616,17 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         guard weeklySwitch != nil else { return }
         let canWatch = !watchableProviders().isEmpty
         weeklySwitch.isEnabled = canWatch
-        if !canWatch { weeklySwitch.state = .off }
+        // Showing an enabled-looking switch that cannot act would be the same
+        // lie this row exists to avoid, so an unwatchable moment reads as off —
+        // but it parks the choice in weeklyIntent instead of discarding it.
+        weeklySwitch.state = (canWatch && weeklyIntent) ? .on : .off
         weeklyRow?.descLabel?.stringValue = canWatch
             ? L10n.tr("welcome.weekly.desc")
             : L10n.tr("welcome.weekly.desc.unavailable")
+    }
+
+    @objc private func weeklyReminderChanged() {
+        weeklyIntent = weeklySwitch.state == .on
     }
 
     @objc private func keychainOptInChanged() {
@@ -873,12 +886,15 @@ class WelcomeWindow: NSObject, NSWindowDelegate {
         }
 
         // Watch the weekly window of every provider that reports usage
-        // (including Claude when Keychain access was just granted). The empty
-        // case is filtered out before the permission prompt, not after: macOS
-        // only ever shows that prompt once, so asking for an authorization
-        // nothing would use risks a reflexive denial that permanently disables
-        // reminders. updateWeeklyAvailability() already disables the switch
-        // then, so this is a backstop rather than the only guard.
+        // (including Claude when Keychain access was just granted).
+        //
+        // Authorization is requested here rather than lazily on first delivery.
+        // macOS shows that prompt once per install, and what it really costs is
+        // the user's attention: here they are at the keyboard, looking at the
+        // switch they just left on, having clicked Get Started. A prompt raised
+        // days later during some reset competes with whatever they were doing.
+        // The empty check keeps it honest — with nothing watchable there is no
+        // rule to write, so nothing to ask about.
         let watched = watchableProviders()
         if weeklySwitch.state == .on, !watched.isEmpty {
             appDelegate.ensureNotificationPermission()
