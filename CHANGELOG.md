@@ -9,6 +9,14 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-07-20
+
+### Changed
+
+- **Antigravity Notch rings** — dual-pool 5-hour rings now clearly identify
+  which pool the headline represents, show the other pool's remaining quota or
+  unlock countdown, and use consistent GEM/EXT labels across the desktop UI.
+
 ## [1.0.8] - 2026-07-20
 
 ### Added
@@ -189,7 +197,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.5...v1.0.6
