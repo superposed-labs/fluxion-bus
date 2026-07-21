@@ -4,7 +4,67 @@ import SwiftUI
 
 // NotchIslandView — expanded panel (rings, rows, solo split, token usage).
 // Split out of NotchWindow.swift for navigability; same type via extension.
+
+/// Every input the two expanded pages read while rendering.
+///
+/// Flipping the pager mutates `model.page`, which no page's *content* reads —
+/// only the shell around them does (title, opacity, offset, dots). But because
+/// the pages are computed properties on one big view, that write used to
+/// re-evaluate both hierarchies for all providers. Profiling attributed ~77% of
+/// the notch's main-thread time during paging to exactly that rebuild.
+///
+/// Gating each page on this value lets SwiftUI reuse the hierarchy it already
+/// built whenever these inputs are untouched, which is the case throughout a
+/// flip. Correctness depends on this covering everything the pages read — and
+/// `now` is a member that ticks once a second, so even a missed dependency
+/// resolves itself within a second instead of sticking indefinitely.
+struct ExpandedPageInputs: Equatable {
+    let providers: [ProviderUsage]
+    let todayStats: [String: ProviderHistoryStats]
+    let dailyTokens: [String: [Int]]
+    let peakHours: [String: Int]
+    let historyLoaded: Bool
+    let expandedStyle: String
+    let justGranted: Int
+    let now: Date
+    /// Date and number text is formatted in the in-app language, which is
+    /// switchable at runtime; without it a switch would not show until the
+    /// next tick.
+    let language: String
+}
+
+/// Wraps a page so SwiftUI can skip re-evaluating it when `inputs` is unchanged.
+///
+/// `content` captures the parent view, so it may only be consulted when the
+/// inputs actually differ — which is precisely what `==` decides here. Wrapping
+/// does not change the identity of anything inside, so `@State` held by the page
+/// (ring pulses, placeholder shimmer) survives a flip rather than restarting.
+struct EquatablePage<Content: View>: View, Equatable {
+    let inputs: ExpandedPageInputs
+    @ViewBuilder var content: () -> Content
+
+    var body: some View { content() }
+
+    static func == (lhs: EquatablePage<Content>, rhs: EquatablePage<Content>) -> Bool {
+        lhs.inputs == rhs.inputs
+    }
+}
+
 extension NotchIslandView {
+    var expandedPageInputs: ExpandedPageInputs {
+        ExpandedPageInputs(
+            providers: model.providers,
+            todayStats: model.todayStats,
+            dailyTokens: model.dailyTokens,
+            peakHours: model.peakHours,
+            historyLoaded: model.historyLoaded,
+            expandedStyle: model.expandedStyle,
+            justGranted: model.justGranted,
+            now: now,
+            language: L10n.resolvedAppLanguage
+        )
+    }
+
     // Provider header (brand icon + name + plan-tier chip) shared by all three
     // expanded surfaces: the regular ring column, the solo-split panel, and the
     // token-usage page. `centered` flanks it with Spacers (solo split centers a
@@ -95,13 +155,21 @@ extension NotchIslandView {
             // their completed geometry behind a loading layer, so history can
             // fade in without changing the natural page height. Real quota
             // structure (lock notes, credits, reset rows) remains free to grow.
+            //
+            // Both pages also stay mounted; the gate only decides whether their
+            // contents are rebuilt (see ExpandedPageInputs). The animated
+            // modifiers sit outside it, so a flip animates the hierarchy that is
+            // already on screen instead of building a new one.
+            let pageInputs = expandedPageInputs
             ZStack(alignment: .top) {
-                quotaRemainingView
+                EquatablePage(inputs: pageInputs) { quotaRemainingView }
+                    .equatable()
                     .background(pageHeightReader(page: 0))
                     .opacity(model.page == 0 ? 1 : 0)
                     .offset(x: model.page == 0 ? 0 : -16)
                     .allowsHitTesting(model.page == 0)
-                tokenUsageView
+                EquatablePage(inputs: pageInputs) { tokenUsageView }
+                    .equatable()
                     .background(pageHeightReader(page: 1))
                     .opacity(model.page == 1 ? 1 : 0)
                     .offset(x: model.page == 1 ? 0 : 16)
@@ -178,14 +246,8 @@ extension NotchIslandView {
     }
 
     func notchUpdatedText() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
-
         let latest = model.providers.compactMap { provider -> Date? in
-            guard let fetchedAt = provider.fetchedAt else { return nil }
-            return formatter.date(from: fetchedAt) ?? fallbackFormatter.date(from: fetchedAt)
+            QuotaFormatter.parseISODate(provider.fetchedAt)
         }.max()
 
         guard let latest else {
@@ -1221,11 +1283,12 @@ extension NotchIslandView {
     func absoluteResetText(for snapshot: QuotaWindowSnapshot?) -> String? {
         guard let snapshot = snapshot, !snapshot.idle,
               let date = resetsAtDate(from: snapshot.window.resetsAt) else { return nil }
-        let formatter = DateFormatter()
-        // Follow the app language (which may differ from the system locale).
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
         let within24h = date.timeIntervalSince(now) < 24 * 3600
-        formatter.setLocalizedDateFormatFromTemplate(within24h ? "jmm" : "Ejmm")
+        // Follow the app language (which may differ from the system locale).
+        let formatter = SharedDateFormatters.templated(
+            within24h ? "jmm" : "Ejmm",
+            language: L10n.resolvedAppLanguage
+        )
         return formatter.string(from: date)
     }
 
@@ -1239,9 +1302,10 @@ extension NotchIslandView {
     }
 
     func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
-        formatter.setLocalizedDateFormatFromTemplate(narrow ? "EEEEE" : "EEE")
+        let formatter = SharedDateFormatters.templated(
+            narrow ? "EEEEE" : "EEE",
+            language: L10n.resolvedAppLanguage
+        )
         let calendar = Calendar.current
         return (0..<count).map { index in
             if index == count - 1, !narrow {
@@ -1266,10 +1330,7 @@ extension NotchIslandView {
               let end = Calendar.current.date(byAdding: .hour, value: 1, to: start)
         else { return "—" }
 
-        let formatter = DateIntervalFormatter()
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
+        let formatter = SharedDateFormatters.shortTimeRange(language: L10n.resolvedAppLanguage)
         return formatter.string(from: start, to: end)
     }
 
@@ -2094,9 +2155,7 @@ struct ResetTooltipView: View {
     
     private func formatDate(offsetMs: Double) -> String {
         let date = Date().addingTimeInterval(offsetMs / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.dateFormat = "MMM d"
+        let formatter = SharedDateFormatters.fixedPattern("MMM d", locale: Locale.current)
         return formatter.string(from: date)
     }
 }

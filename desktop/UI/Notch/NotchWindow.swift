@@ -356,11 +356,14 @@ struct NotchIslandView: View {
             guard !model.isUpgradingBackend else { return }
             controller?.toggleExpand()
         }
-        .onChange(of: model.page) { _ in
-            if model.notchState == .expanded {
-                controller?.repositionWindow()
-            }
-        }
+        // No reposition on page flips: the window frame does not depend on the
+        // page. `expandedCardHeight` is derived from `expandedPageHeight`, whose
+        // only writer (syncExpandedHeight) already repositions when it actually
+        // changes — and both pages share one locked height anyway, so a flip
+        // normally resizes nothing. Repositioning here spent a 0.16s animated
+        // setFrame(display:) redrawing the blur and window shadow of an
+        // unchanged frame, on top of the page cross-fade.
+        //
         // Tick `now` every second while the notch is visible. Because `now` is
         // a @State dependency, SwiftUI re-evaluates body — and every downstream
         // computed property — on each tick, so countdown displays update live.

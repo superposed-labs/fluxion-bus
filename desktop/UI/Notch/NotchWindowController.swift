@@ -21,7 +21,7 @@ enum NotchState {
     case expanded
 }
 
-struct ProviderHistoryStats {
+struct ProviderHistoryStats: Equatable {
     let tokens: Int
     let input: Int
     let output: Int
