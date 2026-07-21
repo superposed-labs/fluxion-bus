@@ -34,11 +34,46 @@ enum SharedDateFormatters {
         return formatter
     }()
 
+    /// Memo for `parseISO`. Sharing the formatter removed the construction cost
+    /// but not the parse itself, which profiling still put at ~6% of the notch's
+    /// main-thread time while paging: the same handful of reset timestamps are
+    /// re-parsed for every provider, every window, on every render pass.
+    ///
+    /// Safe to cache without any invalidation because the mapping is pure — an
+    /// ISO8601 string always denotes the same instant. Misses are cached too:
+    /// a string that parses under neither option set is the case that costs two
+    /// full attempts, so it is the one most worth remembering.
+    private static var parsedISOCache: [String: Date?] = [:]
+
+    /// The live working set is a few dozen strings (one reset instant per window,
+    /// plus a `fetchedAt` per provider), but those rotate as windows reset and
+    /// polls land, so the table would creep upward forever. Past the cap, drop
+    /// everything rather than tracking recency — refilling costs one parse per
+    /// string still in use, and the cap is high enough that this is rare.
+    private static let parsedISOCacheCap = 512
+
     /// Plain first, then fractional. The two option sets are mutually exclusive —
     /// a timestamp parses under exactly one of them — so the order only decides
     /// which attempt is wasted, never the result.
     static func parseISO(_ isoString: String) -> Date? {
-        iso.date(from: isoString) ?? isoFractional.date(from: isoString)
+        lock.lock()
+        if let cached = parsedISOCache[isoString] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        // Parsed outside the lock: this is the expensive part, and a duplicate
+        // parse under contention is cheaper than serialising every caller on it.
+        let parsed = iso.date(from: isoString) ?? isoFractional.date(from: isoString)
+
+        lock.lock()
+        if parsedISOCache.count >= parsedISOCacheCap {
+            parsedISOCache.removeAll(keepingCapacity: true)
+        }
+        parsedISOCache[isoString] = parsed
+        lock.unlock()
+        return parsed
     }
 
     private static var templatedCache: [String: DateFormatter] = [:]
