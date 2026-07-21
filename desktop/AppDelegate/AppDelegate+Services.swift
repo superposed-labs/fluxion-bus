@@ -45,6 +45,16 @@ extension AppDelegate {
         ["fluxion.gateway", "fluxion.scheduler", "fluxion.web"].map { "-m \($0)" }
     }
 
+    // Flags that make a service binary a one-shot CLI call instead of its
+    // daemon. fluxion-scheduler doubles as the auto-ping config reader/writer
+    // (runAutoPingCommand), and the app fires --get-autoping on its own launch
+    // path — so "is this binary running?" can answer yes for a 0.2s probe and
+    // skip starting a daemon that was never up. Since the daemon never ran, it
+    // wrote no log line either, leaving nothing to explain the silence.
+    var oneShotServiceFlags: [String] {
+        ["--get-autoping", "--set-autoping", "--once"]
+    }
+
     /// (pid, full command line) for every running Fluxion service process —
     /// both .venv/bin console scripts and `-m` module launches, regardless of
     /// which checkout launched it.
@@ -190,10 +200,22 @@ extension AppDelegate {
         }
     }
 
-    /// Whether this checkout's gateway console script is running. Spawns pgrep,
-    /// so call it off the main thread.
+    /// Whether this checkout's long-running `name` daemon is up. Unlike a bare
+    /// pgrep on the binary path, a one-shot CLI call of the same binary does
+    /// not count as the daemon — see oneShotServiceFlags. Spawns ps, so call it
+    /// off the main thread.
+    func isServiceDaemonRunning(_ name: String) -> Bool {
+        let binary = servicePattern(name)
+        return runningServiceProcesses().contains { proc in
+            proc.command.contains(binary)
+                && !oneShotServiceFlags.contains(where: { proc.command.contains($0) })
+        }
+    }
+
+    /// Whether this checkout's gateway console script is running. Spawns ps, so
+    /// call it off the main thread.
     func isGatewayRunning() -> Bool {
-        isProcessRunning(pattern: servicePattern("fluxion-gateway"))
+        isServiceDaemonRunning("fluxion-gateway")
     }
 
     func startServicesIfNeeded() {
@@ -218,12 +240,15 @@ extension AppDelegate {
             }
         }
         if autostartSched && FileManager.default.fileExists(atPath: schedulerBin) {
-            if !isProcessRunning(pattern: schedulerBin) {
+            // Daemon-scoped on purpose: this runs concurrently with the launch
+            // path's --get-autoping probe (promptForUnwatchedProvidersIfNeeded),
+            // which executes this very binary.
+            if !isServiceDaemonRunning("fluxion-scheduler") {
                 shell(args: [schedulerBin])
             }
         }
         if autostartGateway && FileManager.default.fileExists(atPath: gatewayBin) {
-            if !isProcessRunning(pattern: gatewayBin) {
+            if !isServiceDaemonRunning("fluxion-gateway") {
                 shell(args: [gatewayBin])
             }
         }
