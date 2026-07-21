@@ -149,6 +149,18 @@ export function setToken(token: string): void {
   }
 }
 
+/**
+ * Picks up `?token=` from the page URL (the desktop app's WKWebView passes
+ * FLUXION_UI_TOKEN this way) and persists it to localStorage so every
+ * subsequent /api/* call — including ones on later page loads — is
+ * authenticated. No-op when the param is absent.
+ */
+export function initTokenFromLocation(): void {
+  if (typeof window === "undefined") return;
+  const fromUrl = new URLSearchParams(window.location.search).get("token");
+  if (fromUrl) setToken(fromUrl);
+}
+
 export interface TaskEventSubscription {
   close: () => void;
 }
