@@ -133,7 +133,7 @@
 "preferences.status.detection_pending" = "等待检测。";
 "preferences.section.interface" = "界面";
 "preferences.language.title" = "界面语言";
-"preferences.language.desc" = "仅影响 Fluxion 的 App 界面。默认跟随 macOS。";
+"preferences.language.desc" = "设置 App 界面、Web 控制台和配额通知的语言。默认跟随 macOS。";
 "preferences.language.system" = "跟随系统";
 "preferences.language.zh_hans" = "简体中文";
 "preferences.language.en" = "English";
