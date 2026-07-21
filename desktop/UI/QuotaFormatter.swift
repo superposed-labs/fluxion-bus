@@ -1,17 +1,99 @@
 import Foundation
 
+/// Shared date formatters for the render path.
+///
+/// Constructing a `DateFormatter`/`ISO8601DateFormatter`/`DateIntervalFormatter` is
+/// expensive — each one builds a CFDateFormatter and resolves a locale, and
+/// `setLocalizedDateFormatFromTemplate` is the priciest of the lot. The notch rebuilds
+/// its entire SwiftUI tree once a second (and again on every page flip), re-parsing
+/// every provider's reset timestamps along the way, so allocating formatters per call
+/// added up to hundreds of constructions per render pass.
+///
+/// Each cached instance is fully configured before it is stored and only read
+/// afterwards, which is what makes sharing it safe. The cache dictionaries themselves
+/// are guarded by `lock` — callers are main-thread today, but an uncontended lock costs
+/// orders of magnitude less than the construction it avoids, so this stays correct if
+/// that ever changes.
+///
+/// Locale-dependent formatters key on the *resolved app language*, not just on the
+/// format string: the in-app language is user-switchable at runtime, and a
+/// language-blind cache would pin date text to the language in effect at first use
+/// until the app relaunched.
+enum SharedDateFormatters {
+    private static let lock = NSLock()
+
+    private static let iso: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let isoFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// Plain first, then fractional. The two option sets are mutually exclusive —
+    /// a timestamp parses under exactly one of them — so the order only decides
+    /// which attempt is wasted, never the result.
+    static func parseISO(_ isoString: String) -> Date? {
+        iso.date(from: isoString) ?? isoFractional.date(from: isoString)
+    }
+
+    private static var templatedCache: [String: DateFormatter] = [:]
+
+    /// Formatter for a localized *template* (`"jmm"`, `"Ejmm"`, `"EEE"`, ...), whose
+    /// concrete pattern is chosen by the locale.
+    static func templated(_ template: String, language: String) -> DateFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        let key = "\(language)|\(template)"
+        if let cached = templatedCache[key] { return cached }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: language)
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        templatedCache[key] = formatter
+        return formatter
+    }
+
+    private static var fixedPatternCache: [String: DateFormatter] = [:]
+
+    /// Formatter for a fixed pattern (`"MMM d"`), where the locale only affects
+    /// symbol rendering rather than field order.
+    static func fixedPattern(_ pattern: String, locale: Locale) -> DateFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        let key = "\(locale.identifier)|\(pattern)"
+        if let cached = fixedPatternCache[key] { return cached }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.dateFormat = pattern
+        fixedPatternCache[key] = formatter
+        return formatter
+    }
+
+    private static var shortTimeRangeCache: [String: DateIntervalFormatter] = [:]
+
+    /// Time-only range formatter ("2 – 3 PM"), used for peak-hour labels.
+    static func shortTimeRange(language: String) -> DateIntervalFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = shortTimeRangeCache[language] { return cached }
+        let formatter = DateIntervalFormatter()
+        formatter.locale = Locale(identifier: language)
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        shortTimeRangeCache[language] = formatter
+        return formatter
+    }
+}
+
 struct QuotaFormatter {
     /// Strict ISO8601 parse that returns nil on failure.
     static func parseISODate(_ isoString: String?) -> Date? {
         guard let isoString = isoString else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        if let parsed = formatter.date(from: isoString) {
-            return parsed
-        }
-        let formatterFraction = ISO8601DateFormatter()
-        formatterFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatterFraction.date(from: isoString)
+        return SharedDateFormatters.parseISO(isoString)
     }
 
     /// A window is "idle" (unanchored) when its reported reset is essentially a

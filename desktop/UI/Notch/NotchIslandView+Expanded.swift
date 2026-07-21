@@ -178,14 +178,8 @@ extension NotchIslandView {
     }
 
     func notchUpdatedText() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
-
         let latest = model.providers.compactMap { provider -> Date? in
-            guard let fetchedAt = provider.fetchedAt else { return nil }
-            return formatter.date(from: fetchedAt) ?? fallbackFormatter.date(from: fetchedAt)
+            QuotaFormatter.parseISODate(provider.fetchedAt)
         }.max()
 
         guard let latest else {
@@ -1221,11 +1215,12 @@ extension NotchIslandView {
     func absoluteResetText(for snapshot: QuotaWindowSnapshot?) -> String? {
         guard let snapshot = snapshot, !snapshot.idle,
               let date = resetsAtDate(from: snapshot.window.resetsAt) else { return nil }
-        let formatter = DateFormatter()
-        // Follow the app language (which may differ from the system locale).
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
         let within24h = date.timeIntervalSince(now) < 24 * 3600
-        formatter.setLocalizedDateFormatFromTemplate(within24h ? "jmm" : "Ejmm")
+        // Follow the app language (which may differ from the system locale).
+        let formatter = SharedDateFormatters.templated(
+            within24h ? "jmm" : "Ejmm",
+            language: L10n.resolvedAppLanguage
+        )
         return formatter.string(from: date)
     }
 
@@ -1239,9 +1234,10 @@ extension NotchIslandView {
     }
 
     func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
-        formatter.setLocalizedDateFormatFromTemplate(narrow ? "EEEEE" : "EEE")
+        let formatter = SharedDateFormatters.templated(
+            narrow ? "EEEEE" : "EEE",
+            language: L10n.resolvedAppLanguage
+        )
         let calendar = Calendar.current
         return (0..<count).map { index in
             if index == count - 1, !narrow {
@@ -1266,10 +1262,7 @@ extension NotchIslandView {
               let end = Calendar.current.date(byAdding: .hour, value: 1, to: start)
         else { return "—" }
 
-        let formatter = DateIntervalFormatter()
-        formatter.locale = Locale(identifier: L10n.resolvedAppLanguage)
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
+        let formatter = SharedDateFormatters.shortTimeRange(language: L10n.resolvedAppLanguage)
         return formatter.string(from: start, to: end)
     }
 
@@ -2094,9 +2087,7 @@ struct ResetTooltipView: View {
     
     private func formatDate(offsetMs: Double) -> String {
         let date = Date().addingTimeInterval(offsetMs / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.dateFormat = "MMM d"
+        let formatter = SharedDateFormatters.fixedPattern("MMM d", locale: Locale.current)
         return formatter.string(from: date)
     }
 }
