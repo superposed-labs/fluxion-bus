@@ -133,7 +133,7 @@
 "preferences.status.detection_pending" = "Detection pending.";
 "preferences.section.interface" = "Interface";
 "preferences.language.title" = "Interface Language";
-"preferences.language.desc" = "Only changes Fluxion's app interface. Default follows macOS.";
+"preferences.language.desc" = "Sets the language for the app, the web console, and quota notifications. Default follows macOS.";
 "preferences.language.system" = "Follow System";
 "preferences.language.zh_hans" = "Simplified Chinese";
 "preferences.language.en" = "English";

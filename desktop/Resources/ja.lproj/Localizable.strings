@@ -133,7 +133,7 @@
 "preferences.status.detection_pending" = "検出待ち。";
 "preferences.section.interface" = "インターフェイス";
 "preferences.language.title" = "インターフェイス言語";
-"preferences.language.desc" = "Fluxion アプリの表示言語だけを変更します。デフォルトでは macOS に従います。";
+"preferences.language.desc" = "アプリ、Web コンソール、クォータ通知の言語を設定します。デフォルトでは macOS に従います。";
 "preferences.language.system" = "システムに従う";
 "preferences.language.zh_hans" = "簡体字中国語";
 "preferences.language.en" = "English";
