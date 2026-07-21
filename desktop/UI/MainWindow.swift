@@ -387,8 +387,12 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
 
     @objc func updateStatusLights() {
         updateDot(webStatusDot, running: appDelegate.isPortListening(appDelegate.envVals["FLUXION_UI_PORT"] ?? "8765"))
-        updateDot(botStatusDot, running: appDelegate.isProcessRunning(pattern: "fluxion-gateway"))
-        updateDot(schedStatusDot, running: appDelegate.isProcessRunning(pattern: "fluxion-scheduler"))
+        // Scoped to this checkout's daemons, so a dot agrees with what the
+        // autostart path considers running: a stray from another checkout is
+        // about to be swept, and a one-shot --get-autoping call is not a
+        // scheduler.
+        updateDot(botStatusDot, running: appDelegate.isServiceDaemonRunning("fluxion-gateway"))
+        updateDot(schedStatusDot, running: appDelegate.isServiceDaemonRunning("fluxion-scheduler"))
     }
 
     private func updateDot(_ dot: NSView?, running: Bool) {
