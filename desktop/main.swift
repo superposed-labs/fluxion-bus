@@ -26,7 +26,7 @@ struct ResetCredits: Codable, Equatable {
     let expiries: [Double]
 }
 
-struct ProviderUsage: Codable {
+struct ProviderUsage: Codable, Equatable {
     let provider: String
     let status: String
     let accountLabel: String?
@@ -42,7 +42,7 @@ struct ProviderUsage: Codable {
     }
 }
 
-struct QuotaWindow: Codable {
+struct QuotaWindow: Codable, Equatable {
     let key: String?
     let label: String?
     let usedPercent: Double?
