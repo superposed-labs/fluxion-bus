@@ -9,6 +9,20 @@ milestones.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-07-22
+
+### Added
+
+- **Claude usage credits** — Fluxion now best-effort retrieves Claude prepaid
+  and promotional credit balances, expiration information, and extra-usage
+  status, displaying them across the macOS and web quota surfaces.
+
+### Changed
+
+- **Gemini pricing** — added Gemini 3.6 Flash and 3.5 Flash-Lite rates, pinned
+  historical Gemini 3.5 pricing, and normalize Antigravity model labels to the
+  canonical billing model.
+
 ## [1.0.10] - 2026-07-22
 
 ### Fixed
@@ -217,7 +231,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.10...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.11...HEAD
+[1.0.11]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.7...v1.0.8
