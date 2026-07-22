@@ -69,6 +69,9 @@ def payload_to_usage(payload: dict[str, Any] | None) -> list[ProviderUsage]:
                 window_minutes=window.get("window_minutes"),
                 remaining=window.get("remaining"),
                 total=window.get("total"),
+                currency=window.get("currency"),
+                expires_at=window.get("expires_at"),
+                enabled=window.get("enabled"),
             )
             for window in provider.get("windows", [])
             if isinstance(window, dict)

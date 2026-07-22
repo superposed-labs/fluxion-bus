@@ -22,6 +22,7 @@
 "menu.resets.next_expires_in" = "Next expires in %dd";
 "menu.resets.rate_limit_available" = "Rate-limit resets available";
 "menu.resets.next_expires" = "Next expires";
+"menu.credits.expires" = "Expires %@";
 "menu.resets.then" = "Then";
 "menu.resets.in_days" = "in %dd";
 "menu.credits.upper" = "CREDITS";
@@ -49,6 +50,8 @@
 "notch.error.upper" = "ERROR";
 "notch.on_credits" = "On credits";
 "notch.credits_ready" = "Credits ready · %@";
+"notch.credits_balance" = "Usage credits · %@";
+"notch.credits_title" = "Usage Credits";
 "notch.tokens_today.upper" = "TOKENS TODAY";
 "notch.cache_hit" = "%d%% cache hit";
 "notch.in_plan" = "in-plan";

@@ -125,6 +125,28 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
+function formatCreditAmount(w: UsageWindow, locale: string): string {
+  if (w.remaining == null) return "—";
+  if (w.currency) {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: w.currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(w.remaining);
+  }
+  return w.remaining >= 1000
+    ? `${(w.remaining / 1000).toFixed(w.remaining % 1000 === 0 ? 0 : 1)}k`
+    : `${w.remaining}`;
+}
+
+function formatCreditExpiry(iso: string | null | undefined, locale: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(date);
+}
+
 function getShortLabel(label: string, key: string): string {
   const lbl = (label || "").toLowerCase();
   const k = (key || "").toLowerCase();
@@ -161,19 +183,18 @@ function simplifyAccountLabel(label: string): string {
 }
 
 function QuotaRow({ w }: { w: UsageWindow }): JSX.Element {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const used = w.used_percent;
 
   if (used == null && w.total == null && w.remaining != null) {
-    const formattedRemaining =
-      w.remaining >= 1000
-        ? `${(w.remaining / 1000).toFixed(w.remaining % 1000 === 0 ? 0 : 1)}k`
-        : `${w.remaining}`;
+    const amount = formatCreditAmount(w, locale);
+    const expiry = formatCreditExpiry(w.expires_at, locale);
     return (
       <div className="quota-row" data-level="ok">
         <span className="quota-win">{getShortLabel(w.label, w.key)}</span>
         <span style={{ gridColumn: "span 3", textAlign: "right", color: "var(--fg-1)" }}>
-          {formattedRemaining} {t("common.credits")}
+          {amount}{!w.currency ? ` ${t("common.credits")}` : ""}
+          {expiry ? ` · ${t("rail.exp", { date: expiry })}` : ""}
         </span>
       </div>
     );
@@ -205,9 +226,7 @@ function QuotaMeters({ quota }: { quota: ProviderUsage | undefined }): JSX.Eleme
   const { t } = useI18n();
   if (!quota || quota.status !== "ok") return null;
 
-  const windows = quota.windows.filter((w) => {
-    return !(quota.provider === "claude" && w.key === "ai_credits");
-  });
+  const windows = quota.windows;
 
   // Split Antigravity into Gemini and External sub-groups
   if (quota.provider === "antigravity") {

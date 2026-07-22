@@ -22,6 +22,7 @@
 "menu.resets.next_expires_in" = "%d日後に期限切れ";
 "menu.resets.rate_limit_available" = "利用可能なレート制限リセット";
 "menu.resets.next_expires" = "次に期限切れ";
+"menu.credits.expires" = "期限 %@";
 "menu.resets.then" = "その後";
 "menu.resets.in_days" = "%d日後";
 "menu.credits.upper" = "クレジット";
@@ -49,6 +50,8 @@
 "notch.error.upper" = "エラー";
 "notch.on_credits" = "クレジット使用中";
 "notch.credits_ready" = "クレジット利用可 · %@";
+"notch.credits_balance" = "利用クレジット · %@";
+"notch.credits_title" = "利用クレジット";
 "notch.tokens_today.upper" = "今日の TOKENS";
 "notch.cache_hit" = "%d%% キャッシュヒット";
 "notch.in_plan" = "プラン内";

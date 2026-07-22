@@ -25,6 +25,12 @@ class UsageWindow:
     # `total` is set the UI shows "remaining / total" instead of a reset clock.
     remaining: float | None = None
     total: float | None = None
+    # Monetary credit metadata. `expires_at` is deliberately separate from
+    # `resets_at`: prepaid/promotional funds expire; rolling quotas reset.
+    currency: str | None = None
+    expires_at: str | None = None
+    # Whether the balance may be used after the included quota is exhausted.
+    enabled: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +41,9 @@ class UsageWindow:
             "window_minutes": self.window_minutes,
             "remaining": self.remaining,
             "total": self.total,
+            "currency": self.currency,
+            "expires_at": self.expires_at,
+            "enabled": self.enabled,
         }
 
 

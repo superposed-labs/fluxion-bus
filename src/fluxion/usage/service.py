@@ -89,6 +89,9 @@ class UsageService:
                             window_minutes=w_dict.get("window_minutes"),
                             remaining=w_dict.get("remaining"),
                             total=w_dict.get("total"),
+                            currency=w_dict.get("currency"),
+                            expires_at=w_dict.get("expires_at"),
+                            enabled=w_dict.get("enabled"),
                         )
                     )
 

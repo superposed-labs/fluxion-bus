@@ -579,9 +579,6 @@ extension AppDelegate {
             }
 
             let addWindowItem = { (w: QuotaWindow, displayName: String) in
-                if p.provider == "claude" && w.key == "ai_credits" {
-                    return
-                }
                 let u = w.usedPercent
                 var winSymbol = "circle.fill"
                 let rawKey = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
@@ -622,9 +619,14 @@ extension AppDelegate {
                     if let remaining = w.remaining, let tot = w.total {
                         amount = "\(Int(remaining)) / \(Int(tot))"
                     } else if let remaining = w.remaining {
-                        amount = "\(Int(remaining))"
+                        amount = QuotaFormatter.formatCreditBalance(remaining, currency: w.currency)
                     } else {
                         amount = "—"
+                    }
+                    let expiry = QuotaFormatter.formatExpiryDate(w.expiresAt)
+                        .map { L10n.tr("menu.credits.expires", $0) } ?? ""
+                    if !expiry.isEmpty {
+                        winItem.toolTip = expiry
                     }
                     rowStr = "  \(displayName)\t\t\(amount)"
                 } else {

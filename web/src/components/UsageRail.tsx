@@ -67,11 +67,7 @@ export function UsageRail({ usage }: UsageRailProps): JSX.Element | null {
 }
 
 function visibleWindows(provider: ProviderUsage): UsageWindow[] {
-  return provider.windows.filter((w) => {
-    // Claude's extra_usage/spend fields are a user-configured billing cap, not
-    // a model quota or API credit balance. Hide legacy cached mappings here.
-    return !(provider.provider === "claude" && w.key === "ai_credits");
-  });
+  return provider.windows;
 }
 
 function fmtCount(n: number): string {
@@ -79,19 +75,43 @@ function fmtCount(n: number): string {
   return `${n}`;
 }
 
+function formatCreditAmount(w: UsageWindow, locale: string): string {
+  if (w.remaining == null) return "—";
+  if (w.currency) {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: w.currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(w.remaining);
+  }
+  return fmtCount(w.remaining);
+}
+
+function formatCreditExpiry(iso: string | null | undefined, locale: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(date);
+}
+
 function QuotaWindowRow({ w }: { w: UsageWindow }): JSX.Element {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const used = w.used_percent;
   const scoped = isScopedWindow(w);
 
   // Pure credit balance (Antigravity AI Credits): a raw count, no bar/clock.
   if (used == null && w.total == null && w.remaining != null) {
+    const expiry = formatCreditExpiry(w.expires_at, locale);
     return (
       <div className="quota-row">
         <div className="quota-row-top">
           <span className="quota-w-label">{w.label}</span>
-          <span className="quota-w-left">{fmtCount(w.remaining)} {t("common.credits")}</span>
+          <span className="quota-w-left">
+            {formatCreditAmount(w, locale)}{!w.currency ? ` ${t("common.credits")}` : ""}
+          </span>
         </div>
+        {expiry ? <div className="quota-reset">{t("rail.exp", { date: expiry })}</div> : null}
       </div>
     );
   }

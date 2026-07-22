@@ -776,7 +776,7 @@ extension NotchIslandView {
         // Reserve credits are provider-level (shared across both pools), so a
         // depleted pool runs on the same reserve rather than locking outright.
         let credits = getCredits(for: p)
-        let hasCredits = (credits ?? 0) > 0
+        let hasCredits = (credits ?? 0) > 0 && quota.creditsEnabled(for: p)
         return fivePools.prefix(2).map { five in
             let weekly = weeklyPools.first(where: { $0.tag == five.tag })
             let fiveZero = five.remaining <= 0
