@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-15",
+  "updated_at": "2026-07-22",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage is split by the 1h/5m token breakdown its transcript records. Current Codex rollout logs do not expose GPT-5.6 cache-write tokens, so reconstructed GPT-5.6 costs are lower bounds until that telemetry is available. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; Fluxion selects `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for GPT-5.4/5.5/5.6 family, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch. This file is the seed for a future standalone pricing repo.",
   "models": {
     "claude-fable-5": {
@@ -199,6 +199,18 @@
         { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.5, "out": 3.0, "cw": 0.5, "cr": 0.05, "source": "Gemini docs (Gemini 3 Flash) — older/cheaper than the 3.5 Flash the 'flash' family now tracks" }
       ]
     },
+    "gemini-3.5-flash": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-05-19", "observed": "2026-07-22", "in": 1.5, "out": 9.0, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.5 Flash) — pinned because the 'flash' family tracks Gemini 3.6 Flash from 2026-07-21" }
+      ]
+    },
+    "gemini-3.1-flash-lite": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-05-07", "observed": "2026-07-22", "in": 0.25, "out": 1.5, "cw": 0.25, "cr": 0.025, "source": "Gemini docs (Gemini 3.1 Flash-Lite) — pinned because the 'flash-lite' family tracks Gemini 3.5 Flash-Lite from 2026-07-21" }
+      ]
+    },
     "gemini-2.5-pro": {
       "provider": "antigravity",
       "rates": [
@@ -264,10 +276,12 @@
       { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.75, "out": 4.5, "cw": 0.75, "cr": 0.075, "source": "OpenAI docs (gpt-5.4-mini; only version on the page, no gpt-5.5-mini exists yet)" }
     ],
     "flash-lite": [
-      { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.25, "out": 1.5, "cw": 0.25, "cr": 0.025, "source": "Gemini docs (Gemini 3.1 Flash-Lite, current text/image/video); older 2.5 Flash-Lite pinned in models. Checked before 'flash'/'gemini'." }
+      { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.25, "out": 1.5, "cw": 0.25, "cr": 0.025, "source": "Gemini docs (Gemini 3.1 Flash-Lite, current text/image/video); older 2.5 Flash-Lite pinned in models. Checked before 'flash'/'gemini'." },
+      { "effective_date": "2026-07-21", "observed": "2026-07-22", "in": 0.3, "out": 2.5, "cw": 0.3, "cr": 0.03, "source": "Gemini docs (Gemini 3.5 Flash-Lite); Gemini 3.1 and 2.5 Flash-Lite remain pinned in models. Checked before 'flash'/'gemini'." }
     ],
     "flash": [
-      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.5, "out": 9.0, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.5 Flash, current); Flash is repriced per version (3 Flash was $0.50/$3, 2.5 Flash $0.30/$2.50), so this tracks the latest and older versions are pinned in 'models'. Checked before 'gemini'." }
+      { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.5, "out": 9.0, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.5 Flash, current); Flash is repriced per version (3 Flash was $0.50/$3, 2.5 Flash $0.30/$2.50), so this tracks the latest and older versions are pinned in 'models'. Checked before 'gemini'." },
+      { "effective_date": "2026-07-21", "observed": "2026-07-22", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.6 Flash); Gemini 3.5, 3, and 2.5 Flash remain pinned in models. Checked before 'gemini'." }
     ],
     "gemini": [
       {
