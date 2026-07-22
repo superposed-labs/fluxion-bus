@@ -13,6 +13,7 @@ lives apart from the parsing/aggregation pipeline.
 from __future__ import annotations
 
 import functools
+import re
 from typing import Any
 
 from fluxion.usage import price_data
@@ -87,6 +88,28 @@ _FALLBACK_PRICES: dict[str, Any] = {
     },
 }
 
+_GEMINI_DISPLAY_MODEL_RE = re.compile(
+    r"^gemini\s+(?P<version>\d+(?:\.\d+)*)\s+"
+    r"(?P<tier>flash(?:[-\s]lite)?|pro)(?:\s*\([^()]+\))?$",
+    re.IGNORECASE,
+)
+
+
+def _canonical_model_id(model: str) -> str:
+    """Return the billing model id for a provider display label.
+
+    Antigravity records labels such as ``Gemini 3.5 Flash (High)``. The
+    parenthesized value controls thinking depth and token consumption, not the
+    per-token rate, so collapse those labels to Google's official model id
+    before exact price lookup. Other providers' model ids are only lowercased.
+    """
+    low = model.strip().lower()
+    match = _GEMINI_DISPLAY_MODEL_RE.fullmatch(low)
+    if match is None:
+        return low
+    tier = re.sub(r"\s+", "-", match.group("tier"))
+    return f"gemini-{match.group('version')}-{tier}"
+
 
 @functools.lru_cache(maxsize=2)
 def _load_prices_for_stamp(stamp: tuple) -> dict[str, Any]:
@@ -157,7 +180,7 @@ def _rates_for_stamp(
     stamp: tuple, provider: str, model: str, at_date: str | None, fast: bool
 ) -> dict[str, float] | None:
     prices = _load_prices()
-    low = model.lower()
+    low = _canonical_model_id(model)
     if fast:
         fast_rate = _resolve_fast(prices, model, low, at_date)
         if fast_rate is not None:

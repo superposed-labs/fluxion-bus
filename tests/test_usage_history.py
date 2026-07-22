@@ -563,6 +563,42 @@ def test_family_match_respects_word_boundary():
     assert history._family_match("gemini", "gemini-3-pro") is True
 
 
+def test_gemini_thinking_level_uses_the_canonical_model_price(fixed_prices):
+    fixed_prices["models"].update(
+        {
+            "gemini-3.5-flash": {
+                "rates": [
+                    {
+                        "effective_date": "2026-05-19",
+                        "in": 1.5,
+                        "out": 9.0,
+                        "cw": 1.5,
+                        "cr": 0.15,
+                    }
+                ]
+            }
+        }
+    )
+    fixed_prices["families"]["flash"] = [
+        {
+            "effective_date": "2026-07-21",
+            "in": 1.5,
+            "out": 7.5,
+            "cw": 1.5,
+            "cr": 0.15,
+        }
+    ]
+    history._rates_for.cache_clear()
+
+    high = history._rates_for("antigravity", "Gemini 3.5 Flash (High)", "2026-07-22")
+    low = history._rates_for("antigravity", "Gemini 3.5 Flash(Low)", "2026-07-22")
+    latest = history._rates_for("antigravity", "gemini-3.6-flash", "2026-07-22")
+
+    assert high is not None and high["out"] == 9.0
+    assert low == high
+    assert latest is not None and latest["out"] == 7.5
+
+
 def test_pick_rate_by_effective_date():
     # A model whose price was halved for a promo window, then restored.
     rates = [
