@@ -11,6 +11,7 @@ from fluxion.utils.logger import get_logger
 logger = get_logger("fluxion.usage.probes")
 
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_OAUTH_API_BASE = "https://api.anthropic.com"
 CLAUDE_OAUTH_BETA = "oauth-2025-04-20"
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"

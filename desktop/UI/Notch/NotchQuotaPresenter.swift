@@ -67,6 +67,7 @@ struct ProviderQuotaState {
     let fiveHour: QuotaWindowSnapshot?
     let weekly: QuotaWindowSnapshot?
     let credits: Double?
+    let creditsEnabled: Bool
     let lockReason: String
     let note: String?
     let lockResetKind: QuotaWindowKind
@@ -177,13 +178,16 @@ struct NotchQuotaPresenter {
     }
 
     func getCredits(for provider: ProviderUsage) -> Double? {
-        if provider.provider == "claude" {
-            return nil
-        }
         if let creditsWindow = provider.windows.first(where: { $0.key == "ai_credits" }) {
             return creditsWindow.remaining
         }
         return nil
+    }
+
+    func creditsEnabled(for provider: ProviderUsage) -> Bool {
+        guard let window = provider.windows.first(where: { $0.key == "ai_credits" }),
+              (window.remaining ?? 0) > 0 else { return false }
+        return provider.provider != "claude" || window.enabled == true
     }
 
     func poolTagRank(_ tag: String?) -> Int {
@@ -249,7 +253,8 @@ struct NotchQuotaPresenter {
             bindingLabel = .fiveHour
         }
         let credits = getCredits(for: provider)
-        let hasCredits = (credits ?? 0) > 0
+        let creditsEnabled = creditsEnabled(for: provider)
+        let hasCredits = (credits ?? 0) > 0 && creditsEnabled
         let bindingRemaining = bindingSnapshot?.remaining ?? 100.0
         let weekZero = weekly.map { $0.remaining <= 0.0 } ?? false
         let fiveZero = fiveHour.map { $0.remaining <= 0.0 } ?? false
@@ -327,6 +332,7 @@ struct NotchQuotaPresenter {
             fiveHour: fiveHour,
             weekly: weekly,
             credits: credits,
+            creditsEnabled: creditsEnabled,
             lockReason: lockReason,
             note: note,
             lockResetKind: weekZero ? .weekly : .fiveHour,
@@ -345,7 +351,8 @@ struct NotchQuotaPresenter {
         let fiveHour = getActive5hWindow(for: provider)
         let weekly = getActiveWeeklyWindow(for: provider)
         let credits = getCredits(for: provider)
-        let hasCredits = (credits ?? 0) > 0
+        let creditsEnabled = creditsEnabled(for: provider)
+        let hasCredits = (credits ?? 0) > 0 && creditsEnabled
         let blocked = pools.filter { $0.blocked }
         let alive = pools.filter { !$0.blocked }
         let blockedInfo = blocked.map {
@@ -442,6 +449,7 @@ struct NotchQuotaPresenter {
             fiveHour: fiveHour,
             weekly: weekly,
             credits: credits,
+            creditsEnabled: creditsEnabled,
             lockReason: lockReason,
             note: note,
             lockResetKind: earliest?.blockingKind ?? .fiveHour,

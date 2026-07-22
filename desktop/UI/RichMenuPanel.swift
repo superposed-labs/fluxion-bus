@@ -350,7 +350,6 @@ final class RichMenuPanelView: NSView {
                 y += rowH
             }
             for w in p.windows {
-                if p.provider == "claude" && w.key == "ai_credits" { continue }
                 drawQuotaRow(w, fetchedAt: p.fetchedAt, y: y, hoverID: "quota-\(p.provider)-\(w.key ?? w.label ?? "\(y)")", labelOverride: compactQuotaWindowLabel(w))
                 y += rowH
             }
@@ -377,7 +376,7 @@ final class RichMenuPanelView: NSView {
         let pctX = barX + 130 + 12
         let resetX = pctX + 48 + 12
         let isIdle = QuotaFormatter.isWindowIdle(w, fetchedAt: fetchedAt)
-        let sym = isIdle ? "moon.zzz.fill" : "clock"
+        let sym = w.key == "ai_credits" ? "creditcard.fill" : (isIdle ? "moon.zzz.fill" : "clock")
         drawSymbol(sym, x: rowX + 5, y: y + 8, size: 14, color: usageColor(used: w.usedPercent))
         draw(label, x: rowX + 36, y: y + 6, size: 13.0, weight: .regular, color: text)
 
@@ -387,10 +386,23 @@ final class RichMenuPanelView: NSView {
                 if let total = w.total {
                     amount = "\(Int(remaining)) / \(Int(total))"
                 } else {
-                    amount = "\(Int(remaining))"
+                    amount = QuotaFormatter.formatCreditBalance(remaining, currency: w.currency)
                 }
                 let amountWidth = width(amount, size: 13.0, weight: .semibold)
-                draw(amount, x: resetX + 68 - amountWidth, y: y + 6, size: 13.0, weight: .semibold, color: text)
+                let rightEdge = resetX + 68
+                if let expiryDate = QuotaFormatter.formatExpiryDate(w.expiresAt) {
+                    let expiry = L10n.tr("menu.credits.expires", expiryDate)
+                    let expiryWidth = width(expiry, size: 11.5, weight: .regular)
+                    let expiryX = rightEdge - expiryWidth
+                    let separator = "·"
+                    let separatorWidth = width(separator, size: 11.5, weight: .regular)
+                    let separatorX = expiryX - 10 - separatorWidth
+                    draw(amount, x: separatorX - 10 - amountWidth, y: y + 6, size: 13.0, weight: .semibold, color: text)
+                    draw(separator, x: separatorX, y: y + 7, size: 11.5, weight: .regular, color: muted)
+                    draw(expiry, x: expiryX, y: y + 7, size: 11.5, weight: .regular, color: muted)
+                } else {
+                    draw(amount, x: rightEdge - amountWidth, y: y + 6, size: 13.0, weight: .semibold, color: text)
+                }
             } else {
                 draw("—", x: pctX + 34, y: y + 6, size: 13.0, weight: .semibold, color: muted)
                 let reset = resetDuration(window: w, fetchedAt: fetchedAt)
@@ -999,7 +1011,6 @@ final class RichMenuPanelView: NSView {
     }
 
     private func isDisplayedQuotaWindow(_ window: QuotaWindow, provider: String) -> Bool {
-        if provider == "claude" && window.key == "ai_credits" { return false }
         if provider == "antigravity" && window.key == "ai_credits" { return false }
         return window.usedPercent != nil || window.resetsAt != nil || window.remaining != nil
     }

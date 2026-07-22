@@ -405,8 +405,7 @@ extension NotchIslandView {
         for provider: ProviderUsage,
         state: ProviderQuotaState,
         visual: ProviderVisual,
-        footerVisible: Bool,
-        reserveVisible: Bool
+        footerVisible: Bool
     ) -> some View {
         let weeklyPools = antigravityWeeklyPools(for: provider)
         let useAntigravityRows = provider.provider == "antigravity" && weeklyPools.count >= 2
@@ -435,8 +434,7 @@ extension NotchIslandView {
                 state: state,
                 visual: visual,
                 provider: provider,
-                footerVisible: footerVisible,
-                reserveVisible: reserveVisible
+                footerVisible: footerVisible
             )
         }
         .padding(.top, 4)
@@ -713,11 +711,11 @@ extension NotchIslandView {
         state: ProviderQuotaState,
         visual: ProviderVisual,
         provider: ProviderUsage,
-        footerVisible: Bool,
-        reserveVisible: Bool
+        footerVisible: Bool
     ) -> some View {
         let hasResets = provider.provider == "codex" && provider.resets != nil && (provider.resets?.count ?? 0) > 0
-        let showFooter = footerVisible || hasResets
+        let creditsWindow = provider.windows.first(where: { $0.key == "ai_credits" })
+        let showFooter = footerVisible || hasResets || creditsWindow != nil
 
         if showFooter {
             // Content-driven: sizes to the note's natural 1 or 2 lines instead of
@@ -729,17 +727,11 @@ extension NotchIslandView {
                     .padding(.top, provider.provider == "antigravity" ? 4 : 10)
                     .padding(.bottom, provider.provider == "antigravity" ? 8 : 10)
 
-                // A note outranks the ambient "credits ready" line: it only
-                // coexists with reserveVisible in the partial-block state,
-                // where "GEM 5h spent — EXT available" is the actionable fact.
-                if reserveVisible, state.note == nil, let credits = state.credits {
-                    HStack(spacing: 5) {
-                        CoinIcon(size: 9)
-                        Text(L10n.tr("notch.credits_ready", provider.provider != "antigravity" ? String(format: "$%.2f", credits) : "\(Int(credits))"))
-                    }
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundColor(Color(NSColor.systemGreen))
-                } else if let note = state.note {
+                // Keep the blocking reason primary, but do not hide a real
+                // balance just because a quota window is exhausted. Disabled
+                // Claude extra usage remains neutral rather than implying that
+                // the balance can take over automatically.
+                if let note = state.note {
                     Text(provider.provider == "antigravity" ? note.replacingOccurrences(of: " — ", with: "\n") : note)
                         .font(.system(size: 10, weight: .bold))
                         .multilineTextAlignment(.center)
@@ -749,7 +741,12 @@ extension NotchIslandView {
                         .foregroundColor(state.mode == .credits ? Color(NSColor.systemGreen)
                             : state.mode == .recovering ? Color(NSColor.systemYellow)
                             : Color(NSColor.systemRed))
-                } else if hasResets, let resets = provider.resets {
+                }
+                if let creditsWindow {
+                    UsageCreditsView(window: creditsWindow, enabled: state.creditsEnabled)
+                        .padding(.top, state.note == nil ? 0 : 8)
+                }
+                if hasResets, let resets = provider.resets {
                     ResetChipView(resets: resets, brandColor: Color(visual.brandColor), justGranted: model.justGranted)
                 }
             }
@@ -806,8 +803,7 @@ extension NotchIslandView {
                 let secondaryPool = poolArcs.isEmpty
                     ? nil
                     : splitRingSecondaryPool(for: p, state: state, bound: splitRing, visual: visual)
-                let reserveVisible = state.mode == .healthy && credits != nil
-                let footerVisible = reserveVisible || state.note != nil
+                let footerVisible = state.note != nil
 
                 VStack(spacing: 0) {
                     if !(model.providers.count == 1 && model.expandedStyle == "compact") {
@@ -832,8 +828,7 @@ extension NotchIslandView {
                         for: p,
                         state: state,
                         visual: visual,
-                        footerVisible: footerVisible,
-                        reserveVisible: reserveVisible
+                        footerVisible: footerVisible
                     )
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
@@ -1184,6 +1179,15 @@ extension NotchIslandView {
                         scopedQuotaRow(row, visual: visual)
                     }
                 }
+                .padding(.top, 3)
+            }
+            if let creditsWindow = provider.windows.first(where: { $0.key == "ai_credits" }),
+               creditsWindow.remaining != nil {
+                UsageCreditsView(
+                    window: creditsWindow,
+                    enabled: quota.creditsEnabled(for: provider),
+                    ledgerStyle: true
+                )
                 .padding(.top, 3)
             }
             // Codex reset credits as a full ledger row (the same chip the
@@ -2008,6 +2012,95 @@ extension View {
             modifier(PlaceholderPulse())
         } else {
             self
+        }
+    }
+}
+
+struct UsageCreditsView: View {
+    let window: QuotaWindow
+    let enabled: Bool
+    var ledgerStyle = false
+    @State private var isHovering = false
+    @State private var hoverWorkItem: DispatchWorkItem? = nil
+
+    private var amount: String {
+        guard let balance = window.remaining else { return "—" }
+        return QuotaFormatter.formatCreditBalance(balance, currency: window.currency)
+    }
+
+    private var expiry: String? {
+        QuotaFormatter.formatExpiryDate(window.expiresAt)
+    }
+
+    private var tint: Color {
+        enabled ? Color(NSColor.systemGreen) : Color.white.opacity(0.5)
+    }
+
+    var body: some View {
+        Group {
+            if ledgerStyle {
+                HStack(spacing: 6) {
+                    Image(systemName: "creditcard.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(tint)
+                    Text(L10n.tr("notch.credits_title"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
+                    Spacer(minLength: 8)
+                    Text(amount)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.88))
+                }
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: "creditcard.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(L10n.tr(
+                        enabled ? "notch.credits_ready" : "notch.credits_balance",
+                        amount
+                    ))
+                }
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundColor(tint)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            guard expiry != nil else { return }
+            if hovering {
+                hoverWorkItem?.cancel()
+                let item = DispatchWorkItem { isHovering = true }
+                hoverWorkItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+            } else {
+                hoverWorkItem?.cancel()
+                isHovering = false
+            }
+        }
+        .popover(isPresented: $isHovering, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: "creditcard.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(tint)
+                    Text(L10n.tr("notch.credits_title"))
+                        .font(.system(size: 11.5, weight: .bold))
+                    Spacer(minLength: 14)
+                    Text(amount)
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                }
+                Divider()
+                    .background(Color.white.opacity(0.12))
+                if let expiry {
+                    Text(L10n.tr("menu.credits.expires", expiry))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.58))
+                }
+            }
+            .padding(12)
+            .frame(width: 220)
+            .background(Color.black.opacity(0.25))
+            .preferredColorScheme(.dark)
         }
     }
 }

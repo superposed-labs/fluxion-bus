@@ -473,6 +473,7 @@ def test_claude_ignores_extra_usage_spend_cap(monkeypatch):
         },
     }
     monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_profile", lambda self, token: {})
     cfg = ProbeConfig(claude_usage_token="tok-123")
     usage = ClaudeUsageProbe(cfg).probe()
 
@@ -483,6 +484,114 @@ def test_claude_ignores_extra_usage_spend_cap(monkeypatch):
     assert by_key["agent_sdk"].used_percent == 5.0
     assert by_key["agent_sdk"].resets_at == "2026-06-04T12:00:00+00:00"
     assert "ai_credits" not in by_key
+
+
+def test_claude_fetches_oauth_prepaid_credits_and_caches_org(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 27.0, "resets_at": "2026-06-02T10:00:00Z"},
+        "seven_day": {"utilization": 13.0, "resets_at": "2026-06-03T21:00:00Z"},
+        "extra_usage": {"is_enabled": True},
+    }
+    calls = {"profile": 0, "credits": 0}
+
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+
+    def fake_profile(self, token):
+        calls["profile"] += 1
+        return {
+            "organization": {"uuid": "org-123"},
+            "has_extra_usage_enabled": True,
+        }
+
+    def fake_credits(self, token, organization_uuid):
+        calls["credits"] += 1
+        assert organization_uuid == "org-123"
+        return {
+            "amount": 10_000,
+            "balance_credits": 100,
+            "currency": "usd",
+            "next_expires_at": "2026-09-19T00:00:00Z",
+        }
+
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_profile", fake_profile)
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_prepaid_credits", fake_credits)
+    probe = ClaudeUsageProbe(ProbeConfig(claude_usage_token="tok-123"))
+
+    first = probe.probe()
+    second = probe.probe()
+
+    assert first.status == STATUS_OK
+    credits = {w.key: w for w in first.windows}["ai_credits"]
+    assert credits.label == "Usage Credits"
+    assert credits.remaining == 100.0
+    assert credits.currency == "USD"
+    assert credits.expires_at == "2026-09-19T00:00:00Z"
+    assert credits.enabled is True
+    assert {w.key: w for w in second.windows}["ai_credits"].remaining == 100.0
+    assert calls == {"profile": 1, "credits": 2}
+
+
+def test_claude_prepaid_credits_falls_back_to_amount_minor_units():
+    window = ClaudeUsageProbe._map_credits_window(
+        {"amount": 12_345, "currency": "USD"}, enabled=False
+    )
+
+    assert window is not None
+    assert window.remaining == 123.45
+    assert window.currency == "USD"
+    assert window.enabled is False
+
+
+def test_claude_credits_failure_does_not_break_usage_windows(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 10.0, "resets_at": "2026-06-02T10:00:00Z"},
+        "extra_usage": {"is_enabled": True},
+    }
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    monkeypatch.setattr(
+        ClaudeUsageProbe,
+        "_fetch_profile",
+        lambda self, token: {"organization": {"uuid": "org-123"}},
+    )
+    monkeypatch.setattr(
+        ClaudeUsageProbe,
+        "_fetch_prepaid_credits",
+        lambda self, token, org: (_ for _ in ()).throw(
+            urllib.error.HTTPError("url", 500, "error", None, None)
+        ),
+    )
+
+    usage = ClaudeUsageProbe(ProbeConfig(claude_usage_token="tok-123")).probe()
+
+    assert usage.status == STATUS_OK
+    assert [w.key for w in usage.windows] == ["5h"]
+
+
+def test_claude_credits_403_refreshes_org_and_retries_once(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 10.0, "resets_at": "2026-06-02T10:00:00Z"},
+        "extra_usage": {"is_enabled": True},
+    }
+    calls = {"profile": 0, "credits": 0}
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+
+    def fake_profile(self, token):
+        calls["profile"] += 1
+        return {"organization": {"uuid": "org-refreshed"}}
+
+    def fake_credits(self, token, org):
+        calls["credits"] += 1
+        if calls["credits"] == 1:
+            raise urllib.error.HTTPError("url", 403, "forbidden", None, None)
+        return {"balance_credits": 25, "currency": "USD"}
+
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_profile", fake_profile)
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_prepaid_credits", fake_credits)
+
+    usage = ClaudeUsageProbe(ProbeConfig(claude_usage_token="tok-123")).probe()
+
+    assert {w.key: w for w in usage.windows}["ai_credits"].remaining == 25.0
+    assert calls == {"profile": 2, "credits": 2}
 
 
 def test_claude_unavailable_without_token(monkeypatch):
@@ -551,6 +660,7 @@ def test_claude_auto_refreshes_file_credential_after_401(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     calls: list[str] = []
+    credit_tokens: list[str] = []
 
     def fake_fetch(self, token):
         calls.append(token)
@@ -562,7 +672,10 @@ def test_claude_auto_refreshes_file_credential_after_401(tmp_path, monkeypatch):
                 hdrs=None,
                 fp=None,
             )
-        return {"five_hour": {"utilization": 10, "resets_at": "2026-06-02T10:00:00Z"}}
+        return {
+            "five_hour": {"utilization": 10, "resets_at": "2026-06-02T10:00:00Z"},
+            "extra_usage": {"is_enabled": True},
+        }
 
     monkeypatch.setattr(ClaudeUsageProbe, "_fetch", fake_fetch)
     monkeypatch.setattr(
@@ -574,11 +687,22 @@ def test_claude_auto_refreshes_file_credential_after_401(tmp_path, monkeypatch):
             "expires_in": 3600,
         },
     )
+    monkeypatch.setattr(
+        ClaudeUsageProbe, "_organization_uuid_from_local_account", lambda self: "org-123"
+    )
+
+    def fake_credits(self, token, org):
+        credit_tokens.append(token)
+        assert org == "org-123"
+        return {"balance_credits": 100, "currency": "USD"}
+
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch_prepaid_credits", fake_credits)
     cfg = ProbeConfig(claude_credentials_path=creds, claude_auto_refresh=True)
     usage = ClaudeUsageProbe(cfg).probe()
 
     assert usage.status == STATUS_OK
     assert calls == ["expired-access", "fresh-access"]
+    assert credit_tokens == ["fresh-access"]
     saved = json.loads(creds.read_text(encoding="utf-8"))
     oauth = saved["claudeAiOauth"]
     assert oauth["accessToken"] == "fresh-access"

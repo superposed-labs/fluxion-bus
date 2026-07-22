@@ -22,6 +22,7 @@
 "menu.resets.next_expires_in" = "%d 天后过期";
 "menu.resets.rate_limit_available" = "可用的限速重置";
 "menu.resets.next_expires" = "下次过期";
+"menu.credits.expires" = "%@ 到期";
 "menu.resets.then" = "之后";
 "menu.resets.in_days" = "%d 天后";
 "menu.credits.upper" = "点数";
@@ -49,6 +50,8 @@
 "notch.error.upper" = "错误";
 "notch.on_credits" = "使用点数";
 "notch.credits_ready" = "点数可用 · %@";
+"notch.credits_balance" = "使用额度 · %@";
+"notch.credits_title" = "使用额度";
 "notch.tokens_today.upper" = "今日 TOKENS";
 "notch.cache_hit" = "%d%% 缓存命中";
 "notch.in_plan" = "计划内";

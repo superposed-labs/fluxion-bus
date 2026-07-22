@@ -181,6 +181,10 @@ export interface UsageWindow {
   // Credit-style providers (Antigravity): absolute balance instead of a clock.
   remaining: number | null;
   total: number | null;
+  // Optional metadata for monetary credit balances (for example Claude Usage Credits).
+  currency?: string | null;
+  expires_at?: string | null;
+  enabled?: boolean | null;
 }
 
 export interface ResetCredits {

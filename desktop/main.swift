@@ -50,12 +50,16 @@ struct QuotaWindow: Codable, Equatable {
     let windowMinutes: Int?
     let remaining: Double?
     let total: Double?
+    let currency: String?
+    let expiresAt: String?
+    let enabled: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case key, label, remaining, total
+        case key, label, remaining, total, currency, enabled
         case usedPercent = "used_percent"
         case resetsAt = "resets_at"
         case windowMinutes = "window_minutes"
+        case expiresAt = "expires_at"
     }
 
     /// Model-scoped sub-limit (e.g. Claude's Fable weekly cap). The "scoped_"

@@ -109,6 +109,22 @@ enum SharedDateFormatters {
     }
 
     private static var shortTimeRangeCache: [String: DateIntervalFormatter] = [:]
+    private static var currencyCache: [String: NumberFormatter] = [:]
+
+    static func currency(code: String, language: String) -> NumberFormatter {
+        lock.lock()
+        defer { lock.unlock() }
+        let key = "\(language)|\(code)"
+        if let cached = currencyCache[key] { return cached }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: language)
+        formatter.numberStyle = .currency
+        formatter.currencyCode = code
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        currencyCache[key] = formatter
+        return formatter
+    }
 
     /// Time-only range formatter ("2 – 3 PM"), used for peak-hour labels.
     static func shortTimeRange(language: String) -> DateIntervalFormatter {
@@ -129,6 +145,20 @@ struct QuotaFormatter {
     static func parseISODate(_ isoString: String?) -> Date? {
         guard let isoString = isoString else { return nil }
         return SharedDateFormatters.parseISO(isoString)
+    }
+
+    static func formatCreditBalance(_ value: Double, currency: String?) -> String {
+        guard let code = currency?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !code.isEmpty else {
+            return value.rounded() == value ? "\(Int(value))" : "\(value)"
+        }
+        let formatter = SharedDateFormatters.currency(code: code, language: L10n.resolvedAppLanguage)
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
+    }
+
+    static func formatExpiryDate(_ isoString: String?) -> String? {
+        guard let date = parseISODate(isoString) else { return nil }
+        return SharedDateFormatters.templated("yMMMd", language: L10n.resolvedAppLanguage).string(from: date)
     }
 
     /// A window is "idle" (unanchored) when its reported reset is essentially a

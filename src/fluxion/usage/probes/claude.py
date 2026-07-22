@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from fluxion.usage.models import (
     UsageWindow,
 )
 from fluxion.usage.probes._common import (
+    CLAUDE_OAUTH_API_BASE,
     CLAUDE_OAUTH_BETA,
     CLAUDE_USAGE_URL,
     ProbeConfig,
@@ -129,6 +131,9 @@ class ClaudeUsageProbe:
         self._config = config
         self._cred_sub_type = ""
         self._last_refresh_error = ""
+        self._organization_uuid = ""
+        self._credential_marker = ""
+        self._profile_extra_usage_enabled: bool | None = None
 
     def provider(self) -> str:
         return "claude"
@@ -150,16 +155,20 @@ class ClaudeUsageProbe:
                     "only, not API keys."
                 ),
             )
+        self._track_credential(credential)
         if self._should_refresh(credential):
             credential = self._refresh_credential(credential) or credential
+            self._track_credential(credential)
         try:
             data = self._fetch(credential.access_token)
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 refreshed = self._refresh_credential(credential)
                 if refreshed:
+                    credential = refreshed
+                    self._track_credential(credential)
                     try:
-                        data = self._fetch(refreshed.access_token)
+                        data = self._fetch(credential.access_token)
                     except urllib.error.HTTPError as retry_exc:
                         return self._http_error_usage(retry_exc)
                     except Exception as retry_exc:  # noqa: BLE001
@@ -190,6 +199,9 @@ class ClaudeUsageProbe:
             )
 
         windows = self._map_windows(data)
+        credit_window = self._probe_credits_window(credential, data)
+        if credit_window is not None:
+            windows.append(credit_window)
         # The usage endpoint omits the plan; the credential carries it (e.g. "pro").
         account = self._cred_sub_type or self._account_label(data)
         if not windows:
@@ -207,6 +219,14 @@ class ClaudeUsageProbe:
             windows=windows,
             fetched_at=_now_iso(),
         )
+
+    def _track_credential(self, credential: _ClaudeCredential) -> None:
+        marker = hashlib.sha256(credential.access_token.encode("utf-8")).hexdigest()
+        if marker == self._credential_marker:
+            return
+        self._credential_marker = marker
+        self._organization_uuid = ""
+        self._profile_extra_usage_enabled = None
 
     def _http_error_usage(self, exc: urllib.error.HTTPError) -> ProviderUsage:
         hint = " (check FLUXION_CLAUDE_CODE_USER_AGENT)" if exc.code == 429 else ""
@@ -233,6 +253,153 @@ class ClaudeUsageProbe:
             raw = resp.read().decode("utf-8")
         parsed = json.loads(raw)
         return parsed if isinstance(parsed, dict) else {}
+
+    def _oauth_get(self, token: str, path: str) -> dict[str, Any]:
+        req = urllib.request.Request(
+            f"{CLAUDE_OAUTH_API_BASE}{path}",
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": CLAUDE_OAUTH_BETA,
+                "User-Agent": self._config.claude_user_agent,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=self._config.http_timeout_sec) as resp:
+            raw = resp.read().decode("utf-8")
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _fetch_profile(self, token: str) -> dict[str, Any]:
+        return self._oauth_get(token, "/api/oauth/profile")
+
+    def _fetch_prepaid_credits(self, token: str, organization_uuid: str) -> dict[str, Any]:
+        return self._oauth_get(
+            token, f"/api/oauth/organizations/{organization_uuid}/prepaid/credits"
+        )
+
+    def _probe_credits_window(
+        self, credential: _ClaudeCredential, usage_data: dict[str, Any]
+    ) -> UsageWindow | None:
+        # The usage payload is the capability signal used by Claude Code. It also
+        # keeps older/inference-only tokens from causing an extra profile request
+        # on every ordinary quota poll when credits are unavailable.
+        extra_usage = usage_data.get("extra_usage")
+        if not isinstance(extra_usage, dict):
+            return None
+        enabled = extra_usage.get("is_enabled")
+        enabled = enabled if isinstance(enabled, bool) else None
+
+        try:
+            organization_uuid = self._resolve_organization_uuid(credential)
+            if not organization_uuid:
+                return None
+            data = self._fetch_prepaid_credits(credential.access_token, organization_uuid)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (403, 404):
+                return None
+            # A login/account switch can leave an otherwise valid cached org UUID
+            # behind. Refresh it from the token and retry exactly once.
+            self._organization_uuid = ""
+            self._profile_extra_usage_enabled = None
+            try:
+                organization_uuid = self._resolve_organization_uuid(credential, force_profile=True)
+                if not organization_uuid:
+                    return None
+                data = self._fetch_prepaid_credits(credential.access_token, organization_uuid)
+            except Exception:  # noqa: BLE001 - credits are optional enrichment
+                return None
+        except Exception:  # noqa: BLE001 - credits must never break 5h/weekly
+            return None
+
+        if enabled is None:
+            enabled = self._profile_extra_usage_enabled
+        return self._map_credits_window(data, enabled=enabled)
+
+    def _resolve_organization_uuid(
+        self, credential: _ClaudeCredential, *, force_profile: bool = False
+    ) -> str:
+        if self._organization_uuid and not force_profile:
+            return self._organization_uuid
+
+        if not force_profile:
+            organization_uuid = self._organization_uuid_from(credential.data)
+            if not organization_uuid and credential.source != "env":
+                organization_uuid = self._organization_uuid_from_local_account()
+            if organization_uuid:
+                self._organization_uuid = organization_uuid
+                return organization_uuid
+
+        profile = self._fetch_profile(credential.access_token)
+        organization_uuid = self._organization_uuid_from(profile)
+        profile_enabled = _find_first(profile, {"has_extra_usage_enabled", "hasExtraUsageEnabled"})
+        if isinstance(profile_enabled, bool):
+            self._profile_extra_usage_enabled = profile_enabled
+        if organization_uuid:
+            self._organization_uuid = organization_uuid
+        return organization_uuid
+
+    @staticmethod
+    def _organization_uuid_from(data: Any) -> str:
+        value = _find_first(
+            data,
+            {
+                "organization_uuid",
+                "organizationUuid",
+                "organizationUUID",
+                "org_uuid",
+                "orgUuid",
+                "orgUUID",
+            },
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(data, dict):
+            organization = data.get("organization")
+            if isinstance(organization, dict):
+                value = organization.get("uuid") or organization.get("id")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
+
+    def _organization_uuid_from_local_account(self) -> str:
+        try:
+            path = Path.home() / ".claude.json"
+            if not path.is_file():
+                return ""
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        oauth_account = data.get("oauthAccount") if isinstance(data, dict) else None
+        return self._organization_uuid_from(oauth_account)
+
+    @staticmethod
+    def _map_credits_window(data: dict[str, Any], *, enabled: bool | None) -> UsageWindow | None:
+        def number(value: Any) -> float | None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return float(value)
+
+        balance = number(data.get("balance_credits"))
+        if balance is None:
+            amount = number(data.get("amount"))
+            balance = amount / 100.0 if amount is not None else None
+        if balance is None:
+            return None
+        currency = data.get("currency")
+        currency = currency.upper() if isinstance(currency, str) and currency.strip() else "USD"
+        expires_at = _normalize_reset(
+            data.get("next_expires_at") or data.get("nextExpiresAt") or data.get("expires_at")
+        )
+        return UsageWindow(
+            key="ai_credits",
+            label="Usage Credits",
+            remaining=max(0.0, balance),
+            currency=currency,
+            expires_at=expires_at,
+            enabled=enabled,
+        )
 
     def _map_windows(self, data: dict[str, Any]) -> list[UsageWindow]:
         windows: list[UsageWindow] = []
