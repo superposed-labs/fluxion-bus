@@ -321,6 +321,9 @@
 "preferences.auto_update.desc" = "Fluxion がバックグラウンドで確認して通知します。確認なしにインストールすることはありません。";
 "update.available.title" = "アップデートがあります";
 "update.available.body" = "Fluxion %@ が利用可能です。Fluxion を開いてインストールしてください。";
+"update.available.action" = "アップデートを表示";
+"update.available.hint" = "Fluxion %@ が利用可能です";
+"update.available.menu" = "アップデートがあります…";
 "preferences.python_missing.title" = "Fluxion Python 環境が見つかりません";
 "preferences.python_missing.message" = "想定されるプロジェクト仮想環境:\n%@";
 "preferences.repository_changed.title" = "リポジトリを変更しました";

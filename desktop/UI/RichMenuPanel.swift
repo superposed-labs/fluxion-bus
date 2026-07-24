@@ -50,9 +50,11 @@ final class RichMenuPanelView: NSView {
     var todayStats: [String: ProviderHistoryStats]
     var isFetchingHistory: Bool
     var historyMessage: String?
+    var pendingUpdateVersion: String?
     var onRefresh: (() -> Void)?
     var onConsole: (() -> Void)?
     var onPreferences: (() -> Void)?
+    var onUpdate: (() -> Void)?
     var onQuit: (() -> Void)?
     var onClose: (() -> Void)?
 
@@ -80,12 +82,14 @@ final class RichMenuPanelView: NSView {
         providers: [ProviderUsage],
         todayStats: [String: ProviderHistoryStats] = [:],
         isFetchingHistory: Bool = false,
-        historyMessage: String? = nil
+        historyMessage: String? = nil,
+        pendingUpdateVersion: String? = nil
     ) {
         self.providers = providers
         self.todayStats = todayStats
         self.isFetchingHistory = isFetchingHistory
         self.historyMessage = historyMessage
+        self.pendingUpdateVersion = pendingUpdateVersion
         super.init(frame: NSRect(x: 0, y: 0, width: 486, height: 780))
         wantsLayer = true
     }
@@ -159,6 +163,7 @@ final class RichMenuPanelView: NSView {
         y += 12
         drawActions(y: y)
         drawInfoTooltipIfNeeded()
+        drawUpdateTooltipIfNeeded()
         drawResetsTooltipIfNeeded()
     }
 
@@ -257,7 +262,30 @@ final class RichMenuPanelView: NSView {
         hoverHits.append(RichHoverHit(id: "summary-info", rect: infoRect))
         let infoColor = hoverID == "summary-info" ? blue : muted
         drawInfoGlyph(x: infoRect.minX + 3, y: infoRect.minY + 3, size: 15, color: infoColor)
-        let infoX = infoRect.minX + 3
+        var accessoryX = infoRect.minX + 3
+        if pendingUpdateVersion != nil {
+            let updateRect = summaryUpdateRect()
+            hoverHits.append(RichHoverHit(id: "summary-update", rect: updateRect))
+            actionHits.append(RichActionHit(rect: updateRect, action: { [weak self] in
+                self?.onUpdate?()
+            }))
+            let dotRect = NSRect(
+                x: updateRect.midX - 3,
+                y: updateRect.midY - 3,
+                width: 6,
+                height: 6
+            )
+            let dot = NSBezierPath(ovalIn: dotRect)
+            NSColor(hex: "#9461F2").setFill()
+            dot.fill()
+            if hoverID == "summary-update" {
+                let halo = NSBezierPath(ovalIn: dotRect.insetBy(dx: -3, dy: -3))
+                NSColor(hex: "#9461F2").withAlphaComponent(0.20).setFill()
+                halo.fill()
+            }
+            accessoryX = updateRect.minX
+        }
+        let infoX = accessoryX
         let totalStats = aggregateTodayStats()
         if totalStats.tokens > 0 {
             if totalStats.cost > 0 {
@@ -574,6 +602,34 @@ final class RichMenuPanelView: NSView {
             draw(line, x: rect.minX + 11, y: rect.minY + 25 + CGFloat(idx) * 14, size: 9.8, weight: .regular, color: NSColor(hex: "#60636B"))
         }
     }
+
+    private func drawUpdateTooltipIfNeeded() {
+        guard hoverID == "summary-update", let version = pendingUpdateVersion else { return }
+        let updateRect = summaryUpdateRect()
+        let label = L10n.tr("update.available.hint", version)
+        let labelWidth = width(label, size: 10.5, weight: .semibold)
+        let bubbleWidth = min(bounds.width - outerPad * 2, labelWidth + 22)
+        let rect = NSRect(
+            x: max(outerPad, min(updateRect.midX - bubbleWidth / 2, bounds.width - outerPad - bubbleWidth)),
+            y: outerPad + 36,
+            width: bubbleWidth,
+            height: 30
+        )
+        let path = tooltipBubblePath(rect: rect, arrowTipX: updateRect.midX)
+        NSColor.white.withAlphaComponent(0.96).setFill()
+        path.fill()
+        NSColor(hex: "#CBD7EA").withAlphaComponent(0.75).setStroke()
+        path.lineWidth = 0.5
+        path.stroke()
+        draw(
+            label,
+            x: rect.midX - labelWidth / 2,
+            y: rect.minY + 8,
+            size: 10.5,
+            weight: .semibold,
+            color: NSColor(hex: "#2E3440")
+        )
+    }
  
     private func drawResetsTooltipIfNeeded() {
         guard hoverID == "resets-tooltip", let chipRect = resetsChipRect else { return }
@@ -849,6 +905,11 @@ final class RichMenuPanelView: NSView {
         let summaryY = outerPad + 1
         let summaryRect = NSRect(x: outerPad + 1, y: summaryY, width: bounds.width - (outerPad + 1) * 2, height: 37)
         return NSRect(x: summaryRect.maxX - 24, y: summaryRect.minY + 6, width: 21, height: 21)
+    }
+
+    private func summaryUpdateRect() -> NSRect {
+        let infoRect = summaryInfoRect()
+        return NSRect(x: infoRect.minX - 24, y: infoRect.minY - 1.5, width: 24, height: 24)
     }
 
     private func drawInfoGlyph(x: CGFloat, y: CGFloat, size: CGFloat, color: NSColor) {

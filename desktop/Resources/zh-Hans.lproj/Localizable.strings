@@ -321,6 +321,9 @@
 "preferences.auto_update.desc" = "Fluxion 在后台检查并提醒你；未经确认绝不自动安装。";
 "update.available.title" = "有可用更新";
 "update.available.body" = "Fluxion %@ 可更新 —— 打开 Fluxion 即可安装。";
+"update.available.action" = "查看更新";
+"update.available.hint" = "Fluxion %@ 可用";
+"update.available.menu" = "有可用更新…";
 "preferences.python_missing.title" = "未找到 Fluxion Python 环境";
 "preferences.python_missing.message" = "预期的项目虚拟环境位置：\n%@";
 "preferences.repository_changed.title" = "仓库已更改";

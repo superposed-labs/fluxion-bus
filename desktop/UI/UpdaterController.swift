@@ -19,13 +19,20 @@ import UserNotifications
 /// protocol methods, and a mismatched Swift name would compile cleanly yet
 /// silently never be called.
 final class UpdaterController: NSObject {
+    static let notificationCategoryIdentifier = "FLUXION_UPDATE_AVAILABLE"
+    static let notificationActionIdentifier = "FLUXION_VIEW_UPDATE"
+    static let notificationUserInfoKey = "fluxion_update_available"
+
     /// nil when no `SUFeedURL` is configured (dev / self-compiled build).
     private(set) var controller: SPUStandardUpdaterController?
 
     /// True while a scheduled update is waiting for the user to act on it.
     private(set) var hasPendingUpdate = false
 
-    /// Fired whenever `hasPendingUpdate` changes so the UI can reflect it.
+    /// Display version of the scheduled update waiting for user attention.
+    private(set) var pendingUpdateVersion: String?
+
+    /// Fired whenever the pending update changes so the UI can reflect it.
     var onPendingUpdateChange: (() -> Void)?
 
     /// Whether this build has auto-update wired at all (a distribution build).
@@ -59,9 +66,11 @@ final class UpdaterController: NSObject {
         controller?.checkForUpdates(nil)
     }
 
-    private func setPending(_ pending: Bool) {
-        guard hasPendingUpdate != pending else { return }
+    private func setPending(version: String?) {
+        let pending = version != nil
+        guard hasPendingUpdate != pending || pendingUpdateVersion != version else { return }
         hasPendingUpdate = pending
+        pendingUpdateVersion = version
         onPendingUpdateChange?()
     }
 
@@ -69,9 +78,15 @@ final class UpdaterController: NSObject {
         let content = UNMutableNotificationContent()
         content.title = L10n.tr("update.available.title")
         content.body = L10n.tr("update.available.body", update.displayVersionString)
+        content.categoryIdentifier = Self.notificationCategoryIdentifier
+        content.userInfo = [Self.notificationUserInfoKey: true]
         let request = UNNotificationRequest(
             identifier: "fluxion.update.available", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                NSLog("FluxionMenu: failed to deliver update notification: %@", error.localizedDescription)
+            }
+        }
     }
 }
 
@@ -98,17 +113,21 @@ extension UpdaterController: SPUStandardUserDriverDelegate {
         // Sparkle deferred to us (handleShowingUpdate == false): surface a
         // quiet, non-modal reminder instead.
         guard !handleShowingUpdate else { return }
-        setPending(true)
+        setPending(version: update.displayVersionString)
         postGentleNotification(for: update)
     }
 
     @objc(standardUserDriverDidReceiveUserAttentionForUpdate:)
     func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
-        setPending(false)
+        setPending(version: nil)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(
+            withIdentifiers: ["fluxion.update.available"])
     }
 
     @objc(standardUserDriverWillFinishUpdateSession)
     func standardUserDriverWillFinishUpdateSession() {
-        setPending(false)
+        setPending(version: nil)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(
+            withIdentifiers: ["fluxion.update.available"])
     }
 }

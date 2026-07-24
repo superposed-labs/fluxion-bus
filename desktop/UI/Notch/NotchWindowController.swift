@@ -50,6 +50,7 @@ class NotchDataModel: ObservableObject {
     // show a loading placeholder instead of misreading "not fetched yet" as
     // a real zero-usage day.
     @Published var historyLoaded: Bool = false
+    @Published var pendingUpdateVersion: String?
     @Published var notchState: NotchState = .collapsed
     @Published var page: Int = 0
     // Natural height of each expanded page (keyed by page index), reported by

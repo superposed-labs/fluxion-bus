@@ -140,7 +140,11 @@ extension NotchIslandView {
                         .fill(Color.white.opacity(0.13))
                         .frame(width: 0.5, height: 13)
                         .padding(.leading, 1)
-                    
+
+                    if let version = model.pendingUpdateVersion {
+                        NotchUpdateDotButton(version: version)
+                    }
+
                     NotchHeaderSettingsButton(controller: controller)
                 }
             }

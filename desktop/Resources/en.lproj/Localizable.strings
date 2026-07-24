@@ -324,6 +324,9 @@
 "preferences.auto_update.desc" = "Fluxion checks in the background and notifies you; it never installs without asking.";
 "update.available.title" = "Update Available";
 "update.available.body" = "Fluxion %@ is available — open Fluxion to install.";
+"update.available.action" = "View Update";
+"update.available.hint" = "Fluxion %@ is available";
+"update.available.menu" = "Update Available…";
 "preferences.python_missing.title" = "Fluxion Python environment not found";
 "preferences.python_missing.message" = "Expected the project virtual environment at:\n%@";
 "preferences.repository_changed.title" = "Repository changed";
