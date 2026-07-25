@@ -15,9 +15,7 @@ from fluxion.core.models.task import Task
 from fluxion.core.router import TaskRouter
 from fluxion.core.session_manager import SessionManager
 from fluxion.core.storage import JsonlStorage
-from fluxion.executors.antigravity.executor import AntiGravityExecutor
-from fluxion.executors.claude.executor import ClaudeExecutor
-from fluxion.executors.codex.executor import CodexExecutor
+from fluxion.executors.registry import build_enabled_executors
 
 PROFILE_INSTRUCTIONS = {
     "inspect": """Profile: inspect.
@@ -396,44 +394,7 @@ class SubagentRunner:
 def build_gateway(settings: Settings) -> GatewayCore:
     storage = JsonlStorage(settings.data_dir)
     sessions = SessionManager(storage=storage)
-    all_executors = {
-        "codex": CodexExecutor(
-            timeout_sec=settings.task_timeout_sec,
-            skip_git_repo_check=settings.codex_skip_git_repo_check,
-            sandbox_mode=settings.codex_sandbox_mode,
-            bypass_sandbox=settings.codex_bypass_sandbox,
-            max_structured_uploads=settings.artifact_max_files,
-            logs_dir=settings.data_dir / "logs",
-        ),
-        "claude": ClaudeExecutor(
-            timeout_sec=settings.task_timeout_sec,
-            command=settings.claude_command,
-            provider=settings.claude_provider,
-            auth_mode=settings.claude_auth_mode,
-            model=settings.claude_model,
-            base_url=settings.claude_base_url,
-            api_key=settings.claude_api_key,
-            auth_token=settings.claude_auth_token,
-            permission_mode=settings.claude_permission_mode,
-            use_bare_mode=settings.claude_use_bare_mode,
-            append_system_prompt=settings.claude_append_system_prompt,
-            allowed_tools=settings.claude_allowed_tools,
-            max_turns=settings.claude_max_turns,
-            max_structured_uploads=settings.artifact_max_files,
-            logs_dir=settings.data_dir / "logs",
-        ),
-        "antigravity": AntiGravityExecutor(
-            timeout_sec=settings.task_timeout_sec,
-            command=settings.antigravity_command,
-            sandbox=settings.antigravity_sandbox,
-            dangerously_skip_permissions=settings.antigravity_dangerously_skip_permissions,
-            print_timeout_sec=settings.antigravity_print_timeout_sec,
-            logs_dir=settings.data_dir / "logs",
-        ),
-    }
-    executors = {
-        name: all_executors[name] for name in settings.enabled_executors if name in all_executors
-    } or all_executors
+    executors = build_enabled_executors(settings)
     return GatewayCore(
         router=TaskRouter(
             executors=executors,
