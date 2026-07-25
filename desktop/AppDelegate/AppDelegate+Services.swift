@@ -20,7 +20,8 @@ extension AppDelegate {
     // All services, in one place so the restart/terminate paths can't drift (an
     // earlier copy listed dead/footgun patterns like "fluxion-ui"/"fluxion.app").
     var serviceProcessPatterns: [String] {
-        var patterns = ["fluxion-scheduler", "fluxion-web", "fluxion-gateway"].map(servicePattern)
+        var patterns = ["fluxion-scheduler", "fluxion-web", "fluxion-gateway", "fluxion-provider"]
+            .map(servicePattern)
         let tunnelName = envVals["FLUXION_LINE_TUNNEL_NAME"] ?? "fluxion-line"
         patterns.append("cloudflared tunnel run \(tunnelName)")
         return patterns
@@ -31,7 +32,7 @@ extension AppDelegate {
     // terminateForeignServices(). servicePattern() stays repo-scoped for the
     // normal restart/terminate paths.
     var serviceBinarySuffixes: [String] {
-        ["fluxion-scheduler", "fluxion-web", "fluxion-gateway"]
+        ["fluxion-scheduler", "fluxion-web", "fluxion-gateway", "fluxion-provider"]
             .map { ".venv/bin/\($0)" }
     }
 
@@ -222,6 +223,7 @@ extension AppDelegate {
         let uiBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-web")
         let schedulerBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-scheduler")
         let gatewayBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-gateway")
+        let providerBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-provider")
         let uiPort = envVals["FLUXION_UI_PORT"] ?? "8765"
 
         let autostartWeb = (envVals["FLUXION_MENU_AUTOSTART_WEB"] ?? "true").lowercased() == "true"
@@ -230,6 +232,11 @@ extension AppDelegate {
         // Gates the whole messaging gateway (all channels), not just Slack.
         let autostartGateway = (envVals["FLUXION_MENU_AUTOSTART_GATEWAY"] ?? "false").lowercased() == "true"
         let autostartLineTunnel = (envVals["FLUXION_LINE_ENABLED"] ?? "false").lowercased() == "true"
+        // Off unless asked for, like the messaging gateway and for a sharper
+        // reason: this one runs a local agent CLI for whatever request arrives,
+        // so an unattended start spends subscription quota. Enabling it is the
+        // user saying they have pointed Codex at it.
+        let autostartProvider = (envVals["FLUXION_PROVIDER_ENABLED"] ?? "false").lowercased() == "true"
 
         if autostartWeb && FileManager.default.fileExists(atPath: uiBin) {
             // A terminating Uvicorn process can remain alive while waiting for
@@ -250,6 +257,11 @@ extension AppDelegate {
         if autostartGateway && FileManager.default.fileExists(atPath: gatewayBin) {
             if !isServiceDaemonRunning("fluxion-gateway") {
                 shell(args: [gatewayBin])
+            }
+        }
+        if autostartProvider && FileManager.default.fileExists(atPath: providerBin) {
+            if !isServiceDaemonRunning("fluxion-provider") {
+                shell(args: [providerBin, "serve"])
             }
         }
         if autostartLineTunnel {

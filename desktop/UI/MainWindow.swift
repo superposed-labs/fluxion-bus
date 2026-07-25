@@ -114,7 +114,7 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         self.webStatusDot = webDot
         middleStack.addArrangedSubview(webIndicator)
 
-        let (botDot, botIndicator) = createIndicator(label: L10n.tr("console.messaging_gateway"))
+        let (botDot, botIndicator) = createIndicator(label: L10n.tr("console.gateways"))
         self.botStatusDot = botDot
         middleStack.addArrangedSubview(botIndicator)
 
@@ -405,8 +405,31 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         // autostart path considers running: a stray from another checkout is
         // about to be swept, and a one-shot --get-autoping call is not a
         // scheduler.
-        updateDot(botStatusDot, running: appDelegate.isServiceDaemonRunning("fluxion-gateway"))
+        updateGatewaysDot()
         updateDot(schedStatusDot, running: appDelegate.isServiceDaemonRunning("fluxion-scheduler"))
+    }
+
+    /// One dot for all gateway surfaces (messaging gateway, provider gateway, etc.).
+    ///
+    /// Green means every *enabled* one is running, never "at least one" — a dot
+    /// that goes green while half the gateways are down is worse than no dot. A
+    /// service the user has not enabled is not counted, so the light does not sit
+    /// red forever over something they never asked for. When it is red the
+    /// tooltip names the offenders, since one dot cannot.
+    private func updateGatewaysDot() {
+        var down: [String] = []
+        if (appDelegate.envVals["FLUXION_MENU_AUTOSTART_GATEWAY"] ?? "false").lowercased() == "true",
+           !appDelegate.isServiceDaemonRunning("fluxion-gateway") {
+            down.append(L10n.tr("console.gateways.messaging"))
+        }
+        if (appDelegate.envVals["FLUXION_PROVIDER_ENABLED"] ?? "false").lowercased() == "true",
+           !appDelegate.isServiceDaemonRunning("fluxion-provider") {
+            down.append(L10n.tr("console.gateways.provider"))
+        }
+        updateDot(botStatusDot, running: down.isEmpty)
+        botStatusDot?.superview?.toolTip = down.isEmpty
+            ? nil
+            : L10n.tr("console.gateways.down") + down.joined(separator: ", ")
     }
 
     private func updateDot(_ dot: NSView?, running: Bool) {

@@ -94,7 +94,10 @@
 
 "console.title" = "Fluxion Console";
 "console.web_console" = "Web コンソール";
-"console.messaging_gateway" = "メッセージ Gateway";
+"console.gateways" = "ゲートウェイ";
+"console.gateways.messaging" = "メッセージゲートウェイ";
+"console.gateways.provider" = "Provider ゲートウェイ";
+"console.gateways.down" = "停止中：";
 "console.scheduler" = "スケジューラー";
 "console.reload_console" = "コンソールページを再読み込み";
 "console.open_in_browser" = "ブラウザで開く";
@@ -249,8 +252,10 @@
 "preferences.service.web.desc" = "ローカル Web UI をポート 8765 で起動します。";
 "preferences.service.scheduler.title" = "Scheduler デーモン";
 "preferences.service.scheduler.desc" = "クォータとスケジュールのポーリングワーカーを起動します。";
-"preferences.service.gateway.title" = "Gateway（全チャンネル）";
+"preferences.service.gateway.title" = "メッセージ Gateway（全チャンネル）";
 "preferences.service.gateway.desc" = "有効な全チャンネル用のバックグラウンドメッセージゲートウェイを起動します。";
+"preferences.service.provider.title" = "Provider ゲートウェイ";
+"preferences.service.provider.desc" = "Fluxion を Provider として公開し、外部 Agent やツールの呼び出しを許可します。";
 "preferences.section.services" = "連携サービス";
 
 "preferences.quota.watch.desc" = "%@ のどの時間枠を監視するかを選び、下で通知または Auto-Ping を設定します。";

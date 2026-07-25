@@ -47,6 +47,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var checkWeb: NSSwitch!
     var checkScheduler: NSSwitch!
     var checkSlack: NSSwitch!
+    var checkProvider: NSSwitch!
     var checkLaunchAtLogin: NSSwitch!
     var checkClaudeAutoping: NSPopUpButton!
     var checkCodexAutoping: NSPopUpButton!
@@ -929,6 +930,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         updates["FLUXION_MENU_AUTOSTART_SCHEDULER"] = checkScheduler.state == .on ? "true" : "false"
         updates["FLUXION_SCHEDULER_ENABLED"] = checkScheduler.state == .on ? "true" : "false"
         updates["FLUXION_MENU_AUTOSTART_GATEWAY"] = checkSlack.state == .on ? "true" : "false"
+        updates["FLUXION_PROVIDER_ENABLED"] = checkProvider.state == .on ? "true" : "false"
 
         // Quota Reset Automation is stored as managed scheduler rules.
         let claudeMode = PreferencesWindow.autoPingModeFromIndex(
