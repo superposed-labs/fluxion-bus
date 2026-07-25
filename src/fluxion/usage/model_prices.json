@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-22",
+  "updated_at": "2026-07-25",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage is split by the 1h/5m token breakdown its transcript records. Current Codex rollout logs do not expose GPT-5.6 cache-write tokens, so reconstructed GPT-5.6 costs are lower bounds until that telemetry is available. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; Fluxion selects `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for GPT-5.4/5.5/5.6 family, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch. This file is the seed for a future standalone pricing repo.",
   "models": {
     "claude-fable-5": {
@@ -13,6 +13,12 @@
       "provider": "claude",
       "rates": [
         { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Mythos 5, limited availability) — same rate card as Fable 5" }
+      ]
+    },
+    "claude-opus-5": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-07-24", "observed": "2026-07-25", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 5, launched 2026-07-24) — same rate as Opus 4.6-4.8 family; pinned so claude-opus-5 exact id resolves correctly" }
       ]
     },
     "claude-opus-4": {
@@ -257,7 +263,7 @@
       { "effective_date": "2026-06-10", "observed": "2026-07-15", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Fable 5); short-alias 'fable' resolves here — full id claude-fable-5 is also pinned in models" }
     ],
     "opus": [
-      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.5-4.8, flat across the full 1M window); deprecated Opus 4/4.1 ($15/$75) pinned in models" }
+      { "effective_date": "2026-06-10", "observed": "2026-07-25", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.6-4.8 and Opus 5, all flat $5/$25)" }
     ],
     "sonnet-5": [
       { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic docs (Sonnet 5 introductory pricing through August 31, 2026); checked before generic 'sonnet' so dated build ids don't inherit Sonnet 4.5/4.6 pricing" },
