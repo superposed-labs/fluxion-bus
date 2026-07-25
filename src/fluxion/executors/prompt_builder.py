@@ -4,11 +4,29 @@ from pathlib import Path
 
 from fluxion.core.models.task import Task
 
+# Set as ``Task.metadata["prompt_mode"]`` by callers that own the prompt in full.
+#
+# Fluxion's default framing exists for IM channels: it names the runtime, and it
+# defines the FINAL_ANSWER/ACTIONS_JSON contract used to lift a user-facing reply
+# and file uploads out of the transcript. A host that already sends its own
+# system framing — Codex, which supplies each role's ``developer_instructions``
+# — gets nothing from that and pays for it twice: once in tokens, and again in a
+# conflicting instruction about how to shape the answer.
+RAW_PROMPT_MODE = "raw"
+
+
+def is_raw_prompt(task: Task) -> bool:
+    return str(task.metadata.get("prompt_mode", "")).strip() == RAW_PROMPT_MODE
+
 
 class AgentPromptBuilder:
     def build(self, task: Task) -> str:
         resumed = bool(str(task.metadata.get("executor_session_id", "")).strip())
         runtime_block = self._format_runtime(task.workspace)
+        if is_raw_prompt(task):
+            # Runtime guidance still goes through: it is a fact about this
+            # machine's workspace, not framing, and the caller cannot know it.
+            return f"{task.text}\n\n{runtime_block}" if runtime_block else task.text
         instruction_block = (
             "Continue this existing executor session and answer the new user request.\n"
             "Use ACTIONS_JSON.upload_files only when the user explicitly asks to send/upload files.\n"

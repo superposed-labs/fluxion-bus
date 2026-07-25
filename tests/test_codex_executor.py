@@ -334,3 +334,94 @@ def test_execute_writes_live_log_without_streaming_json_events(
     assert result.changed_files == []
     assert "".join(deltas) == "codex done"
     assert "thread.started" not in "".join(deltas)
+
+
+def _ro_executor(tmp_path, **kwargs):
+    return CodexExecutor(
+        timeout_sec=60,
+        skip_git_repo_check=True,
+        sandbox_mode=kwargs.pop("sandbox_mode", "workspace-write"),
+        bypass_sandbox=kwargs.pop("bypass_sandbox", False),
+        max_structured_uploads=8,
+        logs_dir=tmp_path / "logs",
+    )
+
+
+def test_read_only_task_forces_the_read_only_sandbox(tmp_path):
+    task = Task.create(
+        channel="local",
+        user_id="local",
+        text="explain",
+        workspace=tmp_path,
+        metadata={"prompt_mode": "raw", "read_only": True},
+    )
+    cmd = _ro_executor(tmp_path, bypass_sandbox=True)._build_command(task)
+
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+    assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+
+
+def test_read_only_survives_a_resumed_session(tmp_path):
+    """Resuming does not inherit the first run's sandbox."""
+    task = Task.create(
+        channel="local",
+        user_id="local",
+        text="explain",
+        workspace=tmp_path,
+        metadata={"prompt_mode": "raw", "read_only": True, "executor_session_id": "s1"},
+    )
+    cmd = _ro_executor(tmp_path, bypass_sandbox=True)._build_command(task)
+
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+
+
+def test_full_auto_is_never_passed(tmp_path):
+    """`--full-auto` forces workspace-write and makes `--sandbox` a no-op.
+
+    Codex reads it first (`exec/src/lib.rs`), so passing both silently discards
+    the sandbox policy. A read-only run edited files in real testing because of
+    this, and every run had been ignoring FLUXION_CODEX_SANDBOX_MODE.
+    """
+    ex = _ro_executor(tmp_path, sandbox_mode="read-only")
+    plain = Task.create(channel="local", user_id="local", text="go", workspace=tmp_path)
+    resumed = Task.create(
+        channel="local",
+        user_id="local",
+        text="go",
+        workspace=tmp_path,
+        metadata={"executor_session_id": "s1"},
+    )
+
+    for task in (plain, resumed):
+        assert "--full-auto" not in ex._build_command(task)
+
+
+def test_configured_sandbox_mode_reaches_the_command_line(tmp_path):
+    ex = _ro_executor(tmp_path, sandbox_mode="read-only")
+    cmd = ex._build_command(
+        Task.create(channel="local", user_id="local", text="go", workspace=tmp_path)
+    )
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+
+
+def test_writable_runs_still_get_a_sandbox(tmp_path):
+    """Dropping --full-auto must not leave the mode unset."""
+    ex = _ro_executor(tmp_path, sandbox_mode="")
+    cmd = ex._build_command(
+        Task.create(channel="local", user_id="local", text="go", workspace=tmp_path)
+    )
+    assert cmd[cmd.index("--sandbox") + 1] == "workspace-write"
+
+
+def test_raw_mode_keeps_the_agent_answer(tmp_path):
+    """Without a FINAL_ANSWER marker the plain-text scan falls through and
+    replaces the real answer with "Task completed."."""
+    ex = _ro_executor(tmp_path)
+    answer = "README.md is a short notes file."
+
+    assert ex._extract_user_answer(answer, raw=True) == answer
+    assert ex._extract_user_answer(answer) == "Task completed."
+
+
+def test_raw_mode_answer_survives_an_empty_run(tmp_path):
+    assert _ro_executor(tmp_path)._extract_user_answer("", raw=True) == "Task completed."

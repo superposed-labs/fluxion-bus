@@ -13,7 +13,7 @@ from pathlib import Path
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
 from fluxion.executors.common.log_writer import write_jsonl_log
-from fluxion.executors.prompt_builder import AgentPromptBuilder
+from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 
 # After the answer is printed, agy lingers for post-answer housekeeping while
@@ -52,6 +52,15 @@ class AntiGravityExecutor:
     def name(self) -> str:
         return "antigravity"
 
+    def enforces_read_only(self) -> bool:
+        """`agy` has no read-only mode.
+
+        Its `--sandbox` restricts terminal access, which is not the same
+        promise: the agent can still edit files. Reporting True here would
+        turn a refusal into a silent violation.
+        """
+        return False
+
     def supports(self, task: Task) -> bool:
         return True
 
@@ -60,6 +69,8 @@ class AntiGravityExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
+        # Accepted for protocol parity; antigravity exposes no thinking on stdout.
+        stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         prompt = self._prompt_builder.build(task)
         start = time.monotonic()
@@ -90,12 +101,15 @@ class AntiGravityExecutor:
             stream_lock = threading.Lock()
             returning = {"on": False}
             answer_done = threading.Event()
+            raw_prompt = is_raw_prompt(task)
 
             def _emit_stream_delta() -> None:
                 with stream_lock:
                     if returning["on"] or stream_output is None:
                         return
-                    current = self._extract_partial_user_answer("".join(out_holder["stdout"]))
+                    current = self._extract_partial_user_answer(
+                        "".join(out_holder["stdout"]), raw=raw_prompt
+                    )
                     if len(current) <= stream_state["sent_len"]:
                         return
                     delta = current[stream_state["sent_len"] :]
@@ -502,8 +516,13 @@ class AntiGravityExecutor:
                     return self._clip(cleaned, SLACK_TEXT_SOFT_LIMIT)
         return self._clip(text, SLACK_TEXT_SOFT_LIMIT)
 
-    def _extract_partial_user_answer(self, stdout: str) -> str:
+    def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
         text = stdout or ""
+        if raw:
+            # No marker will ever arrive. agy prints its narration to stdout, so
+            # forwarding it verbatim is both the only option and the useful one:
+            # the caller sees progress instead of a silent stream.
+            return text
         marker = "FINAL_ANSWER:"
         idx = text.rfind(marker)
         if idx == -1:

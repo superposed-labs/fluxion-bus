@@ -5,7 +5,7 @@ import re
 import shlex
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 
@@ -33,6 +33,90 @@ def extract_codex_json_stream_message(stdout: str) -> str:
         if _has_final_answer_marker(text):
             message = text
     return message
+
+
+def extract_codex_json_stream_text(stdout: str) -> str:
+    """Return all agent-message text so far, with no FINAL_ANSWER gate.
+
+    The raw-prompt counterpart to ``extract_codex_json_stream_message``; see
+    ``fluxion.executors.claude.events.extract_claude_stream_text`` for why the
+    gated reader cannot serve a caller that supplies its own prompt.
+    """
+    parts: list[str] = []
+    for event in _iter_jsonl_events(stdout):
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") != "agent_message":
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
+def extract_codex_stream_reasoning(stdout: str) -> str:
+    """The agent's visible working, from `codex exec --json`.
+
+    Codex reports its reasoning already summarized (`ReasoningItem` is
+    documented as "Agent's reasoning summary"), unlike Claude which streams raw
+    thinking — so a codex-backed sub-agent reads much closer to a native one.
+
+    Items arrive as `item.started` / `item.updated` / `item.completed` for the
+    *same* id, so they are collected by id and the latest version of each wins.
+    Appending on every event would repeat each command two or three times.
+    """
+    seen: OrderedDict[str, str] = OrderedDict()
+    for event in _iter_jsonl_events(stdout):
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "")
+        rendered = _describe_codex_item(item)
+        if not item_id or not rendered:
+            continue
+        seen[item_id] = rendered
+    return "\n\n".join(seen.values())
+
+
+def _describe_codex_item(item: dict[str, Any]) -> str:
+    """One line of working for a thread item, or "" when it is not working.
+
+    `agent_message` is deliberately excluded: that is the answer, and it travels
+    on the other channel.
+    """
+    kind = str(item.get("type") or "")
+    if kind == "reasoning":
+        return str(item.get("text") or "").strip()
+    if kind == "command_execution":
+        command = str(item.get("command") or "").strip().replace("\n", " ")
+        return f"$ {_clip_subject(command)}" if command else ""
+    if kind == "file_change":
+        changes = item.get("changes")
+        if not isinstance(changes, list):
+            return ""
+        paths = [
+            str(change.get("path") or "").strip()
+            for change in changes
+            if isinstance(change, dict) and change.get("path")
+        ]
+        return "Edit " + ", ".join(_clip_subject(p, keep_tail=True) for p in paths) if paths else ""
+    if kind == "web_search":
+        query = str(item.get("query") or "").strip()
+        return f"Search({_clip_subject(query)})" if query else ""
+    if kind == "mcp_tool_call":
+        server = str(item.get("server") or "").strip()
+        tool = str(item.get("tool") or "").strip()
+        return f"{server}.{tool}" if tool else ""
+    return ""
+
+
+def _clip_subject(subject: str, *, keep_tail: bool = False, limit: int = 80) -> str:
+    if keep_tail and subject.startswith("/"):
+        subject = "/".join(PurePath(subject).parts[-2:])
+    if len(subject) <= limit:
+        return subject
+    return subject[: limit - 3] + "..."
 
 
 def parse_codex_json_events(stdout: str, *, workspace: Path) -> CodexEventCapture:

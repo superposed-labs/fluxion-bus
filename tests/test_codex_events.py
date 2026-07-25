@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fluxion.executors.codex.events import (
     extract_codex_json_stream_message,
+    extract_codex_stream_reasoning,
     parse_codex_json_events,
 )
 
@@ -135,3 +136,63 @@ def test_extract_codex_json_stream_message_tolerates_partial_line() -> None:
     )
 
     assert extract_codex_json_stream_message(stdout) == "FINAL_ANSWER:\ndone\nACTIONS_JSON:\n{}"
+
+
+def _item_event(kind: str, item_id: str, **fields) -> dict:
+    return {"type": kind, "item": {"id": item_id, **fields}}
+
+
+def test_codex_reasoning_collects_working_not_the_answer() -> None:
+    stdout = "\n".join(
+        json.dumps(e)
+        for e in [
+            _item_event("item.completed", "i1", type="reasoning", text="Checking the routes."),
+            _item_event("item.completed", "i2", type="command_execution", command="ls -la"),
+            _item_event("item.completed", "i3", type="agent_message", text="Four routes exist."),
+        ]
+    )
+    reasoning = extract_codex_stream_reasoning(stdout)
+
+    assert "Checking the routes." in reasoning
+    assert "$ ls -la" in reasoning
+    # The answer belongs to the other channel.
+    assert "Four routes exist." not in reasoning
+
+
+def test_codex_items_are_deduped_by_id() -> None:
+    """started / updated / completed all carry the same item; appending each
+    would repeat every command two or three times."""
+    stdout = "\n".join(
+        json.dumps(e)
+        for e in [
+            _item_event("item.started", "i1", type="command_execution", command="pytest"),
+            _item_event("item.updated", "i1", type="command_execution", command="pytest"),
+            _item_event("item.completed", "i1", type="command_execution", command="pytest"),
+        ]
+    )
+    assert extract_codex_stream_reasoning(stdout) == "$ pytest"
+
+
+def test_codex_reasoning_grows_monotonically() -> None:
+    events = [
+        _item_event("item.completed", "i1", type="reasoning", text="first"),
+        _item_event("item.completed", "i2", type="command_execution", command="ls"),
+        _item_event("item.completed", "i3", type="reasoning", text="second"),
+    ]
+    lengths = [
+        len(extract_codex_stream_reasoning("\n".join(json.dumps(e) for e in events[:n])))
+        for n in range(1, 4)
+    ]
+    assert lengths == sorted(lengths), lengths
+
+
+def test_codex_file_changes_are_named() -> None:
+    stdout = json.dumps(
+        _item_event(
+            "item.completed",
+            "i1",
+            type="file_change",
+            changes=[{"path": "/ws/src/app.py", "kind": "update"}],
+        )
+    )
+    assert extract_codex_stream_reasoning(stdout) == "Edit src/app.py"

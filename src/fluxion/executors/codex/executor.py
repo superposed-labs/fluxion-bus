@@ -15,10 +15,13 @@ from fluxion.core.models.task import Task
 from fluxion.executors.codex.events import (
     CodexEventCapture,
     extract_codex_json_stream_message,
+    extract_codex_json_stream_text,
+    extract_codex_stream_reasoning,
     parse_codex_json_events,
 )
 from fluxion.executors.codex.prompt_builder import CodexPromptBuilder
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
+from fluxion.executors.prompt_builder import is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.workspace.artifact_collector import select_uploadable_paths
 
@@ -29,6 +32,22 @@ def _codex_failure_summary(event_capture: CodexEventCapture) -> str:
     if event_capture.error_message:
         return f"Codex execution failed: {event_capture.error_message}"
     return "Codex execution failed"
+
+
+def _sandbox_mode(configured: str, read_only: bool) -> str:
+    """The sandbox policy to pass to `codex exec`.
+
+    Deliberately never `--full-auto`. That flag is deprecated, and when present
+    Codex forces `workspace-write` and ignores `--sandbox` outright
+    (`exec/src/lib.rs`: `if removed_full_auto { Some(SandboxMode::WorkspaceWrite) }`
+    is checked before the `--sandbox` argument is even read).
+
+    Passing both is what made a "read-only" run edit files in testing, and it had
+    also been quietly discarding `FLUXION_CODEX_SANDBOX_MODE` for every run.
+    """
+    if read_only:
+        return "read-only"
+    return configured or "workspace-write"
 
 
 class CodexExecutor:
@@ -56,6 +75,10 @@ class CodexExecutor:
     def name(self) -> str:
         return "codex"
 
+    def enforces_read_only(self) -> bool:
+        """`codex exec -s read-only` is a documented sandbox policy."""
+        return True
+
     def supports(self, task: Task) -> bool:
         return True
 
@@ -64,6 +87,7 @@ class CodexExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
+        stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         prompt = self._prompt_builder.build(task)
         start = time.monotonic()
@@ -85,12 +109,15 @@ class CodexExecutor:
             )
             out_holder: dict[str, list[str]] = {"stdout": [], "stderr": []}
             comm_error: list[Exception] = []
-            stream_state = {"sent_len": 0}
+            stream_state = {"sent_len": 0, "reasoning_len": 0}
             stream_lock = threading.Lock()
+            raw_prompt = is_raw_prompt(task)
 
             def _emit_stream_delta() -> None:
                 with stream_lock:
-                    current = self._extract_partial_user_answer("".join(out_holder["stdout"]))
+                    current = self._extract_partial_user_answer(
+                        "".join(out_holder["stdout"]), raw=raw_prompt
+                    )
                     if stream_output is None:
                         return
                     if len(current) <= stream_state["sent_len"]:
@@ -99,6 +126,20 @@ class CodexExecutor:
                     stream_state["sent_len"] = len(current)
                 if delta:
                     stream_output(delta)
+
+            def _emit_reasoning_delta() -> None:
+                # Raw mode only: the IM path renders one answer and has
+                # nowhere to put working notes.
+                if stream_reasoning is None or not raw_prompt:
+                    return
+                with stream_lock:
+                    current = extract_codex_stream_reasoning("".join(out_holder["stdout"]))
+                    if len(current) <= stream_state["reasoning_len"]:
+                        return
+                    delta = current[stream_state["reasoning_len"] :]
+                    stream_state["reasoning_len"] = len(current)
+                if delta:
+                    stream_reasoning(delta)
 
             def _read_pipe(name: str, pipe: subprocess.PIPE[str] | None) -> None:
                 if pipe is None:
@@ -110,6 +151,7 @@ class CodexExecutor:
                         out_holder[name].append(chunk)
                         append_live_log(live_log_file, chunk)
                         if name == "stdout":
+                            _emit_reasoning_delta()
                             _emit_stream_delta()
                 except Exception as exc:  # pragma: no cover
                     comm_error.append(exc)
@@ -165,6 +207,7 @@ class CodexExecutor:
                 raise comm_error[0]
             out_stdout = "".join(out_holder["stdout"])
             out_stderr = "".join(out_holder["stderr"])
+            _emit_reasoning_delta()
             _emit_stream_delta()
 
             duration = time.monotonic() - start
@@ -214,7 +257,7 @@ class CodexExecutor:
                 else []
             )
             summary = (
-                self._extract_user_answer(answer_source)
+                self._extract_user_answer(answer_source, raw=raw_prompt)
                 if success
                 else _codex_failure_summary(event_capture)
             )
@@ -317,10 +360,16 @@ class CodexExecutor:
             env["VIRTUAL_ENV"] = str(venv)
         return env
 
-    def _extract_user_answer(self, stdout: str) -> str:
+    def _extract_user_answer(self, stdout: str, *, raw: bool = False) -> str:
         text = (stdout or "").strip()
         if not text:
             return "Task completed."
+        if raw:
+            # The caller owns the prompt, so no FINAL_ANSWER marker will ever
+            # appear and there is no `codex` banner line to scan for. Without
+            # this the scan below falls through and throws the real answer
+            # away, reporting "Task completed." in its place.
+            return self._clip(text, SLACK_TEXT_SOFT_LIMIT)
 
         marker_match = self._find_last_marker(text, "FINAL_ANSWER")
         if marker_match is not None:
@@ -353,7 +402,11 @@ class CodexExecutor:
 
         return "Task completed."
 
-    def _extract_partial_user_answer(self, stdout: str) -> str:
+    def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
+        if raw:
+            # No marker will ever arrive, so there is nothing to strip and
+            # nothing to wait for.
+            return extract_codex_json_stream_text(stdout)
         json_message = extract_codex_json_stream_message(stdout)
         if json_message:
             return self._extract_partial_user_answer(json_message)
@@ -457,7 +510,13 @@ class CodexExecutor:
         resolved_command = self._resolve_command()
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
         model_override = str(task.metadata.get("model") or "").strip()
-        use_bypass = self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        read_only = bool(task.metadata.get("read_only"))
+        # A read-only run must not be handed the bypass flag, whatever the
+        # instance was configured with — that flag turns the sandbox off wholesale
+        # and would quietly void the promise the caller made to the user.
+        use_bypass = not read_only and (
+            self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        )
 
         is_ping = False
         subagent = task.metadata.get("subagent")
@@ -472,7 +531,9 @@ class CodexExecutor:
             if use_bypass:
                 command.append("--dangerously-bypass-approvals-and-sandbox")
             else:
-                command.append("--full-auto")
+                # Resuming does not inherit the original run's sandbox, so the
+                # mode has to be restated or a second turn could write.
+                command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
             if self._skip_git_repo_check:
                 command.append("--skip-git-repo-check")
             if model_override:
@@ -491,9 +552,7 @@ class CodexExecutor:
         if use_bypass:
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
-            command.append("--full-auto")
-            if self._sandbox_mode:
-                command.extend(["--sandbox", self._sandbox_mode])
+            command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
         if self._skip_git_repo_check:
             command.append("--skip-git-repo-check")
         if model_override:
@@ -519,15 +578,16 @@ class CodexExecutor:
         return any(m in text for m in markers)
 
     def _run_fresh_session(self, *, task: Task, prompt: str, start: float) -> ExecutionResult:
-        use_bypass = self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        read_only = bool(task.metadata.get("read_only"))
+        use_bypass = not read_only and (
+            self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        )
         resolved_command = self._resolve_command()
         command = [resolved_command, "exec", "--json"]
         if use_bypass:
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
-            command.append("--full-auto")
-            if self._sandbox_mode:
-                command.extend(["--sandbox", self._sandbox_mode])
+            command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
         if self._skip_git_repo_check:
             command.append("--skip-git-repo-check")
         env = self._build_env(task.workspace)
@@ -552,7 +612,7 @@ class CodexExecutor:
         )
         return ExecutionResult(
             success=success,
-            summary=self._extract_user_answer(answer_source)
+            summary=self._extract_user_answer(answer_source, raw=is_raw_prompt(task))
             if success
             else _codex_failure_summary(event_capture),
             stdout=proc.stdout,
