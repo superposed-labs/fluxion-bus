@@ -33,6 +33,7 @@ fluxion-usage = "fluxion.cli.usage:main"
 fluxion-detect = "fluxion.cli.detect:main"
 fluxion-scheduler = "fluxion.scheduler.cli:main"
 fluxion-gateway = "fluxion.gateway:main"
+fluxion-provider = "fluxion.provider_gateway.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
