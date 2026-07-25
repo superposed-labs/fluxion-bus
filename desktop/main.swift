@@ -320,6 +320,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         // (official distribution builds only). It never installs silently, and
         // scheduled reminders are gentle (a notification, not a modal).
         updaterController = UpdaterController()
+        updaterController.onPendingUpdateChange = { [weak self] in
+            DispatchQueue.main.async {
+                self?.syncPendingUpdateUI()
+            }
+        }
 
         loadEnv()
         reloadCacheFromDisk()
@@ -911,8 +916,19 @@ extension AppDelegate {
             intentIdentifiers: [],
             options: []
         )
+        let viewUpdate = UNNotificationAction(
+            identifier: UpdaterController.notificationActionIdentifier,
+            title: L10n.tr("update.available.action"),
+            options: [.foreground]
+        )
+        let updateAvailable = UNNotificationCategory(
+            identifier: UpdaterController.notificationCategoryIdentifier,
+            actions: [viewUpdate],
+            intentIdentifiers: [],
+            options: []
+        )
         UNUserNotificationCenter.current().setNotificationCategories([
-            pendingUser, reminderCoverage,
+            pendingUser, reminderCoverage, updateAvailable,
         ])
     }
 
@@ -940,10 +956,21 @@ extension AppDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let reminderProviders = info["reminder_providers"] as? [String] ?? []
         let actionIdentifier = response.actionIdentifier
+        let isUpdateNotification =
+            (info[UpdaterController.notificationUserInfoKey] as? Bool == true)
+            || response.notification.request.content.categoryIdentifier
+                == UpdaterController.notificationCategoryIdentifier
 
         DispatchQueue.main.async { [weak self] in
             defer { completionHandler() }
             guard let self = self else { return }
+            if isUpdateNotification {
+                if actionIdentifier == UNNotificationDefaultActionIdentifier
+                    || actionIdentifier == UpdaterController.notificationActionIdentifier {
+                    self.presentAvailableUpdate()
+                }
+                return
+            }
             if !reminderProviders.isEmpty {
                 switch actionIdentifier {
                 case AppDelegate.reminderPromptEnableActionId:

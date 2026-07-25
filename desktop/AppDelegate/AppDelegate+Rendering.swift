@@ -92,6 +92,7 @@ extension AppDelegate {
                 ? "compact"
                 : "detailed"
             notch.model.peekReset = envVals["FLUXION_NOTCH_PEEK_WINDOWS"] ?? "both"
+            notch.model.pendingUpdateVersion = updaterController?.pendingUpdateVersion
             notch.repositionWindow()
         }
 
@@ -136,7 +137,8 @@ extension AppDelegate {
             providers: providers,
             todayStats: richTodayStats,
             isFetchingHistory: richTodayStats.isEmpty && richHistoryMessage == nil,
-            historyMessage: richHistoryMessage
+            historyMessage: richHistoryMessage,
+            pendingUpdateVersion: updaterController?.pendingUpdateVersion
         )
         let height = content.preferredHeight()
         let width: CGFloat = 486
@@ -153,6 +155,9 @@ extension AppDelegate {
         content.onPreferences = { [weak self] in
             self?.closeRichMenu()
             self?.openPreferences()
+        }
+        content.onUpdate = { [weak self] in
+            self?.presentAvailableUpdate()
         }
         content.onQuit = { [weak self] in
             self?.closeRichMenu()
@@ -197,6 +202,31 @@ extension AppDelegate {
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(content)
         fetchRichHistory()
+    }
+
+    /// Keep the optional update affordance in both custom menu surfaces in sync.
+    func syncPendingUpdateUI() {
+        let version = updaterController?.pendingUpdateVersion
+        notchWindowController?.model.pendingUpdateVersion = version
+        if let view = (richMenuWindow?.contentView as? RichMenuContainerView)?.panelView {
+            view.pendingUpdateVersion = version
+            view.needsDisplay = true
+        }
+    }
+
+    /// Bring Sparkle's proven user-initiated update UI forward from any surface.
+    @objc func presentAvailableUpdate() {
+        closeRichMenu()
+        let showUpdate = { [weak self] in
+            guard let self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.updaterController?.checkForUpdates()
+        }
+        if let notch = notchWindowController, notch.model.notchState != .collapsed {
+            notch.collapse(completion: showUpdate)
+        } else {
+            showUpdate()
+        }
     }
 
     func closeRichMenu() {
@@ -726,6 +756,18 @@ extension AppDelegate {
         consoleItem.target = self
         consoleItem.image = imageForSymbol("macwindow", color: .labelColor)
         menu.addItem(consoleItem)
+
+        if let version = updaterController?.pendingUpdateVersion {
+            let updateItem = NSMenuItem(
+                title: L10n.tr("update.available.menu"),
+                action: #selector(presentAvailableUpdate),
+                keyEquivalent: ""
+            )
+            updateItem.target = self
+            updateItem.image = dotImage(color: NSColor(hex: "#9461F2"), diameter: 6)
+            updateItem.toolTip = L10n.tr("update.available.hint", version)
+            menu.addItem(updateItem)
+        }
 
         let prefsItem = NSMenuItem(title: L10n.tr("menu.preferences"), action: #selector(openPreferences), keyEquivalent: "")
         prefsItem.target = self

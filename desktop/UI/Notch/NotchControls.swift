@@ -428,6 +428,35 @@ struct NotchHeaderSettingsButton: View {
     }
 }
 
+struct NotchUpdateDotButton: View {
+    let version: String
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            (NSApp.delegate as? AppDelegate)?.presentAvailableUpdate()
+        } label: {
+            Circle()
+                .fill(Color(red: 0.58, green: 0.38, blue: 0.95))
+                .frame(width: 6, height: 6)
+                .shadow(
+                    color: Color(red: 0.58, green: 0.38, blue: 0.95)
+                        .opacity(isHovered ? 0.9 : 0.55),
+                    radius: isHovered ? 4 : 2
+                )
+                .frame(width: 24, height: 24)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(L10n.tr("update.available.hint", version))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
 struct NotchPageDotButtonStyle: ButtonStyle {
     let isSelected: Bool
     let isHovered: Bool
