@@ -345,7 +345,10 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
       whose legacy matcher keys on `role == "developer"`). This is what makes an
       "explorer" behave differently from a "reviewer"; dropping it would make
       every role send an identical prompt and differ only by model.
-    - The latest user message, which is the task the parent just delegated.
+    - The latest user message, which is the task the parent just delegated. For
+      a spawned sub-agent this is an `agent_message` item, which carries no
+      `role` at all — hence the `None` arm below — and splits its task across
+      two content parts (see `_text_of`).
 
     The rest of the history is deliberately left out. A spawned sub-agent's task
     is that last message, and replaying the parent's whole transcript into a
@@ -381,16 +384,40 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
 
 
 def _text_of(content: Any) -> str:
+    """Flatten a content array, including the part that carries a spawn payload.
+
+    A spawned sub-agent's task does not arrive as ordinary `input_text`. Codex
+    splits an `agent_message` into a plaintext envelope and the payload beside
+    it (codex-rs protocol/src/protocol.rs, `to_model_input_item`):
+
+        {"type": "input_text", "text": "Message Type: NEW_TASK\\nTask name: …\\nPayload:\\n"}
+        {"type": "encrypted_content", "encrypted_content": "<the task>"}
+
+    Reading only `text` yields the envelope with an empty `Payload:` — the
+    sub-agent then runs with nothing but its role instructions and improvises,
+    which is exactly what it looks like from the parent: a sub-agent that
+    "didn't receive the task".
+
+    The `encrypted_content` name describes the wire field, not the value: the
+    CLI passes the `spawn_agent` tool's `message` argument through verbatim
+    (codex-rs core/src/tools/handlers/multi_agents_v2.rs,
+    `communication_from_tool_message`). If a payload ever does arrive genuinely
+    opaque, forwarding it is still strictly better than forwarding nothing.
+    """
     if isinstance(content, str):
         return content.strip()
     if not isinstance(content, list):
         return ""
-    parts = [
-        part.get("text", "")
-        for part in content
-        if isinstance(part, Mapping) and isinstance(part.get("text"), str)
-    ]
-    return "\n".join(piece for piece in parts if piece).strip()
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, Mapping):
+            continue
+        for key in ("text", "encrypted_content"):
+            value = part.get(key)
+            if isinstance(value, str) and value:
+                parts.append(value)
+                break
+    return "\n".join(parts).strip()
 
 
 # ── event constructors ───────────────────────────────────────────────

@@ -123,6 +123,41 @@ def test_prompt_handles_structured_content():
     assert extract_prompt(body) == "line one\nline two"
 
 
+def test_a_spawned_subagent_receives_its_task():
+    """The spawn payload rides beside the envelope, not inside its text.
+
+    Shape copied from codex-rs core/tests/suite/subagent_notifications.rs. Read
+    the `text` parts alone and the task is gone: the agent gets an envelope
+    ending in an empty `Payload:` plus its role instructions, and improvises a
+    plausible-looking report — which reaches the parent as a sub-agent that
+    never got the task.
+    """
+    body = {
+        "input": [
+            {"role": "developer", "content": "Complete the delegated task."},
+            {
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/worker",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n",
+                    },
+                    {
+                        "type": "encrypted_content",
+                        "encrypted_content": "summarize this week's news",
+                    },
+                ],
+            },
+        ]
+    }
+    prompt = extract_prompt(body)
+
+    assert "summarize this week's news" in prompt
+    assert prompt.startswith("Complete the delegated task.")
+
+
 def test_prompt_handles_a_plain_string_input():
     assert extract_prompt({"input": "just do it"}) == "just do it"
 
