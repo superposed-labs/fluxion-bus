@@ -262,6 +262,11 @@ def _routes(args: argparse.Namespace) -> int:
         settings.token_file.parent / "sticky.db", ttl_seconds=settings.sticky_ttl_seconds
     )
     try:
+        if getattr(args, "prune", False):
+            removed = store.purge_expired()
+            print(f"removed {removed} expired route(s)")
+            return 0
+
         routes = store.list_routes()
         if not routes:
             print("no sticky routes recorded")
@@ -270,10 +275,20 @@ def _routes(args: argparse.Namespace) -> int:
             pin = " [pinned]" if route.pinned else ""
             # Thread ids are shown truncated and prompts never are: this command
             # is for operators checking routing, not for reading conversations.
-            thread = (route.thread_id or "-")[:12]
+            #
+            # Ingresses with no thread concept (Anthropic keys on a session id)
+            # print "-" here; the truncated route_key on the left is their
+            # per-conversation handle, and it identifies the row without
+            # exposing the client's own id.
+            conversation = (route.thread_id or "-")[:12]
+            # Whether the *agent* can be resumed is a different question from
+            # which provider the route points at, and it is the one that decides
+            # if the next turn keeps its context. A route can be remembered
+            # perfectly while the session behind it is gone.
+            session = "resumable" if route.executor_session_id else "cold"
             print(
-                f"{route.route_key[:12]}  {route.candidate_id:<40} "
-                f"role={route.route_hint:<9} thread={thread}{pin}"
+                f"{route.route_key[:12]}  {route.ingress:<9} {route.candidate_id:<40} "
+                f"role={route.route_hint:<11} conv={conversation:<13} {session}{pin}"
             )
         return 0
     finally:
@@ -372,6 +387,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     rollback_parser.set_defaults(handler=_rollback_codex_config)
 
     routes_parser = subparsers.add_parser("routes", help="Show recorded sticky routes.")
+    routes_parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete expired routes instead of listing. Nothing expires on its own.",
+    )
     routes_parser.set_defaults(handler=_routes)
 
     return parser.parse_args(argv)
