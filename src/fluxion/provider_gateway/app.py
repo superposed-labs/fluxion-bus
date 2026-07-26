@@ -47,9 +47,17 @@ from fluxion.provider_gateway.config import (
     RoutingConfig,
 )
 from fluxion.provider_gateway.identity import RequestIdentity
+from fluxion.provider_gateway.ingress.messages import (
+    AnthropicMessagesIngress,
+    extract_messages_prompt,
+)
 from fluxion.provider_gateway.ingress.responses import (
     CodexResponsesIngress,
     is_compaction_request,
+)
+from fluxion.provider_gateway.messages_stream import (
+    FLUXION_RESULT,
+    encode_messages_sse,
 )
 from fluxion.provider_gateway.request import RawRequest
 from fluxion.provider_gateway.routing import NoRouteAvailableError, RouteDecision, Router
@@ -75,6 +83,7 @@ class GatewayContext:
     workspaces: Mapping[str, Path] = field(default_factory=dict)
     attribution: AttributionStore | None = None
     ingress: CodexResponsesIngress = field(default_factory=CodexResponsesIngress)
+    messages_ingress: AnthropicMessagesIngress = field(default_factory=AnthropicMessagesIngress)
     # Where FLUXION_PROVIDER_LOG_BODIES writes captured requests. Off unless set:
     # a request body carries the full delegated task and the parent's context.
     body_log_dir: Path | None = None
@@ -160,7 +169,103 @@ def create_app(context: GatewayContext) -> FastAPI:
         # detected from request metadata instead.
         return await _handle(context, request, force_compaction=True)
 
+    @app.post("/v1/messages")
+    async def messages(request: Request):
+        return await _handle_messages(context, request)
+
     return app
+
+
+async def _handle_messages(context: GatewayContext, request: Request):
+    """Serve an Anthropic Messages turn from a local agent.
+
+    Separate from `_handle` rather than parameterised over the ingress: the two
+    protocols differ in framing, in how the prompt is assembled, and in where
+    the turn's bookkeeping travels. Folding them together would put three
+    branches inside one function and make each protocol harder to read than
+    either is alone.
+    """
+    # Anthropic clients send the key bare in `x-api-key`; Claude Code sends a
+    # Bearer `authorization`. Accept either, normalising to the Bearer form the
+    # verifier expects rather than teaching it a second scheme.
+    header = request.headers.get("authorization")
+    if not header and request.headers.get("x-api-key"):
+        header = f"Bearer {request.headers['x-api-key']}"
+    try:
+        context.authenticator.verify_header(header)
+    except AuthError as err:
+        return _error_response(401, "authentication_error", str(err))
+
+    try:
+        body = json.loads(await request.body())
+    except (TypeError, ValueError) as err:
+        return _error_response(400, "invalid_request_error", f"malformed JSON body: {err}")
+    if not isinstance(body, Mapping):
+        return _error_response(400, "invalid_request_error", "request body must be a JSON object")
+
+    _log_body(context, body)
+    raw = RawRequest.create(body, request.headers)
+    normalized = context.messages_ingress.normalize(raw)
+    identity = context.messages_ingress.extract_identity(normalized)
+    requirements = derive_requirements({}, is_compaction=False)
+
+    sticky = context.sticky.lookup(identity.route_key)
+    session_id = sticky.executor_session_id if sticky else ""
+    # Whether the agent still remembers this conversation decides how much of it
+    # to resend — see `extract_messages_prompt`.
+    prompt = extract_messages_prompt(body, resuming=bool(session_id))
+
+    try:
+        decision = context.router.select(
+            identity, requirements, sticky_candidate=sticky.candidate_id if sticky else None
+        )
+        upstream = context.local_agent_for(decision)
+        if upstream is None:
+            raise NoRouteAvailableError(f"no local agent for {decision.provider_id!r}", {})
+        workspace = context.workspace_for(decision, identity)
+    except NoRouteAvailableError as err:
+        return _error_response(503, "no_route_available", str(err))
+
+    async def events() -> AsyncIterator[bytes]:
+        async for event in upstream.stream_messages(
+            body,
+            decision.upstream_model,
+            prompt=prompt,
+            workspace=workspace,
+            session_id=session_id,
+        ):
+            if event.get("type") == FLUXION_RESULT:
+                # Bookkeeping, not protocol: recorded here and never written out.
+                _finish_messages(context, identity, decision, event)
+                continue
+            yield encode_messages_sse(event)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"cache-control": "no-store", "x-accel-buffering": "no"},
+    )
+
+
+def _finish_messages(
+    context: GatewayContext,
+    identity: RequestIdentity,
+    decision: RouteDecision,
+    event: Mapping[str, Any],
+) -> None:
+    """Remember the route and the agent session behind this conversation."""
+    if not event.get("success"):
+        # A failed turn is not evidence the route works, and pinning it would
+        # send the next turn to a backend that just refused this one.
+        return
+    context.sticky.remember(
+        identity,
+        decision.provider_id,
+        decision.upstream_model,
+        decision.policy_id,
+        routing_reason=decision.routing_reason,
+        executor_session_id=str(event.get("executor_session_id") or ""),
+    )
 
 
 async def _handle(context: GatewayContext, request: Request, *, force_compaction: bool):

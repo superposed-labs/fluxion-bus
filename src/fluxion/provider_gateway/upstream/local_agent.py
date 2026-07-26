@@ -42,6 +42,17 @@ from fluxion.core.models.task import Task
 from fluxion.executors.base import Executor, enforces_read_only
 from fluxion.executors.prompt_builder import RAW_PROMPT_MODE
 from fluxion.provider_gateway.capabilities import ModelCapabilities
+from fluxion.provider_gateway.messages_stream import (
+    content_block_delta,
+    content_block_start,
+    content_block_stop,
+    error_event,
+    fluxion_result,
+    fresh_message_id,
+    message_delta,
+    message_start,
+    message_stop,
+)
 from fluxion.provider_gateway.stream import (
     EV_COMPLETED,
     EV_CREATED,
@@ -225,6 +236,81 @@ class LocalAgentUpstream:
                         run,
                         _context_usage(body, streamed, "".join(thought)),
                     )
+
+    async def stream_messages(
+        self,
+        body: Mapping[str, Any],
+        model: str,
+        *,
+        prompt: str,
+        workspace: Path,
+        session_id: str = "",
+        request_id: str | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+        read_only: bool = False,
+    ) -> AsyncIterator[Mapping[str, Any]]:
+        """Run the agent and yield Anthropic Messages events as output arrives.
+
+        Same executor bridge as `stream`, different wire shape. The prompt is
+        built by the caller rather than here, because how much of the
+        conversation belongs in it depends on whether a session is being
+        resumed — a question the ingress answers, not the upstream.
+
+        Working notes and the answer both arrive as text. An Anthropic client
+        renders one assistant message, so there is no second surface to put
+        reasoning on the way Codex's disclosure provides one; splitting them
+        would just drop the notes.
+        """
+        message_id = request_id or fresh_message_id()
+        if not prompt:
+            yield error_event("no user input found in the request", "invalid_request_error")
+            return
+
+        if read_only and not enforces_read_only(self.executor):
+            yield error_event(
+                f"executor {self.executor.name()!r} cannot run read-only, and this "
+                "request requires it.",
+                "invalid_request_error",
+            )
+            return
+
+        async with _workspace_lock(workspace):
+            yield message_start(message_id, model, _messages_input_tokens(body))
+            yield content_block_start()
+
+            streamed: list[str] = []
+            opened = True
+            async for _channel, chunk, run in self._run(
+                prompt, model, workspace, session_id, is_cancelled, read_only
+            ):
+                if chunk is not None:
+                    streamed.append(chunk)
+                    yield content_block_delta(chunk)
+                    continue
+
+                answer = "".join(streamed)
+                if run is not None and run.summary and run.summary not in answer:
+                    # The executor's terminal answer was never streamed (agy
+                    # prints it in one burst at the end). Without this the block
+                    # would close holding only the working notes.
+                    yield content_block_delta(run.summary)
+                    answer += run.summary
+                yield content_block_stop()
+                opened = False
+                if run is not None:
+                    yield fluxion_result(run)
+                if run is not None and not run.success:
+                    yield error_event(run.summary or "local agent run failed")
+                    return
+                yield message_delta(estimate_tokens(answer))
+                yield message_stop()
+
+            if opened:
+                # The bridge ended without a terminal item — cancellation, or a
+                # crash already logged. Close the block so the client is not
+                # left waiting on an open message.
+                yield content_block_stop()
+                yield error_event("local agent produced no result")
 
     async def _run(
         self,
@@ -632,3 +718,15 @@ def _failed(response_id: str, message: str) -> dict[str, Any]:
         },
     }
 
+
+def _messages_input_tokens(body: Mapping[str, Any]) -> int:
+    """Rough size of the inbound conversation, in the Messages shape.
+
+    Same purpose and same caveat as `_context_usage`: this is what the *client*
+    sent, not what the local agent burned internally.
+    """
+    total = estimate_tokens(json.dumps(body.get("messages", ""), ensure_ascii=False))
+    system = body.get("system")
+    if system is not None:
+        total += estimate_tokens(json.dumps(system, ensure_ascii=False))
+    return total
