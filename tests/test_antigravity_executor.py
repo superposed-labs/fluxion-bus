@@ -427,3 +427,90 @@ def test_stdout_takes_over_from_the_trajectory(tmp_path):
     time.sleep(0.2)
     assert "$ wc -l" not in "".join(notes), "the poller outlived the run"
 
+
+# ── permission refusals ──────────────────────────────────────────────
+SOFT_DENY = 'I0723 18:12:03 tool_confirmation_manager.go:183] Print mode: soft-denying tool confirmation "Bash" at step 9\n'
+
+
+def _with_agy_log(tmp_path: Path, task_id: str, text: str) -> None:
+    log_file = tmp_path / "logs" / f"task-{task_id}.agy.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text(text)
+
+
+def test_a_silent_permission_refusal_is_reported_as_failure(tmp_path):
+    """agy exits zero after a refusal, so the run otherwise reads as success.
+
+    What reached the user was the empty-stdout fallback, "Task completed." —
+    for a task that had done nothing at all.
+    """
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="review the diff", workspace=tmp_path)
+    _with_agy_log(tmp_path, task.id, SOFT_DENY)
+
+    with patch("subprocess.Popen", return_value=_FakeProc(stdout="", returncode=0)):
+        result = executor.execute(task)
+
+    assert result.success is False
+    assert "Bash" in result.summary
+    assert "Task completed." not in result.summary
+
+
+def test_narration_without_an_answer_is_also_a_failure(tmp_path):
+    """Worse than the silent case: it looks like a real reply."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="review the diff", workspace=tmp_path)
+    _with_agy_log(tmp_path, task.id, SOFT_DENY)
+    narration = "I will start by searching the codebase for references to UpdaterController.\n"
+
+    with patch("subprocess.Popen", return_value=_FakeProc(stdout=narration, returncode=0)):
+        result = executor.execute(task)
+
+    assert result.success is False
+    assert "Bash" in result.summary
+
+
+def test_a_run_that_recovered_from_a_refusal_still_succeeds(tmp_path):
+    """A denied step is not fatal on its own; only one that ends the run is."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="review the diff", workspace=tmp_path)
+    _with_agy_log(tmp_path, task.id, SOFT_DENY)
+
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(stdout="FINAL_ANSWER:\nhere is the review\nACTIONS_JSON:\n{}"),
+    ):
+        result = executor.execute(task)
+
+    assert result.success is True
+    assert result.summary == "here is the review"
+
+
+def test_a_clean_run_is_untouched(tmp_path):
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="hi", workspace=tmp_path)
+    _with_agy_log(tmp_path, task.id, "I0723 18:12:03 nothing interesting here\n")
+
+    with patch("subprocess.Popen", return_value=_FakeProc(stdout="", returncode=0)):
+        result = executor.execute(task)
+
+    assert result.success is True
+
+
+def test_raw_mode_reports_a_silent_refusal(tmp_path):
+    """The sub-agent path has no marker, so silence is the only signal there."""
+    executor = _executor(tmp_path)
+    task = Task.create(
+        channel="mcp",
+        user_id="user",
+        text="run the build",
+        workspace=tmp_path,
+        metadata={"prompt_mode": "raw"},
+    )
+    _with_agy_log(tmp_path, task.id, SOFT_DENY)
+
+    with patch("subprocess.Popen", return_value=_FakeProc(stdout="", returncode=0)):
+        result = executor.execute(task)
+
+    assert result.success is False
+    assert "Bash" in result.summary

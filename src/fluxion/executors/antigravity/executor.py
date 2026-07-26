@@ -269,7 +269,9 @@ class AntiGravityExecutor:
                 stdout = "".join(out_holder["stdout"])
                 stderr = "".join(out_holder["stderr"])
                 duration = time.monotonic() - start
-                execution_error = self._extract_execution_error(agy_log_file, stderr)
+                execution_error = self._extract_execution_error(
+                    agy_log_file, stderr
+                ) or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
                 success = not execution_error
                 # Register a completion signal the engine awaits before computing
                 # the change report — agy keeps flushing its SQLite trajectory DB
@@ -319,7 +321,9 @@ class AntiGravityExecutor:
             _emit_stream_delta()
             duration = time.monotonic() - start
             returncode = proc.returncode if proc.returncode is not None else -1
-            execution_error = self._extract_execution_error(agy_log_file, stderr)
+            execution_error = self._extract_execution_error(
+                agy_log_file, stderr
+            ) or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
             success = returncode == 0 and not execution_error
             return ExecutionResult(
                 success=success,
@@ -664,13 +668,7 @@ class AntiGravityExecutor:
         to stdout after a quota/auth failure. Treating that as success causes
         Fluxion to resend the last historical FINAL_ANSWER.
         """
-        text = stderr or ""
-        if log_file.exists():
-            try:
-                text += "\n" + log_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                pass
-
+        text = (stderr or "") + "\n" + self._read_log(log_file)
 
         matches = re.findall(
             r"(?:agent executor error:\s*)?((?:RESOURCE_EXHAUSTED|UNAUTHENTICATED|PERMISSION_DENIED)"
@@ -682,6 +680,55 @@ class AntiGravityExecutor:
             return ""
         detail = matches[-1].strip()
         return self._clip(f"AntiGravity execution failed: {detail}", SLACK_TEXT_SOFT_LIMIT)
+
+    def _blocked_tool_error(self, log_file: Path, stdout: str, *, raw: bool) -> str:
+        """Detect a run that a permission refusal ended before it could answer.
+
+        Without `--dangerously-skip-permissions`, agy auto-approves its
+        read-only tools (Search, ReadFile, ListDir) but soft-denies `Bash` and
+        `Edit`. A soft-denied step is not reported as an error: agy exits zero
+        and prints no answer, so the run reads as a success whose summary is
+        the empty-stdout fallback ("Task completed.") or, when it narrated
+        first, a few lines of "I will search for ..." — which is worse, because
+        it looks like a real reply.
+
+        Both were observed in practice before this check existed: of four
+        soft-denied runs on this machine, none produced a FINAL_ANSWER, and two
+        answered with narration alone. The task that suffers is the one that
+        says "read-only" but still needs a shell to honour it — reviewing an
+        uncommitted diff, for instance.
+
+        Requiring *both* a refusal and a missing answer keeps a run that
+        recovered from a denied step reporting success.
+        """
+        matches = re.findall(
+            r'soft-denying tool confirmation:?\s*"([A-Za-z_]+)"',
+            self._read_log(log_file),
+        )
+        if not matches:
+            return ""
+        # In raw mode no marker is ever printed, so any output at all is the
+        # answer such as it is; this catches only the silent case. Narration
+        # that stops short of an answer still gets through there.
+        answered = bool(stdout.strip()) if raw else "FINAL_ANSWER:" in (stdout or "")
+        if answered:
+            return ""
+        blocked = ", ".join(dict.fromkeys(matches))
+        return self._clip(
+            f"AntiGravity was blocked from using {blocked} and stopped without answering. "
+            "Rerun with a task that needs no shell or file edits, or set "
+            "FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS=true to let it act "
+            "on the workspace unattended.",
+            SLACK_TEXT_SOFT_LIMIT,
+        )
+
+    def _read_log(self, log_file: Path) -> str:
+        if not log_file.exists():
+            return ""
+        try:
+            return log_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
 
     def _clip(self, text: str, limit: int) -> str:
         if len(text) <= limit:
