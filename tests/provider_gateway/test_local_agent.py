@@ -375,6 +375,26 @@ def test_single_message_run_leaves_no_narration_behind():
     assert narration["item"]["content"][0]["text"] == ""
 
 
+def test_a_trailing_newline_does_not_defeat_the_trim():
+    """The shape that actually reaches us, and the one that broke.
+
+    A CLI writes its answer to stdout with a trailing newline; the executor
+    strips it before putting it in `summary`. Compared raw, a single "\\n" made
+    both the equality and the suffix test miss, so the answer was committed
+    twice — visible in Codex 0.146.0 as the same text in the collapsed work
+    section and again as the final answer.
+    """
+    events = run_stream(build(FakeExecutor(chunks=("summary\n",))))
+    narration = [e for e in events if e["type"] == EV_OUTPUT_ITEM_DONE][0]
+    assert narration["item"]["content"][0]["text"] == ""
+
+
+def test_narration_survives_a_newline_before_the_answer():
+    events = run_stream(build(FakeExecutor(chunks=("looking around\n", "summary\n"))))
+    narration = [e for e in events if e["type"] == EV_OUTPUT_ITEM_DONE][0]
+    assert narration["item"]["content"][0]["text"] == "looking around"
+
+
 def test_no_function_call_events_are_ever_emitted():
     """The sub-agent thread stays inert; tools run inside the local agent."""
     events = run_stream(build())

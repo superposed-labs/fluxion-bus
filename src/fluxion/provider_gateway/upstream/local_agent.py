@@ -723,10 +723,22 @@ def _narration_only(streamed: str, answer: str) -> str:
 
     When the agent produced a single message the whole stream *is* the answer;
     there is no narration to keep, and returning it unchanged would duplicate it.
+
+    Compared on stripped text, which is the whole reason this works at all. The
+    streamed text is whatever the CLI wrote to stdout, trailing newline and all,
+    while the summary has been stripped by the executor. Matching them raw made
+    a single trailing "\\n" defeat both the equality test and the suffix test, so
+    the answer was stored twice and shown twice — once as narration and once as
+    the final answer.
     """
-    if not answer or streamed == answer or not streamed.endswith(answer):
-        return "" if streamed == answer else streamed
-    return streamed[: -len(answer)].rstrip()
+    if not answer:
+        return streamed
+    trimmed, terminal = streamed.rstrip(), answer.strip()
+    if not terminal or trimmed == terminal:
+        return ""
+    if trimmed.endswith(terminal):
+        return trimmed[: -len(terminal)].rstrip()
+    return streamed
 
 
 def _item_added(response_id: str, item_id: str, phase: str) -> dict[str, Any]:
