@@ -31,7 +31,7 @@ def reset_executor_cache():
     CodexExecutor._cached_cheapest = None
 
 
-def test_resolve_cheapest_model_success_with_mini():
+def test_resolve_cheapest_model_uses_price_before_effort():
     mock_catalog = {
         "models": [
             {
@@ -68,15 +68,27 @@ def test_resolve_cheapest_model_success_with_mini():
     mock_run.returncode = 0
     mock_run.stdout = json.dumps(mock_catalog)
 
-    with patch("subprocess.run", return_value=mock_run) as mock_subprocess_run:
+    rates = {
+        "gpt-5.4-mini": {"in": 0.75, "out": 4.5, "cw": 0.75, "cr": 0.075},
+        "gpt-5.5-mini": {"in": 0.5, "out": 3.0, "cw": 0.5, "cr": 0.05},
+        "gpt-5.5": {"in": 5.0, "out": 30.0, "cw": 5.0, "cr": 0.5},
+    }
+
+    with (
+        patch("subprocess.run", return_value=mock_run) as mock_subprocess_run,
+        patch(
+            "fluxion.executors.codex.executor.pricing.current_rates_for",
+            side_effect=lambda provider, model: rates[model],
+        ),
+    ):
         model, effort = executor._resolve_cheapest_model_and_effort()
-        # Should pick the newest mini (gpt-5.5-mini) and its lowest reasoning level (medium)
-        assert model == "gpt-5.5-mini"
-        assert effort == "medium"
-        assert mock_subprocess_run.call_count == 1
+
+    assert model == "gpt-5.5-mini"
+    assert effort == "medium"
+    assert mock_subprocess_run.call_count == 1
 
 
-def test_resolve_cheapest_model_success_no_mini():
+def test_resolve_cheapest_model_uses_lowest_effort_when_prices_match():
     mock_catalog = {
         "models": [
             {
@@ -106,11 +118,55 @@ def test_resolve_cheapest_model_success_no_mini():
     mock_run.returncode = 0
     mock_run.stdout = json.dumps(mock_catalog)
 
-    with patch("subprocess.run", return_value=mock_run):
+    shared_rate = {"in": 1.0, "out": 6.0, "cw": 1.0, "cr": 0.1}
+    with (
+        patch("subprocess.run", return_value=mock_run),
+        patch(
+            "fluxion.executors.codex.executor.pricing.current_rates_for",
+            return_value=shared_rate,
+        ),
+    ):
         model, effort = executor._resolve_cheapest_model_and_effort()
-        # No mini model exists, should pick newest general model (gpt-5.5) and its lowest reasoning level (medium)
-        assert model == "gpt-5.5"
-        assert effort == "medium"
+
+    assert model == "gpt-5.2"
+    assert effort == "low"
+
+
+def test_resolve_cheapest_model_uses_newest_version_as_final_tiebreak():
+    mock_catalog = {
+        "models": [
+            {
+                "slug": "gpt-5.4-mini",
+                "supported_reasoning_levels": [{"effort": "low"}],
+            },
+            {
+                "slug": "gpt-5.5-mini",
+                "supported_reasoning_levels": [{"effort": "low"}],
+            },
+        ]
+    }
+    executor = CodexExecutor(
+        timeout_sec=30,
+        skip_git_repo_check=True,
+        sandbox_mode="none",
+        bypass_sandbox=False,
+        max_structured_uploads=10,
+        logs_dir=Path("/tmp/fluxion_tests_logs"),
+    )
+    mock_run = MagicMock(returncode=0, stdout=json.dumps(mock_catalog))
+    shared_rate = {"in": 0.75, "out": 4.5, "cw": 0.75, "cr": 0.075}
+
+    with (
+        patch("subprocess.run", return_value=mock_run),
+        patch(
+            "fluxion.executors.codex.executor.pricing.current_rates_for",
+            return_value=shared_rate,
+        ),
+    ):
+        model, effort = executor._resolve_cheapest_model_and_effort()
+
+    assert model == "gpt-5.5-mini"
+    assert effort == "low"
 
 
 def test_resolve_cheapest_model_subprocess_error():
@@ -125,9 +181,8 @@ def test_resolve_cheapest_model_subprocess_error():
 
     with patch("subprocess.run", side_effect=subprocess.SubprocessError("Failed")):
         model, effort = executor._resolve_cheapest_model_and_effort()
-        # Should fallback to default values
-        assert model == "gpt-5.4-mini"
-        assert effort == "low"
+        assert model == ""
+        assert effort == ""
 
 
 def test_resolve_cheapest_model_caching():
@@ -249,6 +304,31 @@ def test_build_command_uses_model_override(tmp_path: Path):
     assert "-m" in command
     assert command[command.index("-m") + 1] == "gpt-5.5"
     assert "--ignore-user-config" not in command
+
+
+def test_ping_catalog_failure_uses_codex_cli_default(tmp_path: Path):
+    executor = CodexExecutor(
+        timeout_sec=30,
+        skip_git_repo_check=True,
+        sandbox_mode="none",
+        bypass_sandbox=False,
+        max_structured_uploads=10,
+        logs_dir=tmp_path / "logs",
+    )
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="hi",
+        workspace=tmp_path,
+        metadata={"subagent": {"task_name": "ping-codex"}},
+    )
+
+    with patch.object(executor, "_resolve_cheapest_model_and_effort", return_value=("", "")):
+        command = executor._build_command(task)
+
+    assert "--ignore-user-config" in command
+    assert "-m" not in command
+    assert not any(arg.startswith("model_reasoning_effort=") for arg in command)
 
 
 def test_extract_answer_accepts_markers_without_colon(tmp_path: Path):

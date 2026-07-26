@@ -27,6 +27,64 @@ def test_select_antigravity_ping_model_prefers_low_flash_for_gemini_pool():
     assert model == "Gemini 3.5 Flash (Low)"
 
 
+def test_select_antigravity_ping_model_accepts_slugs_and_prefers_cheaper_version():
+    model = select_antigravity_ping_model_from_names(
+        pool_key="antigravity:gemini",
+        model_names=[
+            "gemini-3.6-flash-high",
+            "gemini-3.6-flash-low",
+            "gemini-3.5-flash-low",
+            "gemini-3.1-pro-low",
+            "gpt-oss-120b-medium",
+        ],
+    )
+
+    assert model == "gemini-3.6-flash-low"
+
+
+def test_select_antigravity_ping_model_uses_price_before_version(monkeypatch):
+    rates = {
+        "gemini-3.5-flash": {"in": 0.5, "out": 3.0, "cw": 0.5, "cr": 0.05},
+        "gemini-3.6-flash": {"in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15},
+    }
+    monkeypatch.setattr(
+        antigravity_models.pricing,
+        "current_rates_for",
+        lambda provider, model: rates[
+            antigravity_models.identify_model(provider, model).billing_id
+        ],
+    )
+
+    model = select_antigravity_ping_model_from_names(
+        pool_key="antigravity:gemini",
+        model_names=[
+            "gemini-3.5-flash-low",
+            "gemini-3.6-flash-low",
+        ],
+    )
+
+    assert model == "gemini-3.5-flash-low"
+
+
+def test_select_antigravity_ping_model_prefers_low_effort_when_prices_match(monkeypatch):
+    monkeypatch.setattr(
+        antigravity_models.pricing,
+        "current_rates_for",
+        lambda provider, model: {"in": 1.0, "out": 2.0, "cw": 1.0, "cr": 0.1},
+    )
+
+    model = select_antigravity_ping_model_from_names(
+        pool_key="antigravity:gemini",
+        model_names=[
+            "gemini-3.6-flash-high",
+            "gemini-3.6-flash-low",
+            "gemini-3.6-flash-medium",
+        ],
+    )
+
+    assert model == "gemini-3.6-flash-low"
+
+
 def test_select_antigravity_ping_model_prefers_gpt_oss_for_external_pool():
     model = select_antigravity_ping_model_from_names(
         pool_key="antigravity:external",

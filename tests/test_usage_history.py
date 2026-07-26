@@ -592,10 +592,12 @@ def test_gemini_thinking_level_uses_the_canonical_model_price(fixed_prices):
 
     high = history._rates_for("antigravity", "Gemini 3.5 Flash (High)", "2026-07-22")
     low = history._rates_for("antigravity", "Gemini 3.5 Flash(Low)", "2026-07-22")
+    slug = history._rates_for("antigravity", "gemini-3.5-flash-low", "2026-07-22")
     latest = history._rates_for("antigravity", "gemini-3.6-flash", "2026-07-22")
 
     assert high is not None and high["out"] == 9.0
     assert low == high
+    assert slug == high
     assert latest is not None and latest["out"] == 7.5
 
 
