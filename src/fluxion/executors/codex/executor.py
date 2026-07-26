@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -32,6 +33,35 @@ def _codex_failure_summary(event_capture: CodexEventCapture) -> str:
     if event_capture.error_message:
         return f"Codex execution failed: {event_capture.error_message}"
     return "Codex execution failed"
+
+
+# Providers the Provider Gateway installs into `~/.codex/config.toml`. A child
+# `codex exec` pointed at one of these would be talking to Fluxion, not to a model.
+_GATEWAY_PROVIDER_PREFIX = "fluxion_"
+_NATIVE_PROVIDER = "openai"
+
+
+def _codex_home() -> Path:
+    # Read per call, not at import: `_build_env` hands the child whatever
+    # CODEX_HOME this process has, so the config inspected here is the one the
+    # child will actually load.
+    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+
+
+def _configured_model_provider(config_path: Path) -> str:
+    """The top-level `model_provider` a child `codex exec` would inherit.
+
+    Profiles are not consulted: one is active only under `--profile`, which this
+    executor never passes.
+    """
+    try:
+        with config_path.open("rb") as handle:
+            parsed = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        # A config Codex itself cannot read is Codex's problem to report.
+        return ""
+    value = parsed.get("model_provider")
+    return value if isinstance(value, str) else ""
 
 
 def _sandbox_mode(configured: str, read_only: bool) -> str:
@@ -525,6 +555,11 @@ class CodexExecutor:
             if task_name.startswith("ping-") or "ping" in task_name.lower():
                 is_ping = True
 
+        # Kept as one name because it decides two things: whether the ping trims
+        # the user's config, and whether the recursion guard has anything to guard.
+        ignores_user_config = is_ping and not model_override
+        guard = self._recursion_guard(ignores_user_config=ignores_user_config)
+
         if session_id:
             command = [resolved_command, "exec", "resume"]
             command.append("--json")
@@ -538,13 +573,15 @@ class CodexExecutor:
                 command.append("--skip-git-repo-check")
             if model_override:
                 command.extend(["-m", model_override])
-            elif is_ping:
+            elif ignores_user_config:
                 # Skip ~/.codex/config.toml so the keep-alive ping doesn't load
                 # the user's MCP servers + plugins into context (~21% fewer
                 # tokens, measured). Auth still resolves via CODEX_HOME.
                 command.append("--ignore-user-config")
                 model, effort = self._resolve_cheapest_model_and_effort()
                 command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
+            command.extend(guard)
+            # The session id is positional and `codex exec resume` reads it last.
             command.append(session_id)
             return command
 
@@ -557,12 +594,41 @@ class CodexExecutor:
             command.append("--skip-git-repo-check")
         if model_override:
             command.extend(["-m", model_override])
-        elif is_ping:
+        elif ignores_user_config:
             # See resume branch above: trim MCP/plugin context for the ping.
             command.append("--ignore-user-config")
             model, effort = self._resolve_cheapest_model_and_effort()
             command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
+        command.extend(guard)
         return command
+
+    def _recursion_guard(self, *, ignores_user_config: bool) -> list[str]:
+        """Overrides that keep a child `codex exec` from calling back into Fluxion.
+
+        Someone who wants every Codex session served by their local agents writes
+        `model_provider = "fluxion_auto"` at the top of `~/.codex/config.toml`.
+        The `codex exec` launched here reads that same line, so a gateway route
+        reaching `local_codex` spawns a Codex that calls the gateway — which is
+        holding the workspace lock while it waits for that very process to exit.
+        Neither side can move, and nothing times out. A workspace that happens to
+        differ turns the deadlock into unbounded process spawning instead, which
+        is not an improvement.
+
+        Fluxion picking this executor means "run the Codex CLI", never "be a
+        gateway client", so a provider pointing back at us is replaced. Any other
+        custom provider — someone proxying Codex through their own endpoint — is
+        left alone, which is why this matches on the prefix rather than pinning
+        the provider unconditionally.
+
+        The chosen override lands in the recorded command, so a run that was
+        redirected says so in its own log.
+        """
+        if ignores_user_config:
+            return []
+        provider = _configured_model_provider(_codex_home() / "config.toml")
+        if not provider.startswith(_GATEWAY_PROVIDER_PREFIX):
+            return []
+        return ["-c", f"model_provider={_NATIVE_PROVIDER}"]
 
     def _should_retry_with_fresh_session(self, *, stderr: str, task: Task) -> bool:
         session_id = str(task.metadata.get("executor_session_id", "")).strip()

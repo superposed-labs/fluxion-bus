@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -29,6 +30,17 @@ def reset_executor_cache():
     CodexExecutor._cached_cheapest = None
     yield
     CodexExecutor._cached_cheapest = None
+
+
+@pytest.fixture(autouse=True)
+def isolated_codex_home(tmp_path_factory, monkeypatch):
+    """Keep the command builder off the developer's own `~/.codex/config.toml`.
+
+    `_build_command` consults it for the recursion guard, so a contributor who
+    routes their own Codex through the gateway would otherwise see unrelated
+    command assertions pick up an extra override.
+    """
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.mktemp("codex-home")))
 
 
 def test_resolve_cheapest_model_success_with_mini():
@@ -231,6 +243,107 @@ def test_build_command_uses_model_override(tmp_path: Path):
     assert "-m" in command
     assert command[command.index("-m") + 1] == "gpt-5.5"
     assert "--ignore-user-config" not in command
+
+
+# ── recursion guard ──────────────────────────────────────────────────
+def _executor(tmp_path: Path) -> CodexExecutor:
+    return CodexExecutor(
+        timeout_sec=30,
+        skip_git_repo_check=True,
+        sandbox_mode="none",
+        bypass_sandbox=False,
+        max_structured_uploads=10,
+        logs_dir=tmp_path / "logs",
+    )
+
+
+def _write_codex_config(body: str) -> None:
+    (Path(os.environ["CODEX_HOME"]) / "config.toml").write_text(body, encoding="utf-8")
+
+
+def _override_of(command: list[str], key: str) -> str | None:
+    for flag, value in zip(command, command[1:], strict=False):
+        if flag == "-c" and value.startswith(f"{key}="):
+            return value.split("=", 1)[1]
+    return None
+
+
+def test_a_provider_pointing_back_at_the_gateway_is_replaced(tmp_path: Path):
+    """Otherwise the child `codex exec` calls the gateway that is waiting on it,
+    while that request holds the workspace lock — a hang with no error."""
+    _write_codex_config('model_provider = "fluxion_auto"\n')
+    task = Task.create(channel="local", user_id="u", text="hi", workspace=tmp_path)
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert _override_of(command, "model_provider") == "openai"
+
+
+def test_someone_elses_custom_provider_is_left_alone(tmp_path: Path):
+    """Proxying Codex through your own endpoint is a legitimate setup; only a
+    provider that routes back into Fluxion is ours to override."""
+    _write_codex_config('model_provider = "my_own_proxy"\n')
+    task = Task.create(channel="local", user_id="u", text="hi", workspace=tmp_path)
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert _override_of(command, "model_provider") is None
+
+
+def test_the_usual_config_gets_no_override(tmp_path: Path):
+    task = Task.create(channel="local", user_id="u", text="hi", workspace=tmp_path)
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert "-c" not in command
+
+
+def test_a_config_that_cannot_be_parsed_is_left_to_codex(tmp_path: Path):
+    """Codex reports its own config errors; guessing here would swap a clear
+    message for a mysterious override."""
+    _write_codex_config("model_provider = [unclosed\n")
+    task = Task.create(channel="local", user_id="u", text="hi", workspace=tmp_path)
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert _override_of(command, "model_provider") is None
+
+
+def test_a_guarded_resume_keeps_the_session_id_last(tmp_path: Path):
+    """`codex exec resume` reads the session id positionally, so an override
+    appended after it would be swallowed as the session."""
+    _write_codex_config('model_provider = "fluxion_worker"\n')
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="hi",
+        workspace=tmp_path,
+        metadata={"executor_session_id": "019f0720-22d4-72f3-9b73-f8c8c9bfdf2f"},
+    )
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert _override_of(command, "model_provider") == "openai"
+    assert command[-1] == "019f0720-22d4-72f3-9b73-f8c8c9bfdf2f"
+
+
+def test_the_ping_needs_no_guard(tmp_path: Path):
+    """It already skips the user's config, so nothing can point it back at us."""
+    _write_codex_config('model_provider = "fluxion_auto"\n')
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="hi",
+        workspace=tmp_path,
+        metadata={"subagent": {"task_name": "ping-keepalive"}},
+    )
+
+    with patch.object(CodexExecutor, "_resolve_cheapest_model_and_effort") as resolve:
+        resolve.return_value = ("gpt-5.4-mini", "low")
+        command = _executor(tmp_path)._build_command(task)
+
+    assert "--ignore-user-config" in command
+    assert _override_of(command, "model_provider") is None
 
 
 def test_extract_answer_accepts_markers_without_colon(tmp_path: Path):

@@ -123,6 +123,12 @@ codex -m gpt-5.6-luna
 
 `install-codex-config` refuses to write if your config sets `features.multi_agent_v2 = true`, or turns `features.multi_agent` off (which removes `spawn_agent` entirely). It does not write any feature flags of its own — v1 is already the default.
 
+### Serving the whole session, not just sub-agents
+
+`install-codex-config` only writes `model_provider` into the role files, so by default the main session keeps its own provider and just its sub-agents reach the gateway. Setting `model_provider = "fluxion_auto"` at the *top* of `~/.codex/config.toml` sends every turn through instead.
+
+That is supported, with one thing worth knowing: Fluxion's own Codex executor launches `codex exec`, and that child would read the same line and call back into the gateway. The gateway holds a lock on the workspace while it waits for the child, so the two would wait on each other with nothing to time out. Fluxion therefore pins any `codex exec` it launches back to Codex's native provider whenever the inherited one starts with `fluxion_`. A custom provider of your own — Codex behind your proxy — is left untouched. The override appears in the recorded command of the run it applied to.
+
 ---
 
 ## Client: Claude Code (Anthropic Messages)
