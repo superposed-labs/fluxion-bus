@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from fluxion.provider_gateway.stream import (
 from fluxion.provider_gateway.upstream.local_agent import (
     LocalAgentUpstream,
     extract_prompt,
+    has_unreadable_task,
 )
 
 
@@ -236,6 +238,73 @@ def test_a_spawned_subagent_receives_its_task():
 
     assert "summarize this week's news" in prompt
     assert prompt.startswith("Complete the delegated task.")
+
+
+# ── the encrypted-task guard ─────────────────────────────────────────
+# Captured from codex-cli 0.145.0 with a v2 parent model (gpt-5.6-terra),
+# truncated in the middle. A Fernet token: base64url of a 0x80 version byte,
+# timestamp, IV, ciphertext, and HMAC.
+V2_TOKEN = "gAAAAABqZeSZCF2oN519yW3OMqrNjtC6Yns0R5outXAUJbj5MczsEGHKv9sCdpJWnyinVd-_JW_XTrTt" + (
+    "x" * 60
+)
+
+
+def spawn(payload):
+    return {
+        "input": [
+            {"role": "developer", "content": "Complete the delegated task."},
+            {
+                "type": "agent_message",
+                "content": [
+                    {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                    {"type": "encrypted_content", "encrypted_content": payload},
+                ],
+            },
+        ]
+    }
+
+
+def test_an_encrypted_task_is_detected():
+    assert has_unreadable_task(spawn(V2_TOKEN))
+
+
+def test_a_v1_payload_is_not_mistaken_for_ciphertext():
+    """v1 passes the spawn_agent `message` argument through verbatim under the
+    same wire field name. Refusing those would break the protocol that works."""
+    assert not has_unreadable_task(spawn("summarize this week's news"))
+
+
+def test_a_v1_spawn_carries_no_such_part_at_all():
+    """Measured: a v1 parent sends the task as a plain user message."""
+    body = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "go"}]}]}
+    assert not has_unreadable_task(body)
+
+
+def test_prose_that_happens_to_start_like_a_token_is_kept():
+    """The pattern needs an unbroken base64url run; prose has spaces."""
+    assert not has_unreadable_task(spawn("gAAAAA is a strange way to open a task but " * 4))
+
+
+def test_an_encrypted_task_fails_the_turn_instead_of_running():
+    """This is the failure the guard exists for. Handed ciphertext as its task,
+    an agent has no task at all, so it improvises — and the parent shows a
+    sub-agent that confidently answered a question nobody asked, with nothing
+    anywhere reporting an error.
+    """
+    executor = FakeExecutor()
+    events = run_stream(build(executor), body=spawn(V2_TOKEN))
+
+    assert [e["type"] for e in events] == [EV_FAILED]
+    assert executor.seen_task is None
+
+
+def test_the_refusal_names_the_fix():
+    """A user who hits this needs to know it is the parent's model, not their
+    task, and which way out exists."""
+    events = run_stream(build(), body=spawn(V2_TOKEN))
+    message = json.dumps(events[0])
+    assert "encrypted" in message
+    assert "gpt-5.6-luna" in message
 
 
 def test_prompt_handles_a_plain_string_input():

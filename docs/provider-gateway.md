@@ -104,7 +104,7 @@ The cost of that is real: asking for **"a worker sub-agent"** in plain language 
 
 This is the constraint that most often looks like a bug.
 
-Codex has two sub-agent protocols. Under **v2** the spawn payload is encrypted end-to-end, so the delegated task reaches a local agent as an opaque blob. The agent, having received no task, improvises a plausible-looking report — and the parent shows a sub-agent that confidently answered the wrong question, with no error anywhere.
+Codex has two sub-agent protocols. Under **v2** the spawn payload is sealed for OpenAI, so the delegated task reaches a local agent as ciphertext it cannot open. The gateway detects this and refuses the turn with a message naming the fix; Codex surfaces it as `Agent errored`. Without that guard the agent, having received no task it could read, would improvise a plausible-looking report — and the parent would show a sub-agent that confidently answered the wrong question, with no error anywhere.
 
 Which protocol is used is decided by the **parent's model**, not by config, and the model's own declaration wins. As of codex-cli 0.145.0:
 
@@ -216,7 +216,7 @@ For Codex this means the native sub-agent card renders and streams live, but its
 
 ## Troubleshooting
 
-**The sub-agent answered something unrelated to its task.** The parent is running a v2 model. See [The parent model must use multi-agent v1](#the-parent-model-must-use-multi-agent-v1).
+**`Agent errored: … the delegated task arrived encrypted`.** The parent is running a v2 model. See [The parent model must use multi-agent v1](#the-parent-model-must-use-multi-agent-v1).
 
 **The sub-agent never ran at all, and nothing errored.** The plain-language role name selected Codex's built-in role. Name `fluxion_worker` explicitly.
 

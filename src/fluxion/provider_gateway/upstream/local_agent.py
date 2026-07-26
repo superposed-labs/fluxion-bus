@@ -161,6 +161,10 @@ class LocalAgentUpstream:
         """Run the agent and yield Responses events as its output arrives."""
         response_id = request_id or f"resp_{uuid.uuid4().hex[:24]}"
         answer_id = f"msg_{uuid.uuid4().hex[:24]}"
+        if has_unreadable_task(body):
+            yield _failed(response_id, ENCRYPTED_TASK_MESSAGE)
+            return
+
         # Whether the agent still remembers this sub-thread decides how much of
         # it to resend — see `extract_prompt`.
         prompt = extract_prompt(body, resuming=bool(session_id))
@@ -432,6 +436,60 @@ class LocalAgentUpstream:
             raise
 
 
+ENCRYPTED_TASK_MESSAGE = (
+    "the delegated task arrived encrypted, so this sub-agent cannot read it. "
+    "That is Codex's multi-agent v2 protocol, which the parent's model selects: "
+    "the payload is sealed for OpenAI and a local agent only sees ciphertext. "
+    "Run the parent Codex session with a v1 model — `codex -m gpt-5.6-luna` — "
+    "or see docs/provider-gateway.md."
+)
+
+# A Fernet token: base64url of a 0x80 version byte, timestamp, IV, ciphertext,
+# and HMAC. The version byte is what makes every one of them start `gAAAAA`, and
+# the fixed header and MAC put a floor under the length well above this.
+_FERNET_TOKEN = re.compile(r"^gAAAAA[A-Za-z0-9_=-]{90,}$")
+
+
+def has_unreadable_task(body: Mapping[str, Any]) -> bool:
+    """Whether the delegated task arrived as ciphertext this gateway cannot open.
+
+    Codex's v2 multi-agent protocol seals the spawn payload — the provider is
+    expected to be OpenAI, and only OpenAI holds the key. A local agent handed
+    that blob has no task at all, so it improvises: the parent then shows a
+    sub-agent that confidently answered a question nobody asked, and nothing
+    anywhere reports an error. Refusing the turn converts the worst failure
+    this path has into an ordinary one with a fix in the message.
+
+    Detection is on the payload rather than on the protocol version, because the
+    payload is the actual problem. Which version a turn uses is decided by the
+    parent's model and cannot be read from the request; a v2 turn that somehow
+    arrived readable should still run, and a sealed payload should be refused
+    however it got here.
+
+    Shape confirmed against codex-cli 0.145.0 by capturing both protocols: v2
+    sends `{"type": "encrypted_content", "encrypted_content": "gAAAAAB…"}`
+    beside the `NEW_TASK` envelope, v1 sends a plain user message with no such
+    part at all. The pattern requires an unbroken base64url run, so ordinary
+    prose — which has spaces — cannot match it.
+    """
+    items = body.get("input")
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, Mapping):
+                continue
+            value = part.get("encrypted_content")
+            if isinstance(value, str) and _FERNET_TOKEN.match(value.strip()):
+                return True
+    return False
+
+
 def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
     """Build the prompt for the local agent from a Responses request.
 
@@ -553,11 +611,11 @@ def _text_of(content: Any) -> str:
     which is exactly what it looks like from the parent: a sub-agent that
     "didn't receive the task".
 
-    The `encrypted_content` name describes the wire field, not the value: the
-    CLI passes the `spawn_agent` tool's `message` argument through verbatim
-    (codex-rs core/src/tools/handlers/multi_agents_v2.rs,
-    `communication_from_tool_message`). If a payload ever does arrive genuinely
-    opaque, forwarding it is still strictly better than forwarding nothing.
+    The `encrypted_content` name describes the wire field, not the value: under
+    the v1 protocol the CLI passes the `spawn_agent` tool's `message` argument
+    through verbatim (codex-rs core/src/tools/handlers/multi_agents_v2.rs,
+    `communication_from_tool_message`). Under v2 it really is ciphertext, which
+    `has_unreadable_task` catches before this ever runs.
     """
     if isinstance(content, str):
         return content.strip()
