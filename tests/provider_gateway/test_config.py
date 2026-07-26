@@ -266,3 +266,18 @@ def test_doctor_flags_a_read_only_role_no_executor_can_serve():
 
     assert len(problems) == 1, "only the read-only role should be flagged"
     assert "explorer" in problems[0]
+
+
+def test_the_default_ttl_outlasts_a_pause_in_the_conversation():
+    """Expiry costs a conversation its continuity, so the window has to cover
+    how long people actually leave one alone. A week did not."""
+    settings = GatewaySettings.load(env={})
+    assert settings.sticky_ttl_seconds == 90 * 24 * 3600
+
+
+def test_the_env_default_and_the_store_default_agree():
+    """Two spellings of the same number drift apart in exactly one direction:
+    silently."""
+    from fluxion.provider_gateway.sticky import DEFAULT_TTL_SECONDS
+
+    assert GatewaySettings.load(env={}).sticky_ttl_seconds == DEFAULT_TTL_SECONDS

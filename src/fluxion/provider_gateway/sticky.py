@@ -23,10 +23,18 @@ log = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 2
 
-# One week, matching FLUXION_PROVIDER_STICKY_TTL_HOURS' default. Long enough to
-# survive an overnight pause in a long-running task, short enough that a stale
-# route does not outlive the config that produced it.
-DEFAULT_TTL_SECONDS = 168 * 3600
+# 90 days, matching FLUXION_PROVIDER_STICKY_TTL_HOURS' default.
+#
+# What expiry costs is a conversation's continuity, so the window has to cover
+# how long people actually leave one alone. A week does not: coming back to a
+# thread after a fortnight is ordinary, and the row is a few hundred bytes, so
+# nothing is saved by forgetting it sooner.
+#
+# Not unbounded, though `0` disables expiry for anyone who wants that. The agent
+# session a row points at lives in the CLI's own storage and is cleaned up on
+# its own schedule; past some age the pointer outlives its target, and resuming
+# a session that is no longer there fails in a stranger way than starting cold.
+DEFAULT_TTL_SECONDS = 90 * 24 * 3600
 
 
 @dataclass(frozen=True)

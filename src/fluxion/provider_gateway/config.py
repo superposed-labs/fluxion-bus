@@ -94,7 +94,7 @@ class GatewaySettings:
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> GatewaySettings:
         env = os.environ if env is None else env
-        ttl_hours = _int(env.get("FLUXION_PROVIDER_STICKY_TTL_HOURS"), 168)
+        ttl_hours = _int(env.get("FLUXION_PROVIDER_STICKY_TTL_HOURS"), DEFAULT_TTL_SECONDS // 3600)
         return cls(
             enabled=_bool(env.get("FLUXION_PROVIDER_ENABLED"), False),
             host=env.get("FLUXION_PROVIDER_HOST", "127.0.0.1").strip() or "127.0.0.1",

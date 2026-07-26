@@ -6,7 +6,7 @@ import threading
 import pytest
 
 from fluxion.provider_gateway.identity import IdentityConfidence, RequestIdentity
-from fluxion.provider_gateway.sticky import StickyStore
+from fluxion.provider_gateway.sticky import DEFAULT_TTL_SECONDS, StickyStore
 
 
 def identity(route_key="rk-1", confidence=IdentityConfidence.EXPLICIT, **kwargs):
@@ -64,7 +64,7 @@ def test_expired_route_is_not_returned_and_is_deleted(store):
     store.remember(identity(), "openai_primary", "gpt-x", "balanced", now=0.0)
     assert store.lookup("rk-1", now=0.0) is not None
 
-    beyond_ttl = 169 * 3600
+    beyond_ttl = DEFAULT_TTL_SECONDS + 3600
     assert store.lookup("rk-1", now=beyond_ttl) is None
     # Deleted on read, not merely filtered.
     assert store.lookup("rk-1", now=0.0) is None
@@ -73,7 +73,7 @@ def test_expired_route_is_not_returned_and_is_deleted(store):
 def test_touch_extends_the_ttl(store):
     store.remember(identity(), "openai_primary", "gpt-x", "balanced", now=0.0)
     store.touch("rk-1", now=100 * 3600)
-    assert store.lookup("rk-1", now=169 * 3600) is not None
+    assert store.lookup("rk-1", now=DEFAULT_TTL_SECONDS + 3600) is not None
 
 
 def test_ttl_can_be_disabled(tmp_path):
@@ -85,9 +85,9 @@ def test_ttl_can_be_disabled(tmp_path):
 
 def test_purge_removes_only_expired_routes(store):
     store.remember(identity("old"), "p", "m", "balanced", now=0.0)
-    store.remember(identity("fresh"), "p", "m", "balanced", now=168 * 3600)
-    assert store.purge_expired(now=169 * 3600) == 1
-    assert store.lookup("fresh", now=169 * 3600) is not None
+    store.remember(identity("fresh"), "p", "m", "balanced", now=DEFAULT_TTL_SECONDS)
+    assert store.purge_expired(now=DEFAULT_TTL_SECONDS + 3600) == 1
+    assert store.lookup("fresh", now=DEFAULT_TTL_SECONDS + 3600) is not None
 
 
 def test_pinned_route_survives_ttl_and_purge(store):
