@@ -118,11 +118,71 @@ def _rendered_block() -> dict:
     )
 
 
-def test_multi_agent_is_switched_on():
-    """`multi_agent_v2` is default_enabled: false, so `spawn_agent` needs this."""
-    multi_agent = _rendered_block()["features"]["multi_agent_v2"]
-    assert multi_agent["enabled"] is True
-    assert multi_agent["max_concurrent_threads_per_session"] == 6
+def test_no_feature_flags_are_written():
+    """v1 is already the default, and `[features]` would collide with the user's.
+
+    `Feature::Collab` (TOML key `multi_agent`) is `default_enabled: true`, so
+    there is nothing to switch on. Declaring `[features]` here would be a second
+    declaration of a table many configs already have, and TOML forbids that —
+    Codex would then refuse to load the entire file.
+    """
+    assert "features" not in _rendered_block()
+    assert "[features]" not in render_provider_block(
+        base_url="http://x/v1", token_command=TOKEN_COMMAND, token_args=TOKEN_ARGS
+    )
+
+
+def test_install_survives_a_hand_written_features_table(tmp_path):
+    """The exact shape that broke a real install."""
+    existing = "[features]\nmulti_agent = true\njs_repl = false\n"
+    plan = build_plan(tmp_path, existing)
+
+    parsed = tomllib.loads(plan.merged_config)
+    assert parsed["features"] == {"multi_agent": True, "js_repl": False}
+
+
+def test_upgrading_replaces_an_older_managed_block(tmp_path):
+    """A left-behind v2 block would re-enable the encrypted protocol."""
+    existing = (
+        "# >>> fluxion managed block v2 — do not edit inside >>>\n"
+        "[features.multi_agent_v2]\n"
+        "enabled = true\n"
+        "# <<< fluxion managed block v2 <<<\n"
+    )
+    plan = build_plan(tmp_path, existing)
+
+    assert plan.replaced_existing
+    assert "multi_agent_v2" not in plan.merged_config
+
+
+# ── feature conflicts ────────────────────────────────────────────────
+def test_v2_enabled_outside_the_block_is_refused(tmp_path):
+    """Under v2 the task arrives encrypted and the agent answers the wrong thing.
+
+    Nothing downstream can detect that, so it has to be caught here.
+    """
+    with pytest.raises(CodexConfigError, match="multi_agent_v2"):
+        build_plan(tmp_path, "[features.multi_agent_v2]\nenabled = true\n")
+
+
+def test_v2_enabled_as_a_bare_bool_is_refused(tmp_path):
+    with pytest.raises(CodexConfigError, match="multi_agent_v2"):
+        build_plan(tmp_path, "[features]\nmulti_agent_v2 = true\n")
+
+
+def test_multi_agent_turned_off_is_refused(tmp_path):
+    """No spawn_agent tool means no sub-agent is ever created to route."""
+    with pytest.raises(CodexConfigError, match="spawn_agent"):
+        build_plan(tmp_path, "[features]\nmulti_agent = false\n")
+
+
+def test_the_legacy_alias_is_checked_too(tmp_path):
+    with pytest.raises(CodexConfigError, match="spawn_agent"):
+        build_plan(tmp_path, "[features]\ncollab = false\n")
+
+
+def test_an_unrelated_features_table_is_left_alone(tmp_path):
+    build_plan(tmp_path, "[features]\njs_repl = false\napps = true\n")
 
 
 def test_no_plain_keys_are_written_under_agents():

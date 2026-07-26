@@ -36,7 +36,10 @@ from pathlib import Path
 
 # v2 moved the multi-agent switch out of `[agents]`, which older Codex builds
 # reject outright. Installs find and replace any earlier version's block.
-MANAGED_VERSION = 2
+# v3 switched the multi-agent protocol from v2 to v1 so spawn payloads arrive
+# readable; the version bump makes `install-codex-config` replace a v2 block
+# rather than leave both in place.
+MANAGED_VERSION = 3
 BEGIN_MARKER = f"# >>> fluxion managed block v{MANAGED_VERSION} — do not edit inside >>>"
 END_MARKER = f"# <<< fluxion managed block v{MANAGED_VERSION} <<<"
 
@@ -166,16 +169,26 @@ def render_provider_block(
     token_args: tuple[str, ...] = (),
     roles: tuple[str, ...] = DEFAULT_ROLES,
 ) -> str:
-    """Render the `[model_providers.*]` entries plus the `[agents]` settings.
+    """Render the `[model_providers.*]` entries, one per role.
 
-    One provider entry per role, all pointing at the same gateway but carrying a
-    different `X-Fluxion-Route` header. Roles are expressed as separate provider
-    entries rather than invented model names because Codex loads context-window
-    and capability information from the model name.
+    All point at the same gateway but carry a different `X-Fluxion-Route`
+    header. Roles are expressed as separate provider entries rather than
+    invented model names because Codex loads context-window and capability
+    information from the model name.
 
     `token_command` is the executable alone; arguments go in `token_args`.
     Codex's `ModelProviderAuthInfo` keeps them in separate fields, so a combined
     "cmd arg" string would have Codex exec a file with a space in its name.
+
+    Deliberately writes no feature flags. Multi-agent v1 — the protocol this
+    gateway depends on — is already the default: `Feature::Collab` (TOML key
+    `multi_agent`, legacy alias `collab`) is `default_enabled: true`, and
+    version selection is `if MultiAgentV2 { V2 } else if !agents_enabled
+    { Disabled } else if Collab { V1 }`. So there is nothing to switch on, and
+    writing `[features]` here would collide with a hand-written `[features]`
+    table — TOML forbids declaring the same table twice, and Codex would refuse
+    to load the whole file. `check_feature_conflicts` guards the settings that
+    would break routing instead.
     """
     if not token_command.startswith("/"):
         raise CodexConfigError(
@@ -209,28 +222,7 @@ def render_provider_block(
             "stream_idle_timeout_ms = 300000",
             "",
         ]
-    lines += [
-        # Multi-agent is `default_enabled: false` (features/src/lib.rs), so it has
-        # to be switched on or `spawn_agent` never appears.
-        #
-        # Written under `[features]`, never as `[agents].enabled`. `AgentsToml`
-        # carries `#[serde(flatten)] roles: BTreeMap<String, AgentRoleToml>`, so
-        # in older Codex builds *every* key under `[agents]` is read as a role
-        # name — `enabled = true` becomes a role called "enabled" whose value is
-        # a boolean, and the whole config fails to load with
-        # "invalid type: boolean `true`, expected struct AgentRoleToml".
-        # That breaks Codex entirely, not just Fluxion's part of it.
-        #
-        # Newer builds do accept `[agents].enabled`, and their own comment says a
-        # `features.multi_agent_v2` setting takes precedence — so this form is
-        # both the portable one and the authoritative one. Verified against
-        # codex-cli 0.144.3.
-        "[features.multi_agent_v2]",
-        "enabled = true",
-        "max_concurrent_threads_per_session = 6",
-        "",
-        END_MARKER,
-    ]
+    lines += [END_MARKER]
     return "\n".join(lines)
 
 
@@ -278,6 +270,7 @@ def plan_install(
 
     body, replaced = _strip_managed_block(existing)
     _reject_conflicting_providers(body, roles)
+    check_feature_conflicts(body)
     merged = f"{body.rstrip()}\n\n{block}\n" if body.strip() else f"{block}\n"
 
     # Prove the result parses before offering to write it. A config file Codex
@@ -343,6 +336,52 @@ def _reject_conflicting_providers(body: str, roles: tuple[str, ...]) -> None:
             "Rename or remove them first; overwriting a hand-written provider would "
             "silently change how existing agents route."
         )
+
+
+def check_feature_conflicts(body: str) -> None:
+    """Refuse settings that would break sub-agent routing after install.
+
+    Two of Codex's own feature flags decide whether a sub-agent can be served
+    from here at all, and neither fails loudly at run time:
+
+    - `multi_agent_v2` selects the v2 protocol, which has the provider encrypt
+      the spawn payload (`.with_encrypted()` on the `message` tool parameter).
+      The delegated task then reaches a local agent as an opaque blob, and the
+      agent — having no task — improvises a plausible report. The parent sees a
+      sub-agent that answered the wrong question, with nothing anywhere saying
+      why.
+    - `multi_agent` (alias `collab`) turned off removes `spawn_agent` entirely,
+      so no sub-agent is ever spawned to route.
+
+    Both are left to the user rather than overwritten: they are Codex's own
+    settings, and silently flipping them would change how the rest of Codex
+    behaves. Failing here is the alternative to failing invisibly later.
+    """
+    try:
+        parsed = tomllib.loads(body)
+    except tomllib.TOMLDecodeError:
+        # `_reject_conflicting_providers` reports the parse failure with the
+        # detail; this check simply has nothing to say about an unparseable file.
+        return
+    features = parsed.get("features")
+    if not isinstance(features, dict):
+        return
+
+    v2 = features.get("multi_agent_v2")
+    if v2 is True or (isinstance(v2, dict) and v2.get("enabled") is True):
+        raise CodexConfigError(
+            "config.toml enables features.multi_agent_v2, which routes sub-agent "
+            "tasks through an encrypted payload only OpenAI can read. A local "
+            "agent would receive an unreadable task and answer the wrong "
+            "question. Remove that setting to use the default v1 protocol."
+        )
+    for key in ("multi_agent", "collab"):
+        if features.get(key) is False:
+            raise CodexConfigError(
+                f"config.toml sets features.{key} = false, which removes the "
+                "spawn_agent tool, so no sub-agent is ever created to route. "
+                "Remove that setting or set it to true."
+            )
 
 
 def apply_plan(plan: CodexConfigPlan) -> Path | None:
