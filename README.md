@@ -365,9 +365,10 @@ channel and workspace settings.
 
 ## Provider Gateway
 
-`fluxion-provider` exposes Fluxion's local agent executors (such as Claude, Codex, or Antigravity) as an API provider endpoint (`http://127.0.0.1:8787`). This allows external tools like Codex to delegate subtasks to Fluxion.
+`fluxion-provider` exposes Fluxion's local agent executors (such as Claude, Codex, or Antigravity) as an API provider endpoint (`http://127.0.0.1:8787`). External tools call it instead of a metered model API, and the work runs on a CLI you already have a subscription for. It speaks the OpenAI Responses API (Codex sub-agents) and the Anthropic Messages API (Claude Code).
 
 ```bash
+fluxion-provider init
 fluxion-provider serve
 ```
 

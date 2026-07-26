@@ -309,9 +309,10 @@ fluxion-gateway
 
 ## Provider 网关
 
-`fluxion-provider` 将 Fluxion 的本地 Agent 执行器（如 Claude、Codex 或 Antigravity）暴露为 API Provider 端点（`http://127.0.0.1:8787`），允许外部工具（如 Codex）将子任务委托给 Fluxion。
+`fluxion-provider` 将 Fluxion 的本地 Agent 执行器（如 Claude、Codex 或 Antigravity）暴露为 API Provider 端点（`http://127.0.0.1:8787`）。外部工具不再调用按量计费的模型 API，而是把活派给你已经订阅的 CLI。同时支持 OpenAI Responses（Codex 子 Agent）与 Anthropic Messages（Claude Code）两种协议。
 
 ```bash
+fluxion-provider init
 fluxion-provider serve
 ```
 

@@ -309,9 +309,10 @@ fluxion-gateway
 
 ## Provider ゲートウェイ
 
-`fluxion-provider` は、Fluxion のローカルエージェント（Claude、Codex、Antigravity）を API Provider エンドポイント（`http://127.0.0.1:8787`）として公開し、Codex などの外部ツールが Fluxion にサブタスクを委任できるようにします。
+`fluxion-provider` は、Fluxion のローカルエージェント（Claude、Codex、Antigravity）を API Provider エンドポイント（`http://127.0.0.1:8787`）として公開します。外部ツールは従量課金のモデル API ではなくこのエンドポイントを呼び、実際の作業はすでに契約済みの CLI 上で動きます。OpenAI Responses（Codex サブエージェント）と Anthropic Messages（Claude Code）の両プロトコルに対応します。
 
 ```bash
+fluxion-provider init
 fluxion-provider serve
 ```
 
