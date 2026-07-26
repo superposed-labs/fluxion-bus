@@ -9,6 +9,7 @@ from fluxion.config.settings import Settings
 from fluxion.executors.antigravity import models as antigravity_models
 from fluxion.subagent import AUTO_AGENT_VALUES, resolve_agent
 from fluxion.usage import price_data
+from fluxion.usage.model_rates import resolve_standard_rate
 
 _CLAUDE_EXECUTOR_ALIASES = ("fable", "opus", "sonnet", "haiku")
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -304,37 +305,7 @@ def _model_entry(
 
 
 def _rate_for_model(*, model_id: str, provider: str, prices: dict[str, Any]) -> dict[str, Any]:
-    models = prices.get("models") or {}
-    exact = models.get(model_id) or models.get(model_id.lower())
-    if isinstance(exact, dict):
-        rate = _pick_latest_rate(exact.get("rates"))
-        if rate:
-            return rate
-    lower = model_id.lower()
-    for family, rate_list in (prices.get("families") or {}).items():
-        if _family_match(str(family), lower):
-            rate = _pick_latest_rate(rate_list)
-            if rate:
-                return rate
-    return _pick_latest_rate((prices.get("providers") or {}).get(provider))
-
-
-def _pick_latest_rate(value: Any) -> dict[str, Any]:
-    if not isinstance(value, list) or not value:
-        return {}
-    entries = [item for item in value if isinstance(item, dict)]
-    if not entries:
-        return {}
-    return sorted(entries, key=lambda item: str(item.get("effective_date", "")))[-1]
-
-
-def _family_match(family: str, model_low: str) -> bool:
-    idx = model_low.find(family)
-    while idx != -1:
-        if idx == 0 or not model_low[idx - 1].isalpha():
-            return True
-        idx = model_low.find(family, idx + 1)
-    return False
+    return resolve_standard_rate(prices, provider=provider, model=model_id) or {}
 
 
 def _reasoning_efforts(item: dict[str, Any]) -> list[str]:

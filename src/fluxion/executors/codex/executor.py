@@ -20,7 +20,19 @@ from fluxion.executors.codex.events import (
 from fluxion.executors.codex.prompt_builder import CodexPromptBuilder
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
+from fluxion.usage.history import pricing
+from fluxion.usage.model_identity import identify_model
+from fluxion.usage.model_rates import short_request_price_rank
 from fluxion.workspace.artifact_collector import select_uploadable_paths
+
+_CODEX_EFFORT_RANKS = {
+    "none": 0,
+    "minimal": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "xhigh": 5,
+}
 
 
 def _codex_failure_summary(event_capture: CodexEventCapture) -> str:
@@ -481,9 +493,7 @@ class CodexExecutor:
                 # Skip ~/.codex/config.toml so the keep-alive ping doesn't load
                 # the user's MCP servers + plugins into context (~21% fewer
                 # tokens, measured). Auth still resolves via CODEX_HOME.
-                command.append("--ignore-user-config")
-                model, effort = self._resolve_cheapest_model_and_effort()
-                command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
+                self._append_ping_model_args(command)
             command.append(session_id)
             return command
 
@@ -500,10 +510,20 @@ class CodexExecutor:
             command.extend(["-m", model_override])
         elif is_ping:
             # See resume branch above: trim MCP/plugin context for the ping.
-            command.append("--ignore-user-config")
-            model, effort = self._resolve_cheapest_model_and_effort()
-            command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
+            self._append_ping_model_args(command)
         return command
+
+    def _append_ping_model_args(self, command: list[str]) -> None:
+        command.append("--ignore-user-config")
+        model, effort = self._resolve_cheapest_model_and_effort()
+        if not model:
+            # The live catalog is unavailable. Let the Codex CLI choose its
+            # built-in current default instead of pinning a version that may
+            # eventually be retired.
+            return
+        command.extend(["-m", model])
+        if effort:
+            command.extend(["-c", f"model_reasoning_effort={effort}"])
 
     def _should_retry_with_fresh_session(self, *, stderr: str, task: Task) -> bool:
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
@@ -574,9 +594,6 @@ class CodexExecutor:
         )
 
     def _resolve_cheapest_model_and_effort(self) -> tuple[str, str]:
-        default_model = "gpt-5.4-mini"
-        default_effort = "low"
-
         if CodexExecutor._cached_cheapest is not None:
             return CodexExecutor._cached_cheapest
 
@@ -592,38 +609,45 @@ class CodexExecutor:
             data = json.loads(res.stdout)
             models = data.get("models", [])
             if not models:
-                return default_model, default_effort
+                return "", ""
 
-            # 1. Filter for mini models
-            mini_models = [m for m in models if "mini" in m.get("slug", "").lower()]
-            candidates = mini_models if mini_models else models
+            candidates = []
+            for model in models:
+                slug = str(model.get("slug") or "").strip()
+                if not slug:
+                    continue
+                effort_rank, effort = _lowest_codex_effort(model)
+                version_rank = tuple(-part for part in identify_model("codex", slug).version)
+                candidates.append(
+                    (
+                        short_request_price_rank(pricing.current_rates_for("codex", slug)),
+                        effort_rank,
+                        version_rank,
+                        slug,
+                        effort,
+                    )
+                )
+            if not candidates:
+                return "", ""
 
-            # 2. Sort candidates by slug/version descending to get the newest mini/model
-            candidates.sort(key=lambda x: x.get("slug", ""), reverse=True)
-            target_model = candidates[0]
-
-            slug = target_model.get("slug", default_model)
-
-            # 3. Find the lowest reasoning effort from supported_reasoning_levels
-            supported = target_model.get("supported_reasoning_levels", [])
-            effort_ranks = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5}
-
-            efforts = []
-            for item in supported:
-                eff = item.get("effort", "").lower()
-                if eff in effort_ranks:
-                    efforts.append((effort_ranks[eff], eff))
-
-            if efforts:
-                efforts.sort()
-                effort = efforts[0][1]
-            else:
-                effort = default_effort
+            _price, _effort_rank, _version, slug, effort = min(candidates)
 
             CodexExecutor._cached_cheapest = (slug, effort)
             return slug, effort
         except Exception:
-            return default_model, default_effort
+            return "", ""
 
     def _resolve_command(self) -> str:
         return resolve_codex_command() or "codex"
+
+
+def _lowest_codex_effort(model: dict) -> tuple[int, str]:
+    supported = model.get("supported_reasoning_levels", [])
+    efforts = []
+    for item in supported if isinstance(supported, list) else []:
+        if not isinstance(item, dict):
+            continue
+        effort = str(item.get("effort") or "").lower()
+        if effort in _CODEX_EFFORT_RANKS:
+            efforts.append((_CODEX_EFFORT_RANKS[effort], effort))
+    return min(efforts, default=(len(_CODEX_EFFORT_RANKS), ""))
