@@ -21,9 +21,26 @@ CDPATH="" cd -- "$(dirname -- "$0")/.."
 
 APP="desktop/Fluxion.app"
 SRC_PLIST="desktop/Resources/Info.plist"
+WEB_INDEX="src/fluxion/web/static/index.html"
 
 if [ ! -f "$SRC_PLIST" ]; then
     echo "error: $SRC_PLIST not found" >&2
+    exit 1
+fi
+
+if [ ! -f "$WEB_INDEX" ]; then
+    cat >&2 <<EOF
+error: Web console assets are missing: $WEB_INDEX
+
+Build them before building the macOS app:
+  npm --prefix web ci
+  npm --prefix web run build
+
+desktop/build.sh reuses an existing Web console build and does not build it automatically.
+EOF
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "error: npm is not installed; install Node.js 18 or newer first." >&2
+    fi
     exit 1
 fi
 
@@ -71,10 +88,8 @@ cp scripts/bootstrap-backend.sh "$APP/Contents/Resources/Scripts/bootstrap-backe
 cp scripts/install.sh "$APP/Contents/Resources/Scripts/install.sh"
 chmod +x "$APP/Contents/Resources/Scripts/bootstrap-backend.sh"
 chmod +x "$APP/Contents/Resources/Scripts/install.sh"
-if [ -d "src/fluxion/web/static" ]; then
-    mkdir -p "$APP/Contents/Resources/WebStatic"
-    cp -R src/fluxion/web/static/. "$APP/Contents/Resources/WebStatic/"
-fi
+mkdir -p "$APP/Contents/Resources/WebStatic"
+cp -R src/fluxion/web/static/. "$APP/Contents/Resources/WebStatic/"
 
 # 2b. Vendor the Sparkle updater framework (in-app auto-update support).
 # Fetched on demand and cached under desktop/Frameworks (gitignored) so the
