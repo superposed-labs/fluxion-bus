@@ -172,7 +172,7 @@ def test_session_is_remembered_and_resumed_on_the_next_turn(tmp_path):
     assert stored is not None and stored.executor_session_id == "claude-sess-1"
 
     post(client, body)
-    assert executor.tasks[1].metadata["resume_session_id"] == "claude-sess-1"
+    assert executor.tasks[1].metadata["executor_session_id"] == "claude-sess-1"
 
 
 def test_reported_usage_is_the_subthread_not_the_agent_burn(tmp_path):

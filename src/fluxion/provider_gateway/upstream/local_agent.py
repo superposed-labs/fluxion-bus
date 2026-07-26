@@ -265,8 +265,16 @@ class LocalAgentUpstream:
                 # ACTIONS_JSON) that means nothing on this path.
                 "prompt_mode": RAW_PROMPT_MODE,
                 # Lets the executor resume its previous session for a follow-up
-                # turn on the same sub-thread instead of starting cold.
-                "resume_session_id": session_id,
+                # turn instead of starting cold.
+                #
+                # The key name is the executors' contract, not ours: all three
+                # read `executor_session_id` (and so does the prompt builder,
+                # which uses it to decide whether the task is a fresh one). A
+                # differently-named key is silently ignored — the turn still
+                # succeeds, the agent has simply forgotten everything, and the
+                # gateway meanwhile trims the history it would otherwise have
+                # resent because it believes the session is being resumed.
+                "executor_session_id": session_id,
                 # Enforced by the executor, because the role file's
                 # `sandbox_mode` binds a Codex thread that runs no tools.
                 "read_only": read_only,
@@ -353,7 +361,7 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
     The rest of the history is deliberately left out. A spawned sub-agent's task
     is that last message, and replaying the parent's whole transcript into a
     fresh agent session buries it. Continuity across turns comes from resuming
-    the agent's own session instead (see `Task.metadata["resume_session_id"]`).
+    the agent's own session instead (see `Task.metadata["executor_session_id"]`).
     """
     items = body.get("input")
     if isinstance(items, str):
@@ -623,3 +631,4 @@ def _failed(response_id: str, message: str) -> dict[str, Any]:
             "error": {"type": "local_agent_error", "message": message},
         },
     }
+

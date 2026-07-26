@@ -289,7 +289,7 @@ def test_task_carries_workspace_model_and_session():
     assert task.workspace == Path("/tmp/ws")
     assert task.text == "do the thing"
     assert task.metadata["model"] == "opus"
-    assert task.metadata["resume_session_id"] == "prev-session"
+    assert task.metadata["executor_session_id"] == "prev-session"
 
 
 def test_task_asks_for_a_raw_prompt():
@@ -663,3 +663,25 @@ def test_reasoning_counts_toward_the_reported_context():
 
     usage = run_stream(build(Verbose()))[-1]["response"]["usage"]
     assert usage["output_tokens"] > 900, usage
+
+
+def test_the_resume_key_is_the_one_executors_read():
+    """A renamed key is ignored in silence, and the silence is the problem.
+
+    Every executor — and the prompt builder, which uses it to tell a fresh task
+    from a continued one — reads `executor_session_id`. The gateway once wrote
+    `resume_session_id` instead: nothing raised, every turn succeeded, and the
+    agent simply started cold each time while the gateway trimmed the history
+    it would otherwise have resent, believing the session was being resumed.
+    """
+    from fluxion.executors.antigravity import executor as antigravity_executor
+    from fluxion.executors.claude import executor as claude_executor
+    from fluxion.executors.codex import executor as codex_executor
+
+    executor = FakeExecutor()
+    run_stream(build(executor), session_id="prev-session")
+
+    assert executor.seen_task.metadata["executor_session_id"] == "prev-session"
+    for module in (claude_executor, codex_executor, antigravity_executor):
+        source = Path(module.__file__).read_text()
+        assert 'metadata.get("executor_session_id"' in source, module.__name__
