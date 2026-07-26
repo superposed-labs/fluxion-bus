@@ -10,12 +10,18 @@ macOS 12 or newer; the Launch at Login toggle requires macOS 13+.
 From the Fluxion repository root:
 
 ```bash
+npm --prefix web ci
+npm --prefix web run build
 ./desktop/build.sh
 ```
 
 The script assembles, compiles, and ad-hoc signs `desktop/Fluxion.app` from the
 tracked sources under `desktop/` and `desktop/Resources/`. The bundle itself is
 a build output and is not tracked in git, so run this once after cloning.
+`desktop/build.sh` reuses the existing Web console build; it does not rebuild
+the Web frontend on every invocation. If `src/fluxion/web/static/index.html`
+is missing, it exits before replacing an existing app and prints the commands
+needed to generate the assets.
 
 ## Release package
 

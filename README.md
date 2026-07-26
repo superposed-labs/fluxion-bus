@@ -328,9 +328,14 @@ If you downloaded the prebuilt `Fluxion.dmg`, drag it into `/Applications` and o
 If building the menu bar app from your local source checkout (this compiles natively for your machine's architecture, whether Apple Silicon or Intel):
 
 ```bash
+npm --prefix web ci
+npm --prefix web run build
 ./desktop/build.sh
 open desktop/Fluxion.app
 ```
+
+`desktop/build.sh` reuses this Web console build on later runs. It does not
+rebuild the frontend automatically.
 
 The menu bar app can configure and start quota monitoring, automatic pings,
 reset notifications, and companion services. The actual background auto-ping
