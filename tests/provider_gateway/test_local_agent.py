@@ -96,16 +96,96 @@ def run_stream(upstream, body=None, **kwargs):
 
 
 # ── prompt extraction ────────────────────────────────────────────────
-def test_prompt_comes_from_the_last_user_message():
-    """Replaying the parent's whole transcript would bury the actual task."""
+CONVERSATION = {
+    "input": [
+        {"role": "user", "content": "the codeword is DURIAN-7"},
+        {"role": "assistant", "content": "OK"},
+        {"role": "user", "content": "what was the codeword?"},
+    ]
+}
+
+
+def test_a_resumed_turn_sends_only_the_last_user_message():
+    """The agent's own session already holds the rest; replaying it would bury
+    the actual task and pay for the history again every turn."""
+    assert extract_prompt(CONVERSATION, resuming=True) == "what was the codeword?"
+
+
+def test_a_cold_start_keeps_the_history():
+    """The failure this prevents is a sub-agent that forgets mid-thread.
+
+    Codex resends the whole sub-thread every turn, so when there is no session
+    to resume — a first turn, a first run that died before reporting a session
+    id, a candidate switch, an expired sticky row — the context is right there
+    in the request. Sending only the last message would ask "what was the
+    codeword?" of an agent that never heard it, and nothing would report an
+    error.
+    """
+    prompt = extract_prompt(CONVERSATION, resuming=False)
+    assert "User: the codeword is DURIAN-7" in prompt
+    assert "Assistant: OK" in prompt
+    assert prompt.endswith("what was the codeword?")
+
+
+def test_the_replayed_history_is_marked_as_background():
+    """Unlabelled, the transcript reads as more instructions and the sub-agent
+    redoes the first task."""
+    assert "Earlier in this conversation:" in extract_prompt(CONVERSATION, resuming=False)
+
+
+def test_one_agent_turn_is_replayed_once():
+    """Each turn comes back as a commentary item and a final-answer item, which
+    are identical whenever the answer arrived in one piece."""
     body = {
         "input": [
-            {"role": "user", "content": "old task"},
-            {"role": "assistant", "content": "ok"},
-            {"role": "user", "content": "the real task"},
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": "pong"},
+            {"role": "assistant", "content": "pong"},
+            {"role": "user", "content": "again"},
         ]
     }
-    assert extract_prompt(body) == "the real task"
+    assert extract_prompt(body, resuming=False).count("Assistant: pong") == 1
+
+
+def test_a_first_turn_replays_nothing():
+    body = {"input": [{"role": "user", "content": "the only task"}]}
+    assert extract_prompt(body, resuming=False) == "the only task"
+
+
+def test_codex_injected_context_is_not_replayed():
+    """Codex prepends its host's plugin list and environment to the first user
+    turn. Replaying it describes Codex's host, not the conversation."""
+    body = {
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "<recommended_plugins>\n- Box\n</recommended_plugins>",
+                    },
+                    {
+                        "type": "input_text",
+                        "text": "<environment_context>\n  <shell>zsh</shell>\n</environment_context>",
+                    },
+                ],
+            },
+            {"role": "user", "content": "first task"},
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "second task"},
+        ]
+    }
+    prompt = extract_prompt(body, resuming=False)
+
+    assert "recommended_plugins" not in prompt
+    assert "environment_context" not in prompt
+    assert "User: first task" in prompt
+
+
+def test_a_task_that_looks_like_host_context_survives():
+    """The envelope filter must never reach the delegated task itself."""
+    body = {"input": [{"role": "user", "content": "<task>ship it</task>"}]}
+    assert extract_prompt(body, resuming=False) == "<task>ship it</task>"
 
 
 def test_prompt_handles_structured_content():
@@ -120,7 +200,7 @@ def test_prompt_handles_structured_content():
             }
         ]
     }
-    assert extract_prompt(body) == "line one\nline two"
+    assert extract_prompt(body, resuming=True) == "line one\nline two"
 
 
 def test_a_spawned_subagent_receives_its_task():
@@ -152,19 +232,19 @@ def test_a_spawned_subagent_receives_its_task():
             },
         ]
     }
-    prompt = extract_prompt(body)
+    prompt = extract_prompt(body, resuming=True)
 
     assert "summarize this week's news" in prompt
     assert prompt.startswith("Complete the delegated task.")
 
 
 def test_prompt_handles_a_plain_string_input():
-    assert extract_prompt({"input": "just do it"}) == "just do it"
+    assert extract_prompt({"input": "just do it"}, resuming=True) == "just do it"
 
 
 def test_missing_input_yields_no_prompt():
-    assert extract_prompt({}) == ""
-    assert extract_prompt({"input": []}) == ""
+    assert extract_prompt({}, resuming=False) == ""
+    assert extract_prompt({"input": []}, resuming=False) == ""
 
 
 def test_request_without_a_prompt_fails_fast():

@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -160,7 +161,9 @@ class LocalAgentUpstream:
         """Run the agent and yield Responses events as its output arrives."""
         response_id = request_id or f"resp_{uuid.uuid4().hex[:24]}"
         answer_id = f"msg_{uuid.uuid4().hex[:24]}"
-        prompt = extract_prompt(body)
+        # Whether the agent still remembers this sub-thread decides how much of
+        # it to resend — see `extract_prompt`.
+        prompt = extract_prompt(body, resuming=bool(session_id))
         if not prompt:
             yield _failed(response_id, "no user input found in the request")
             return
@@ -429,10 +432,10 @@ class LocalAgentUpstream:
             raise
 
 
-def extract_prompt(body: Mapping[str, Any]) -> str:
+def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
     """Build the prompt for the local agent from a Responses request.
 
-    Two parts, and both matter:
+    Three parts, and all of them matter:
 
     - The role's `developer_instructions`, which Codex sends as `role:
       "developer"` input items (see codex-rs .../world_state/collaboration_mode.rs,
@@ -440,14 +443,27 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
       "explorer" behave differently from a "reviewer"; dropping it would make
       every role send an identical prompt and differ only by model.
     - The latest user message, which is the task the parent just delegated. For
-      a spawned sub-agent this is an `agent_message` item, which carries no
-      `role` at all — hence the `None` arm below — and splits its task across
-      two content parts (see `_text_of`).
+      a spawned sub-agent under the encrypted protocol this is an `agent_message`
+      item, which carries no `role` at all — hence the `None` arm below — and
+      splits its task across two content parts (see `_text_of`).
+    - The earlier turns of this sub-thread, but **only on a cold start**. See
+      below; `resuming` is the whole reason this function takes an argument.
 
-    The rest of the history is deliberately left out. A spawned sub-agent's task
-    is that last message, and replaying the parent's whole transcript into a
-    fresh agent session buries it. Continuity across turns comes from resuming
-    the agent's own session instead (see `Task.metadata["executor_session_id"]`).
+    Codex resends the sub-thread's entire history on every turn — verified by
+    capturing real bodies with `FLUXION_PROVIDER_LOG_BODIES`: turn two of a
+    two-message sub-agent conversation carried the original task, the agent's own
+    replies as `role: "assistant"`, and the new message. So the history is always
+    available here, and the only question is whether sending it would duplicate
+    something the agent already knows.
+
+    When a session is being resumed it would: the agent remembers its own work,
+    and replaying the transcript both buries the actual task and pays for the
+    history again. When there is nothing to resume — a first turn, but also a
+    first turn's run that failed before it reported a session id, a candidate
+    switch that moved the thread to a different executor, or an expired sticky
+    row — the agent starts blank. Sending only the last message then hands a
+    follow-up like "what was the codeword?" to an agent that never heard the
+    codeword, and nothing anywhere reports an error.
     """
     items = body.get("input")
     if isinstance(items, str):
@@ -456,6 +472,7 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
         return ""
 
     instructions: list[str] = []
+    history: list[str] = []
     task = ""
     for item in reversed(items):
         if not isinstance(item, Mapping):
@@ -464,17 +481,61 @@ def extract_prompt(body: Mapping[str, Any]) -> str:
         text = _text_of(item.get("content"))
         if not text:
             continue
+        # Reversed iteration, so prepend everywhere to keep the authored order.
         if role == "developer":
-            # Reversed iteration, so prepend to keep the authored order.
             instructions.insert(0, text)
         elif role in (None, "user") and not task:
             task = text
+        elif resuming:
+            continue
+        elif role == "assistant":
+            # One agent turn comes back as two items — the commentary block and
+            # the final answer — which are the same string whenever the answer
+            # was short enough to arrive in one piece.
+            line = f"Assistant: {text}"
+            if not history or history[0] != line:
+                history.insert(0, line)
+        elif role in (None, "user") and not _is_host_context(text):
+            history.insert(0, f"User: {text}")
 
     if not task:
         return ""
+    if history:
+        # The transcript is framed as context rather than merged into the task,
+        # because on this path the last message *is* the job and everything
+        # before it is background the agent should not mistake for new work.
+        task = "\n".join([_HISTORY_HEADER, *history, "", task])
     if not instructions:
         return task
     return "\n\n".join([*instructions, task])
+
+
+_HISTORY_HEADER = "Earlier in this conversation:"
+
+# One `<tag>…</tag>` block. Codex's injected context turns are built entirely
+# out of these, real messages essentially never are.
+_ENVELOPE = re.compile(r"<([a-z][a-z0-9_]*)>.*?</\1>", re.DOTALL)
+
+
+def _is_host_context(text: str) -> bool:
+    """Whether a user turn is Codex's own injected context rather than a message.
+
+    Codex prepends host context to the first user turn as its own content parts.
+    The captured bodies carried two, joined into one turn: `<recommended_plugins>`
+    (a list of uninstalled connectors) and `<environment_context>` (cwd, shell,
+    date, sandbox profile). Replaying those into a local agent describes *Codex's*
+    host rather than the conversation, and the plugin list in particular reads as
+    an invitation to go install something.
+
+    Matched structurally — the turn is nothing but envelopes — rather than by
+    tag name, so a wrapper Codex adds later is dropped too. The delegated task is
+    never tested against this: it is picked out before the history is built, so
+    the worst a false positive can cost is one line of replayed context.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("<"):
+        return False
+    return not _ENVELOPE.sub("", stripped).strip()
 
 
 def _text_of(content: Any) -> str:
