@@ -21,7 +21,7 @@ from fluxion.provider_gateway.identity import RequestIdentity
 
 log = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # 90 days, matching FLUXION_PROVIDER_STICKY_TTL_HOURS' default.
 #
@@ -56,6 +56,11 @@ class StickyRoute:
     # turn resume that session instead of starting an agent with no memory of
     # the work it just did. Empty for API-backed routes.
     executor_session_id: str = ""
+    # Where the local agent ran. Codex reports the workspace only when it spawns
+    # a sub-agent; every follow-up turn on that sub-thread arrives with none, so
+    # without this the second turn has nowhere to run. Empty for API-backed
+    # routes and for ingresses that never report one.
+    workspace: str = ""
     thread_id: str | None = None
     parent_thread_id: str | None = None
     routing_reason: tuple[str, ...] = ()
@@ -154,7 +159,8 @@ class StickyStore:
                 last_used_at REAL NOT NULL,
                 expires_at REAL,
                 pinned INTEGER NOT NULL DEFAULT 0,
-                executor_session_id TEXT NOT NULL DEFAULT ''
+                executor_session_id TEXT NOT NULL DEFAULT '',
+                workspace TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS ix_sticky_expires ON sticky_routes(expires_at);
             CREATE INDEX IF NOT EXISTS ix_sticky_parent ON sticky_routes(ingress, parent_thread_id);
@@ -169,15 +175,15 @@ class StickyStore:
         # Migrations, applied in order. Never drop the table: sticky routes
         # cannot be reconstructed from any other source, so a schema change has
         # to preserve the rows rather than start over.
-        if version and version < 2:
+        if version and version < _SCHEMA_VERSION:
             columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(sticky_routes)").fetchall()
             }
-            if "executor_session_id" not in columns:
-                conn.execute(
-                    "ALTER TABLE sticky_routes "
-                    "ADD COLUMN executor_session_id TEXT NOT NULL DEFAULT ''"
-                )
+            for column in ("executor_session_id", "workspace"):
+                if column not in columns:
+                    conn.execute(
+                        f"ALTER TABLE sticky_routes ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                    )
         conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.commit()
 
@@ -220,6 +226,7 @@ class StickyStore:
         *,
         routing_reason: Sequence[str] = (),
         executor_session_id: str = "",
+        workspace: str = "",
         now: float | None = None,
     ) -> StickyRoute | None:
         """Persist a route choice. Returns None when the identity is not persistable.
@@ -246,8 +253,8 @@ class StickyStore:
                     route_key, ingress, provider_id, upstream_model, policy_id,
                     route_hint, identity_confidence, thread_id, parent_thread_id,
                     routing_reason, created_at, last_used_at, expires_at, pinned,
-                    executor_session_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    executor_session_id, workspace
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                 ON CONFLICT(route_key) DO UPDATE SET
                     provider_id = excluded.provider_id,
                     upstream_model = excluded.upstream_model,
@@ -262,6 +269,13 @@ class StickyStore:
                     executor_session_id = CASE
                         WHEN excluded.executor_session_id <> '' THEN excluded.executor_session_id
                         ELSE sticky_routes.executor_session_id
+                    END,
+                    -- Same rule, and the reason this column exists: the turn
+                    -- that reports no workspace is exactly the one that needs
+                    -- the remembered one.
+                    workspace = CASE
+                        WHEN excluded.workspace <> '' THEN excluded.workspace
+                        ELSE sticky_routes.workspace
                     END
                 """,
                 (
@@ -279,6 +293,7 @@ class StickyStore:
                     now,
                     expires_at,
                     executor_session_id,
+                    workspace,
                 ),
             )
             conn.commit()
@@ -380,6 +395,7 @@ def _row_to_route(row: sqlite3.Row) -> StickyRoute:
         expires_at=row["expires_at"],
         pinned=bool(row["pinned"]),
         executor_session_id=row["executor_session_id"] or "",
+        workspace=row["workspace"] or "",
         thread_id=row["thread_id"],
         parent_thread_id=row["parent_thread_id"],
         routing_reason=tuple(_load_reason(row["routing_reason"])),

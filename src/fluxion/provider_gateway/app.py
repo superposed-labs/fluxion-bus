@@ -61,7 +61,7 @@ from fluxion.provider_gateway.messages_stream import (
 )
 from fluxion.provider_gateway.request import RawRequest
 from fluxion.provider_gateway.routing import NoRouteAvailableError, RouteDecision, Router
-from fluxion.provider_gateway.sticky import StickyStore
+from fluxion.provider_gateway.sticky import StickyRoute, StickyStore
 from fluxion.provider_gateway.stream import (
     EV_COMPLETED,
     encode_sse,
@@ -91,27 +91,42 @@ class GatewayContext:
     def local_agent_for(self, decision: RouteDecision) -> LocalAgentUpstream | None:
         return self.local_agents.get(decision.provider_id)
 
-    def workspace_for(self, decision: RouteDecision, identity: RequestIdentity) -> Path:
+    def workspace_for(
+        self, decision: RouteDecision, identity: RequestIdentity, sticky: StickyRoute | None = None
+    ) -> Path:
         """Where a local agent should run.
 
         Codex reports the session's git repo root in its turn metadata, which is
         the workspace the parent agent is operating in and therefore where the
-        sub-agent's work belongs. When it is absent — a non-git cwd, or metadata
-        Codex chose not to send — we fall back to the provider's configured
-        default and otherwise refuse. Guessing would point an agent at the wrong
-        repository and it would start editing before anyone noticed.
+        sub-agent's work belongs. Three sources in order, and the middle one is
+        not an optimization:
+
+        1. What this request reports, which is current by definition.
+        2. What the conversation used last time. Codex sends `workspaces` when it
+           *spawns* a sub-agent and omits it on every follow-up turn to that
+           sub-agent — measured, not assumed — so without this a second message
+           to a live sub-agent has nowhere to run and the whole turn 503s.
+        3. The provider's configured `default_workspace`.
+
+        Otherwise refuse. Guessing would point an agent at the wrong repository
+        and it would start editing before anyone noticed.
         """
         reported = identity.raw.get("workspaces") or ()
         for candidate in reported:
             path = Path(candidate)
             if path.is_dir():
                 return path
+        if sticky is not None and sticky.workspace:
+            remembered = Path(sticky.workspace)
+            if remembered.is_dir():
+                return remembered
         configured = self.workspaces.get(decision.provider_id)
         if configured is not None:
             return configured
         raise NoRouteAvailableError(
             f"provider {decision.provider_id!r} runs a local agent but this request carries no "
-            "workspace and the provider has no 'default_workspace' configured",
+            "workspace, none was remembered for this conversation, and the provider has no "
+            "'default_workspace' configured",
             {},
         )
 
@@ -222,7 +237,7 @@ async def _handle_messages(context: GatewayContext, request: Request):
         upstream = context.local_agent_for(decision)
         if upstream is None:
             raise NoRouteAvailableError(f"no local agent for {decision.provider_id!r}", {})
-        workspace = context.workspace_for(decision, identity)
+        workspace = context.workspace_for(decision, identity, sticky)
     except NoRouteAvailableError as err:
         return _error_response(503, "no_route_available", str(err))
 
@@ -236,7 +251,7 @@ async def _handle_messages(context: GatewayContext, request: Request):
         ):
             if event.get("type") == FLUXION_RESULT:
                 # Bookkeeping, not protocol: recorded here and never written out.
-                _finish_messages(context, identity, decision, event)
+                _finish_messages(context, identity, decision, event, workspace)
                 continue
             yield encode_messages_sse(event)
 
@@ -252,8 +267,10 @@ def _finish_messages(
     identity: RequestIdentity,
     decision: RouteDecision,
     event: Mapping[str, Any],
+    workspace: Path,
 ) -> None:
-    """Remember the route and the agent session behind this conversation."""
+    """Remember the route, the agent session, and the workspace behind this
+    conversation."""
     if not event.get("success"):
         # A failed turn is not evidence the route works, and pinning it would
         # send the next turn to a backend that just refused this one.
@@ -265,6 +282,7 @@ def _finish_messages(
         decision.policy_id,
         routing_reason=decision.routing_reason,
         executor_session_id=str(event.get("executor_session_id") or ""),
+        workspace=str(workspace),
     )
 
 
@@ -373,7 +391,7 @@ async def _run_local_agent(
 
     The tracker that enforced both was removed with the API-upstream path.
     """
-    workspace = context.workspace_for(decision, identity)
+    workspace = context.workspace_for(decision, identity, sticky)
     # Resume the agent session this sub-thread used last time, so a follow-up
     # turn continues rather than starting cold with no memory of its own work.
     session_id = sticky.executor_session_id if sticky else ""
@@ -390,7 +408,7 @@ async def _run_local_agent(
         event_type = str(event.get("type", ""))
         yield encode_sse(event)
         if is_terminal_event(event_type):
-            _finish(context, identity, decision, event, started)
+            _finish(context, identity, decision, event, started, workspace)
             return
 
 
@@ -400,6 +418,7 @@ def _finish(
     decision: RouteDecision,
     event: Mapping[str, Any],
     started: float,
+    workspace: Path,
 ) -> None:
     """Persist the route and record telemetry after a terminal event.
 
@@ -429,6 +448,9 @@ def _finish(
         decision.policy_id,
         routing_reason=decision.routing_reason,
         executor_session_id=executor_session_id,
+        # Codex omits `workspaces` on every turn after the spawn, so this is the
+        # only record of where the sub-thread runs.
+        workspace=str(workspace),
     )
     duration = time.monotonic() - started
     if context.attribution is not None:

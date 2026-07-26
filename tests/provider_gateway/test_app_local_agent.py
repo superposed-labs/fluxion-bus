@@ -155,6 +155,68 @@ def test_request_is_refused_when_no_workspace_can_be_determined(tmp_path):
     assert post(TestClient(create_app(context))).status_code == 503
 
 
+def test_a_follow_up_turn_reuses_the_spawn_turn_workspace(tmp_path):
+    """Codex reports `workspaces` when it spawns a sub-agent and omits it on
+    every later message to that sub-agent — measured against codex-cli 0.145.0.
+    Without the remembered workspace the second turn has nowhere to run, and the
+    whole conversation dies at turn two with a 503.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    executor = RecordingExecutor()
+    context = build_ctx(tmp_path, executor)
+    context.workspaces = {}
+    client = TestClient(create_app(context))
+    spawn = {
+        "model": "opus",
+        "input": [{"role": "user", "content": "go"}],
+        "client_metadata": {
+            "x-codex-turn-metadata": turn_metadata(
+                thread_id="t1", workspaces={str(repo): {"has_changes": False}}
+            )
+        },
+    }
+    follow_up = {
+        "model": "opus",
+        "input": [{"role": "user", "content": "and now this"}],
+        "client_metadata": {"x-codex-turn-metadata": turn_metadata(thread_id="t1")},
+    }
+
+    assert post(client, spawn).status_code == 200
+    assert post(client, follow_up).status_code == 200
+    assert executor.tasks[1].workspace == repo
+
+
+def test_a_remembered_workspace_that_is_gone_does_not_win(tmp_path):
+    """A repo can be moved or deleted between turns; the configured default is
+    still a real directory and the remembered path no longer is."""
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    repo = tmp_path / "transient"
+    repo.mkdir()
+    executor = RecordingExecutor()
+    context = build_ctx(tmp_path, executor, workspace=fallback)
+    client = TestClient(create_app(context))
+    spawn = {
+        "model": "opus",
+        "input": [{"role": "user", "content": "go"}],
+        "client_metadata": {
+            "x-codex-turn-metadata": turn_metadata(
+                thread_id="t1", workspaces={str(repo): {"has_changes": False}}
+            )
+        },
+    }
+
+    post(client, spawn)
+    repo.rmdir()
+    post(
+        client,
+        {**spawn, "client_metadata": {"x-codex-turn-metadata": turn_metadata(thread_id="t1")}},
+    )
+
+    assert executor.tasks[1].workspace == fallback
+
+
 def test_session_is_remembered_and_resumed_on_the_next_turn(tmp_path):
     """A follow-up turn continues the agent session instead of starting cold."""
     executor = RecordingExecutor()

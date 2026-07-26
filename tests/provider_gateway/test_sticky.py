@@ -181,6 +181,49 @@ def test_corrupt_database_is_quarantined_not_fatal(tmp_path):
     assert list(tmp_path.glob("s.db.corrupt-*"))
 
 
+def test_workspace_round_trips(store):
+    store.remember(identity(), "local_agy", "gemini", "agy", workspace="/repos/app")
+    assert store.lookup("rk-1").workspace == "/repos/app"
+
+
+def test_a_turn_reporting_no_workspace_keeps_the_remembered_one(store):
+    """This is the case the column exists for: Codex sends `workspaces` only on
+    the spawn turn, so every follow-up would otherwise erase it."""
+    store.remember(identity(), "local_agy", "gemini", "agy", workspace="/repos/app")
+    store.remember(identity(), "local_agy", "gemini", "agy")
+    assert store.lookup("rk-1").workspace == "/repos/app"
+
+
+def test_an_older_database_gains_the_new_columns(tmp_path):
+    """Sticky rows cannot be rebuilt from anything else, so a schema change has
+    to migrate rather than start over."""
+    path = tmp_path / "s.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE sticky_routes (
+            route_key TEXT PRIMARY KEY, ingress TEXT NOT NULL, provider_id TEXT NOT NULL,
+            upstream_model TEXT NOT NULL, policy_id TEXT NOT NULL, route_hint TEXT NOT NULL,
+            identity_confidence TEXT NOT NULL, thread_id TEXT, parent_thread_id TEXT,
+            routing_reason TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL,
+            last_used_at REAL NOT NULL, expires_at REAL, pinned INTEGER NOT NULL DEFAULT 0
+        );
+        PRAGMA user_version=1;
+        """
+    )
+    conn.execute(
+        "INSERT INTO sticky_routes VALUES ('rk-1','codex','p','m','pol','auto','explicit',"
+        "NULL,NULL,'[]',0,0,NULL,0)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = StickyStore(path)
+    route = store.lookup("rk-1")
+    assert route is not None and route.workspace == "" and route.executor_session_id == ""
+    store.close()
+
+
 def test_newer_schema_is_refused_rather_than_downgraded(tmp_path):
     path = tmp_path / "s.db"
     conn = sqlite3.connect(path)
