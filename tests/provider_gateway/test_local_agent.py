@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -622,6 +623,128 @@ def test_developer_instructions_alone_are_not_a_task():
     """Instructions describe how to work; without a task there is nothing to do."""
     events = run_stream(build(), body={"input": [{"role": "developer", "content": "be careful"}]})
     assert events[-1]["type"] == EV_FAILED
+
+
+# ── Codex's own boilerplate, sent under the same `developer` role ─────
+_HOST_PERSONA_ITEM = (
+    "You are Codex, an agent based on GPT-5. You and the user share one workspace.\n\n"
+    "## How to use skills\nRead SKILL.md before…"
+)
+_HOST_PERMISSIONS_ITEM = (
+    "<permissions instructions>\nFilesystem sandboxing defines which files can be "
+    "read or written. `sandbox_mode` is `workspace-write`…\n</permissions instructions>"
+)
+
+
+def test_codexs_system_prompt_does_not_reach_the_local_agent():
+    """Measured at 17,730 chars beside a 6-char task, and it tells a Claude or
+    Gemini agent that it is GPT-5."""
+    executor = FakeExecutor()
+    run_stream(
+        build(executor),
+        body={
+            "input": [
+                {"role": "developer", "content": _HOST_PERSONA_ITEM},
+                {"role": "user", "content": "say OK"},
+            ]
+        },
+    )
+    prompt = executor.seen_task.text
+    assert "You are Codex" not in prompt
+    assert "How to use skills" not in prompt
+    assert "say OK" in prompt
+
+
+def test_codexs_sandbox_rules_do_not_reach_the_local_agent():
+    """They describe Codex's sandbox, which governs nothing here: the local
+    agent runs under its own."""
+    executor = FakeExecutor()
+    run_stream(
+        build(executor),
+        body={
+            "input": [
+                {"role": "developer", "content": _HOST_PERMISSIONS_ITEM},
+                {"role": "user", "content": "say OK"},
+            ]
+        },
+    )
+    assert "sandbox_mode" not in executor.seen_task.text
+
+
+def test_the_roles_own_instructions_survive_beside_the_boilerplate():
+    """The whole point of the filter: both arrive as `developer`, and dropping
+    ours would make every role behave identically with nothing reporting it."""
+    executor = FakeExecutor()
+    run_stream(
+        build(executor),
+        body={
+            "input": [
+                {"role": "developer", "content": "Review like a code owner."},
+                {"role": "developer", "content": _HOST_PERSONA_ITEM},
+                {"role": "developer", "content": _HOST_PERMISSIONS_ITEM},
+                {"role": "user", "content": "check auth.py"},
+            ]
+        },
+    )
+    prompt = executor.seen_task.text
+    assert "Review like a code owner." in prompt
+    assert "You are Codex" not in prompt
+    assert prompt.index("Review like a code owner.") < prompt.index("check auth.py")
+
+
+def test_an_unrecognized_developer_item_is_kept():
+    """Codex renaming a block must cost tokens, not a role's instructions."""
+    executor = FakeExecutor()
+    run_stream(
+        build(executor),
+        body={
+            "input": [
+                {"role": "developer", "content": "Some future Codex preamble."},
+                {"role": "user", "content": "TASK"},
+            ]
+        },
+    )
+    assert "Some future Codex preamble." in executor.seen_task.text
+
+
+def test_a_role_that_merely_mentions_codex_is_kept():
+    """The persona match is anchored; `Codex` appearing in a sentence is not it."""
+    executor = FakeExecutor()
+    run_stream(
+        build(executor),
+        body={
+            "input": [
+                {"role": "developer", "content": "Report to Codex when you are done."},
+                {"role": "user", "content": "TASK"},
+            ]
+        },
+    )
+    assert "Report to Codex" in executor.seen_task.text
+
+
+def test_boilerplate_alone_leaves_nothing_to_instruct():
+    """Stripping must not turn a task-less request into a served one."""
+    events = run_stream(
+        build(), body={"input": [{"role": "developer", "content": _HOST_PERSONA_ITEM}]}
+    )
+    assert events[-1]["type"] == EV_FAILED
+
+
+def test_the_drop_is_logged_so_drift_is_visible(caplog):
+    """When a rename makes the filter stop matching, this line stops appearing
+    and `ctx_in` jumps — the only way to notice from outside."""
+    with caplog.at_level(logging.INFO, logger="fluxion.provider_gateway.upstream.local_agent"):
+        run_stream(
+            build(),
+            body={
+                "input": [
+                    {"role": "developer", "content": _HOST_PERSONA_ITEM},
+                    {"role": "developer", "content": _HOST_PERMISSIONS_ITEM},
+                    {"role": "user", "content": "TASK"},
+                ]
+            },
+        )
+    assert "dropped 2 host instruction item(s)" in caplog.text
 
 
 def test_two_providers_on_one_workspace_still_serialize():

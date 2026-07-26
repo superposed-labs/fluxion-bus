@@ -531,6 +531,7 @@ def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
 
     instructions: list[str] = []
     history: list[str] = []
+    stripped_host: list[int] = []
     task = ""
     for item in reversed(items):
         if not isinstance(item, Mapping):
@@ -541,6 +542,9 @@ def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
             continue
         # Reversed iteration, so prepend everywhere to keep the authored order.
         if role == "developer":
+            if _is_host_instruction(text):
+                stripped_host.append(len(text))
+                continue
             instructions.insert(0, text)
         elif role in (None, "user") and not task:
             task = text
@@ -555,6 +559,17 @@ def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
                 history.insert(0, line)
         elif role in (None, "user") and not _is_host_context(text):
             history.insert(0, f"User: {text}")
+
+    if stripped_host:
+        # The one signal that this filter is still matching what Codex sends.
+        # When a rename makes it stop matching, this line stops appearing and
+        # `ctx_in` jumps by the same amount — drift shows up in the logs rather
+        # than as a quietly larger bill.
+        log.info(
+            "dropped %d host instruction item(s), %d chars",
+            len(stripped_host),
+            sum(stripped_host),
+        )
 
     if not task:
         return ""
@@ -571,12 +586,45 @@ def extract_prompt(body: Mapping[str, Any], *, resuming: bool) -> str:
 _HISTORY_HEADER = "Earlier in this conversation:"
 
 # One `<tag>…</tag>` block. Codex's injected context turns are built entirely
-# out of these, real messages essentially never are.
-_ENVELOPE = re.compile(r"<([a-z][a-z0-9_]*)>.*?</\1>", re.DOTALL)
+# out of these, real messages essentially never are. Tag names may contain
+# spaces — `<permissions instructions>` is one Codex actually sends.
+_ENVELOPE = re.compile(r"<([a-z][a-z0-9_ ]*)>.*?</\1>", re.DOTALL)
+
+# Codex's own system prompt, which it sends as a `developer` item rather than in
+# `instructions`. Anchored at the start so a role that merely mentions Codex in
+# passing is not mistaken for it.
+_HOST_PERSONA = re.compile(r"^you are codex\b", re.IGNORECASE)
+
+
+def _is_host_instruction(text: str) -> bool:
+    """Whether a `developer` item is Codex's own boilerplate rather than a role.
+
+    Both arrive under the same role, so they cannot be told apart structurally.
+    Measured against codex-cli 0.145.0, one `say OK` turn carried 24,236 chars of
+    Codex boilerplate around a 6-char task: its system prompt (`You are Codex, an
+    agent based on GPT-5…`, including 4.5KB on skills the local agent does not
+    have) and a `<permissions instructions>` block describing *Codex's* sandbox,
+    which governs nothing here because the local agent runs its own.
+
+    Forwarding it cost about 11K tokens a turn and told a Claude or Gemini agent
+    it was GPT-5 — which is exactly what one did, answering "I am Claude Haiku…
+    I am a Codex agent" after being handed both claims.
+
+    Two signals, both positive identifications of Codex's text: the persona
+    opening, and an item that is nothing but envelopes. Anything unrecognized is
+    kept. That asymmetry is deliberate — when Codex renames something this filter
+    under-strips, which costs tokens, rather than swallowing a role's own
+    instructions, which would make every role behave identically with nothing
+    anywhere reporting it.
+    """
+    stripped = text.strip()
+    if _HOST_PERSONA.match(stripped):
+        return True
+    return _is_host_context(stripped)
 
 
 def _is_host_context(text: str) -> bool:
-    """Whether a user turn is Codex's own injected context rather than a message.
+    """Whether a turn is Codex's own injected context rather than a message.
 
     Codex prepends host context to the first user turn as its own content parts.
     The captured bodies carried two, joined into one turn: `<recommended_plugins>`
@@ -588,7 +636,8 @@ def _is_host_context(text: str) -> bool:
     Matched structurally — the turn is nothing but envelopes — rather than by
     tag name, so a wrapper Codex adds later is dropped too. The delegated task is
     never tested against this: it is picked out before the history is built, so
-    the worst a false positive can cost is one line of replayed context.
+    the worst a false positive can cost is one line of replayed context, or one
+    `developer` item when `_is_host_instruction` reuses this.
     """
     stripped = text.strip()
     if not stripped.startswith("<"):
