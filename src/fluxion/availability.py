@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fluxion.codex_command import CODEX_COMMAND_CANDIDATES, resolve_command
 from fluxion.config.settings import Settings
 from fluxion.usage.models import STATUS_OK
 from fluxion.usage.probes import ProbeConfig, build_probe
@@ -21,15 +20,9 @@ COMMAND_CANDIDATES = {
         "/usr/local/bin/claude",
         "/opt/homebrew/bin/claude",
     ),
-    "codex": (
-        "~/.local/bin/codex",
-        "~/bin/codex",
-        "/usr/local/bin/codex",
-        "/opt/homebrew/bin/codex",
-        # Codex.app bundles its own CLI; GUI launches have a clean PATH that
-        # never sees it, so probe the well-known app location directly.
-        "/Applications/Codex.app/Contents/Resources/codex",
-    ),
+    # ChatGPT.app (formerly Codex.app) bundles a CLI. Finder-launched apps have
+    # a clean PATH, so probe both the current and legacy bundle paths directly.
+    "codex": CODEX_COMMAND_CANDIDATES,
     "antigravity": ("~/.local/bin/agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"),
 }
 
@@ -83,22 +76,19 @@ def detect_executor(provider: str, *, configured_command: str = "") -> Availabil
     command = COMMANDS[provider]
     if configured_command and configured_command != command:
         path = Path(configured_command).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
+        resolved = resolve_command(configured_command, ())
+        if resolved:
             return Availability(
-                status="available", detail="Configured CLI command found.", path=str(path)
+                status="available", detail="Configured CLI command found.", path=resolved
             )
         return Availability(
             status="misconfigured",
             detail=f"Configured command is not executable: {configured_command}",
             path=str(path),
         )
-    resolved = shutil.which(command)
+    resolved = resolve_command(command, COMMAND_CANDIDATES[provider])
     if resolved:
         return Availability(status="available", detail="CLI command found.", path=resolved)
-    for candidate in COMMAND_CANDIDATES[provider]:
-        path = Path(candidate).expanduser()
-        if path.is_file() and os.access(path, os.X_OK):
-            return Availability(status="available", detail="CLI command found.", path=str(path))
     return Availability(status="unavailable", detail=f"`{command}` command not found.")
 
 

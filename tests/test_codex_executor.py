@@ -183,6 +183,24 @@ def test_build_command_enables_json_events(tmp_path: Path):
     assert command[1:3] == ["exec", "--json"]
 
 
+def test_resolve_command_finds_chatgpt_app_bundled_cli(tmp_path: Path):
+    executor = CodexExecutor(
+        timeout_sec=30,
+        skip_git_repo_check=True,
+        sandbox_mode="none",
+        bypass_sandbox=False,
+        max_structured_uploads=10,
+        logs_dir=tmp_path / "logs",
+    )
+    bundled = "/Applications/ChatGPT.app/Contents/Resources/codex"
+
+    with patch(
+        "fluxion.executors.codex.executor.resolve_codex_command",
+        return_value=bundled,
+    ):
+        assert executor._resolve_command() == bundled
+
+
 def test_build_resume_command_enables_json_events(tmp_path: Path):
     executor = CodexExecutor(
         timeout_sec=30,

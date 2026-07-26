@@ -60,7 +60,7 @@ def _prices():
 
 def test_codex_models_use_live_catalog_enriched_with_prices(monkeypatch):
     monkeypatch.setattr(model_catalog.price_data, "load_price_json", lambda name: _prices())
-    monkeypatch.setattr(model_catalog.shutil, "which", lambda name: "/bin/codex")
+    monkeypatch.setattr(model_catalog, "resolve_codex_command", lambda: "/bin/codex")
 
     def fake_run(*args, **kwargs):  # noqa: ARG001
         return types.SimpleNamespace(
