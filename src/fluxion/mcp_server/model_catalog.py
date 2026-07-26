@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
+from fluxion.codex_command import resolve_codex_command
 from fluxion.config.settings import Settings
 from fluxion.executors.antigravity import models as antigravity_models
 from fluxion.subagent import AUTO_AGENT_VALUES, resolve_agent
@@ -218,19 +217,7 @@ def _load_codex_debug_models() -> list[dict[str, Any]]:
 
 
 def _resolve_codex_command() -> str:
-    resolved = shutil.which("codex")
-    if resolved:
-        return resolved
-    for candidate in (
-        "~/.local/bin/codex",
-        "~/bin/codex",
-        "/usr/local/bin/codex",
-        "/opt/homebrew/bin/codex",
-    ):
-        path = Path(candidate).expanduser()
-        if path.exists() and path.is_file():
-            return str(path)
-    return "codex"
+    return resolve_codex_command() or "codex"
 
 
 def _price_derived_models(

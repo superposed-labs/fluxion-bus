@@ -69,9 +69,10 @@ Hard requirements — stop and report if unmet:
   user's decision.
 - At least one executor CLI (`codex`, `claude`, or `agy`) must be present.
   If none is found, stop and report; Fluxion cannot run tasks without one.
-  On macOS, the Codex desktop app counts: it bundles a `codex` CLI at
-  `/Applications/Codex.app/Contents/Resources/codex` that Fluxion detects even
-  when a GUI-clean `PATH` hides it, so a standalone `codex` install is optional.
+  On macOS, the ChatGPT desktop app counts: it bundles a `codex` CLI at
+  `/Applications/ChatGPT.app/Contents/Resources/codex` that Fluxion detects even
+  when a GUI-clean `PATH` hides it. The legacy `Codex.app` bundle path is also
+  supported, so a standalone `codex` install is optional.
 - If `python3` is older than 3.12, look for a newer interpreter (for example
   `python3.13`). If one exists, pass it to the installer via
   `FLUXION_PYTHON=<path>`. If not, stop and report.

@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
+from fluxion.codex_command import resolve_codex_command
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
 from fluxion.executors.codex.events import (
@@ -626,19 +626,4 @@ class CodexExecutor:
             return default_model, default_effort
 
     def _resolve_command(self) -> str:
-        resolved = shutil.which("codex")
-        if resolved:
-            return resolved
-        for candidate in self._command_search_candidates():
-            path = Path(candidate).expanduser()
-            if path.exists() and path.is_file():
-                return str(path)
-        return "codex"
-
-    def _command_search_candidates(self) -> list[str]:
-        return [
-            "~/.local/bin/codex",
-            "~/bin/codex",
-            "/usr/local/bin/codex",
-            "/opt/homebrew/bin/codex",
-        ]
+        return resolve_codex_command() or "codex"
