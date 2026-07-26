@@ -144,7 +144,22 @@ Three constraints, all measured rather than assumed:
 
 **Set `default_workspace`.** The Messages protocol has no field for a workspace, so a provider serving this ingress must declare where its agent runs — otherwise every request is refused.
 
-**The endpoint is streaming only.** Claude Code always streams; a client sending `"stream": false` will not get a single-object response.
+**Streaming is optional**, and follows the API's own default. `"stream": true` returns SSE; omitting it, or `"stream": false`, returns one JSON object. Both shapes report the same answer, token counts, and message id for a turn.
+
+For a caller that just wants an answer delegated, the plain SDK call is enough:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(base_url="http://127.0.0.1:8787", api_key=TOKEN, timeout=300.0)
+message = client.messages.create(
+    model="haiku", max_tokens=1024,
+    messages=[{"role": "user", "content": "Summarize what changed in src/ this week"}],
+)
+print(message.content[0].text)
+```
+
+Use a generous `timeout`: a local agent run takes as long as the work takes, not as long as an inference.
 
 ---
 

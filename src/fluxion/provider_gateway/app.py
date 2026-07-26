@@ -58,6 +58,8 @@ from fluxion.provider_gateway.ingress.responses import (
 from fluxion.provider_gateway.messages_stream import (
     FLUXION_RESULT,
     encode_messages_sse,
+    fresh_message_id,
+    non_streaming_message,
 )
 from fluxion.provider_gateway.request import RawRequest
 from fluxion.provider_gateway.routing import NoRouteAvailableError, RouteDecision, Router
@@ -241,14 +243,25 @@ async def _handle_messages(context: GatewayContext, request: Request):
     except NoRouteAvailableError as err:
         return _error_response(503, "no_route_available", str(err))
 
+    turn = upstream.stream_messages(
+        body,
+        decision.upstream_model,
+        prompt=prompt,
+        workspace=workspace,
+        session_id=session_id,
+    )
+
+    # `stream` defaults to false in the Messages API, and a caller that wants
+    # one answer rather than a live feed is exactly who this ingress serves —
+    # a script, a CI step, another agent's delegate. Returning SSE to one of
+    # them hands its SDK a body it cannot parse.
+    if not body.get("stream"):
+        return await _collect_message(
+            context, identity, decision, turn, workspace, decision.upstream_model
+        )
+
     async def events() -> AsyncIterator[bytes]:
-        async for event in upstream.stream_messages(
-            body,
-            decision.upstream_model,
-            prompt=prompt,
-            workspace=workspace,
-            session_id=session_id,
-        ):
+        async for event in turn:
             if event.get("type") == FLUXION_RESULT:
                 # Bookkeeping, not protocol: recorded here and never written out.
                 _finish_messages(context, identity, decision, event, workspace)
@@ -259,6 +272,61 @@ async def _handle_messages(context: GatewayContext, request: Request):
         events(),
         media_type="text/event-stream",
         headers={"cache-control": "no-store", "x-accel-buffering": "no"},
+    )
+
+
+async def _collect_message(
+    context: GatewayContext,
+    identity: RequestIdentity,
+    decision: RouteDecision,
+    turn: AsyncIterator[Mapping[str, Any]],
+    workspace: Path,
+    model: str,
+) -> JSONResponse:
+    """Fold the turn's events into the single object a non-streaming caller expects.
+
+    The same event sequence is consumed either way; only the rendering differs.
+    Token counts and the message id are read back out of the events rather than
+    recomputed, so the two shapes cannot disagree about the same turn.
+
+    An in-stream error becomes an HTTP status here. On the streaming path that
+    is impossible — the 200 and its headers are already on the wire by the time
+    anything fails — but a caller waiting for one object has nothing to read an
+    error event out of, so it gets a real status code instead.
+    """
+    message_id = fresh_message_id()
+    parts: list[str] = []
+    input_tokens = 0
+    output_tokens = 0
+
+    async for event in turn:
+        kind = str(event.get("type", ""))
+        if kind == FLUXION_RESULT:
+            _finish_messages(context, identity, decision, event, workspace)
+        elif kind == "message_start":
+            message = event.get("message")
+            message = message if isinstance(message, Mapping) else {}
+            message_id = str(message.get("id") or message_id)
+            usage = message.get("usage")
+            input_tokens = int((usage or {}).get("input_tokens") or 0)
+        elif kind == "content_block_delta":
+            delta = event.get("delta")
+            parts.append(str((delta or {}).get("text") or "") if isinstance(delta, Mapping) else "")
+        elif kind == "message_delta":
+            usage = event.get("usage")
+            output_tokens = int((usage or {}).get("output_tokens") or 0)
+        elif kind == "error":
+            detail = event.get("error")
+            detail = detail if isinstance(detail, Mapping) else {}
+            error_kind = str(detail.get("type") or "api_error")
+            return _error_response(
+                400 if error_kind == "invalid_request_error" else 500,
+                error_kind,
+                str(detail.get("message") or "local agent run failed"),
+            )
+
+    return JSONResponse(
+        non_streaming_message(message_id, model, "".join(parts), input_tokens, output_tokens)
     )
 
 

@@ -70,10 +70,14 @@ def build_ctx(tmp_path, executor=None):
     )
 
 
-def post(client, body=None, session=SESSION):
+def post(client, body=None, session=SESSION, stream=True):
+    """Send a turn. Streams by default, as Claude Code does on every request."""
+    body = body or {"model": "haiku", "messages": [{"role": "user", "content": "hello"}]}
+    if stream is not None:
+        body = {**body, "stream": stream}
     return client.post(
         "/v1/messages",
-        json=body or {"model": "haiku", "messages": [{"role": "user", "content": "hello"}]},
+        json=body,
         headers={"authorization": f"Bearer {TOKEN}", "X-Claude-Code-Session-Id": session},
     )
 
@@ -166,6 +170,71 @@ def test_a_different_conversation_starts_cold(tmp_path):
     post(client, session="11111111-2222-3333-4444-555555555555")
 
     assert executor.tasks[1].metadata["executor_session_id"] == ""
+
+
+# ── non-streaming ────────────────────────────────────────────────────
+def test_a_request_without_stream_gets_one_object(tmp_path):
+    """`stream` defaults to false in the Messages API, and a caller that wants
+    one answer — a script, a CI step, another agent's delegate — is exactly who
+    this ingress serves. SSE would hand its SDK a body it cannot parse."""
+    response = post(TestClient(create_app(build_ctx(tmp_path))), stream=None)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    payload = response.json()
+    assert payload["type"] == "message"
+    assert payload["role"] == "assistant"
+    assert payload["stop_reason"] == "end_turn"
+    assert payload["content"] == [{"type": "text", "text": "looking… the answer"}]
+
+
+def test_stream_false_is_honoured_as_well_as_absent(tmp_path):
+    response = post(TestClient(create_app(build_ctx(tmp_path))), stream=False)
+    assert response.json()["content"][0]["text"] == "looking… the answer"
+
+
+def test_the_two_shapes_agree_about_the_same_turn(tmp_path):
+    """Token counts and the message id are read back out of the events rather
+    than recomputed, so the object cannot disagree with the stream."""
+    streamed = events_of(post(TestClient(create_app(build_ctx(tmp_path)))))
+    collected = post(TestClient(create_app(build_ctx(tmp_path))), stream=None).json()
+
+    start = next(payload for name, payload in streamed if name == "message_start")
+    delta = next(payload for name, payload in streamed if name == "message_delta")
+    assert collected["usage"]["input_tokens"] == start["message"]["usage"]["input_tokens"]
+    assert collected["usage"]["output_tokens"] == delta["usage"]["output_tokens"]
+    assert collected["model"] == start["message"]["model"]
+
+
+def test_a_non_streaming_failure_becomes_a_status_code(tmp_path):
+    """A caller waiting for one object has nowhere to read an error event."""
+
+    class FailingExecutor(RecordingExecutor):
+        def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+            self.tasks.append(task)
+            return ExecutionResult(
+                success=False, summary="the agent gave up", stdout="", stderr="", exit_code=1
+            )
+
+    response = post(
+        TestClient(create_app(build_ctx(tmp_path, FailingExecutor()))),
+        stream=None,
+    )
+
+    assert response.status_code == 500
+    assert "the agent gave up" in response.json()["error"]["message"]
+
+
+def test_a_non_streaming_turn_is_still_remembered(tmp_path):
+    """Bookkeeping is not a property of the wire shape: without this the next
+    turn restarts the agent session."""
+    executor = RecordingExecutor()
+    client = TestClient(create_app(build_ctx(tmp_path, executor)))
+
+    post(client, stream=None)
+    post(client, stream=None)
+
+    assert executor.tasks[1].metadata["executor_session_id"] == "claude-sess-1"
 
 
 def test_an_unauthenticated_request_is_refused(tmp_path):
