@@ -156,20 +156,43 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
 }
-.kvbox .k { color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-sans); font-weight: 600; }
+.kvbox .k { color: var(--fg-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-sans); font-weight: 600; flex: 0 0 auto; }
+.kvbox-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.kvbox-stacked {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+}
+.kvbox-stacked .kvbox-value {
+  width: 100%;
+  text-align: left;
+  line-height: 1.5;
+}
 .kvbox .v { color: var(--fg-0); }
 .kvbox .copy { color: var(--fg-3); font-size: 10px; padding-left: 12px; cursor: default; }
 .kvbox .copy:hover { color: var(--accent); }
 
 /* ── Top-bar view switch (Tasks / Stats) ───────────────────────────── */
-.tb-views { display: flex; gap: 2px; padding: 2px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 8px; }
+.tb-views {
+  display: flex; gap: 2px; padding: 2px; background: var(--bg-2);
+  border: 1px solid var(--line-soft); border-radius: 8px;
+  flex: 0 0 auto;
+}
 .tb-view {
   appearance: none; border: 0; cursor: pointer; padding: 4px 12px; border-radius: 6px;
   background: transparent; color: var(--fg-2); font-family: var(--font-sans);
   font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+  white-space: nowrap;
   transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 .tb-view:hover { color: var(--fg-0); }
