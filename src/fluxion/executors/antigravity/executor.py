@@ -12,9 +12,16 @@ from pathlib import Path
 
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
+from fluxion.executors.antigravity.trajectory_stream import (
+    POLL_INTERVAL_SEC,
+    TrajectoryNarrator,
+    read_max_step_idx,
+)
 from fluxion.executors.common.log_writer import write_jsonl_log
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
+from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
+from fluxion.workspace.antigravity_trajectory import find_conversation_db
 
 # After the answer is printed, agy lingers for post-answer housekeeping while
 # holding the process open. The reaper waits this out in the background; if the
@@ -69,10 +76,22 @@ class AntiGravityExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
-        # Accepted for protocol parity; antigravity exposes no thinking on stdout.
+        # agy exposes no thinking anywhere, so this carries tool activity read
+        # live from its trajectory DB rather than a train of thought.
         stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         prompt = self._prompt_builder.build(task)
+        raw_prompt = is_raw_prompt(task)
+        # Only in raw mode: the IM path renders one answer and has nowhere to
+        # put working notes. Read the resumed conversation's existing rows now,
+        # before the process can add to them, so the floor excludes exactly the
+        # prior turns and nothing of this one.
+        narrator = (
+            TrajectoryNarrator(since_idx=self._trajectory_floor(task))
+            if stream_reasoning is not None and raw_prompt
+            else None
+        )
+        narration_stop = threading.Event()
         start = time.monotonic()
         command: list[str] | None = None
         agy_log_file = self._logs_dir / f"task-{task.id}.agy.log"
@@ -101,7 +120,6 @@ class AntiGravityExecutor:
             stream_lock = threading.Lock()
             returning = {"on": False}
             answer_done = threading.Event()
-            raw_prompt = is_raw_prompt(task)
 
             def _emit_stream_delta() -> None:
                 with stream_lock:
@@ -115,6 +133,16 @@ class AntiGravityExecutor:
                     delta = current[stream_state["sent_len"] :]
                     stream_state["sent_len"] = len(current)
                 if delta:
+                    # stdout has started, so it takes over as the progress
+                    # signal. Normally that means the answer, printed in one
+                    # burst at the end; under
+                    # FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS agy also
+                    # narrates each step there ("I will view the contents of
+                    # a.txt"), from around the same time the trajectory fills
+                    # up. Either way the two sources would now be describing
+                    # the same work on two channels, and the consumer would
+                    # close and reopen an item for every alternation.
+                    narration_stop.set()
                     stream_output(delta)
 
             def _read_pipe(name: str, pipe: object | None) -> None:
@@ -139,6 +167,26 @@ class AntiGravityExecutor:
                     except Exception:
                         pass
 
+            def _narrate(active: TrajectoryNarrator, emit: Callable[[str], None]) -> None:
+                # agy names the conversation in its own log a few seconds after
+                # launch — that is a real language-server startup, not a logging
+                # delay — and the DB appears under that name. Until both exist
+                # there is nothing to read; after that the log is never read
+                # again.
+                db_path: Path | None = None
+                while not narration_stop.is_set():
+                    if db_path is None:
+                        session_id = self._extract_session_id(agy_log_file, "")
+                        if session_id:
+                            db_path = find_conversation_db(
+                                session_id, ANTIGRAVITY_CONVERSATIONS_DIRS
+                            )
+                    if db_path is not None:
+                        delta = active.poll(db_path)
+                        if delta and not narration_stop.is_set():
+                            emit(delta)
+                    narration_stop.wait(POLL_INTERVAL_SEC)
+
             stdout_thread = threading.Thread(
                 target=_read_pipe,
                 args=("stdout", proc.stdout),
@@ -151,6 +199,13 @@ class AntiGravityExecutor:
             )
             stdout_thread.start()
             stderr_thread.start()
+            if narrator is not None and stream_reasoning is not None:
+                threading.Thread(
+                    target=_narrate,
+                    args=(narrator, stream_reasoning),
+                    name="agy-narrator",
+                    daemon=True,
+                ).start()
 
             cancelled = False
             timed_out = False
@@ -322,6 +377,24 @@ class AntiGravityExecutor:
                 ),
                 duration_sec=duration,
             )
+        finally:
+            # Every path out of here — answered, cancelled, timed out, crashed
+            # before the process even started — ends the run as far as working
+            # notes are concerned. Without this the poller outlives the run.
+            narration_stop.set()
+
+    def _trajectory_floor(self, task: Task) -> int:
+        """The last trajectory row that belongs to an earlier turn.
+
+        A fresh conversation has no DB yet and starts at -1; a resumed one opens
+        holding every step of every prior turn, which would otherwise replay as
+        this turn's working the moment the first poll lands.
+        """
+        session_id = str(task.metadata.get("executor_session_id", "")).strip()
+        if not session_id:
+            return -1
+        db_path = find_conversation_db(session_id, ANTIGRAVITY_CONVERSATIONS_DIRS)
+        return read_max_step_idx(db_path) if db_path is not None else -1
 
     def _build_command(
         self,
@@ -597,6 +670,7 @@ class AntiGravityExecutor:
                 text += "\n" + log_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 pass
+
 
         matches = re.findall(
             r"(?:agent executor error:\s*)?((?:RESOURCE_EXHAUSTED|UNAUTHENTICATED|PERMISSION_DENIED)"
