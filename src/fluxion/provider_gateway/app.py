@@ -19,6 +19,7 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,9 @@ class GatewayContext:
     workspaces: Mapping[str, Path] = field(default_factory=dict)
     attribution: AttributionStore | None = None
     ingress: CodexResponsesIngress = field(default_factory=CodexResponsesIngress)
+    # Where FLUXION_PROVIDER_LOG_BODIES writes captured requests. Off unless set:
+    # a request body carries the full delegated task and the parent's context.
+    body_log_dir: Path | None = None
 
     def local_agent_for(self, decision: RouteDecision) -> LocalAgentUpstream | None:
         return self.local_agents.get(decision.provider_id)
@@ -172,6 +176,7 @@ async def _handle(context: GatewayContext, request: Request, *, force_compaction
     if not isinstance(body, Mapping):
         return _error_response(400, "invalid_request_error", "request body must be a JSON object")
 
+    _log_body(context, body)
     raw = RawRequest.create(body, request.headers)
     normalized = context.ingress.normalize(raw)
     identity = context.ingress.extract_identity(normalized)
@@ -348,6 +353,26 @@ def _finish(
     )
 
 
+def _log_body(context: GatewayContext, body: Mapping[str, Any]) -> None:
+    """Dump a request verbatim when FLUXION_PROVIDER_LOG_BODIES is set.
+
+    The prompt Fluxion builds is a lossy view of the request — it keeps the
+    developer items and the delegated task and drops the rest — so when a
+    sub-agent behaves as though it never received its task, the built prompt
+    cannot tell you whether the task was absent, encrypted, or simply somewhere
+    this reader does not look. Off by default: bodies carry the full task text.
+    """
+    if context.body_log_dir is None:
+        return
+    try:
+        context.body_log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+        path = context.body_log_dir / f"request-{stamp}.json"
+        path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        log.warning("could not write request body log", exc_info=True)
+
+
 def _error_response(status: int, kind: str, message: str) -> JSONResponse:
     """Errors in the Responses API's own shape, so Codex parses them normally."""
     return JSONResponse(
@@ -405,6 +430,9 @@ def build_context(
         authenticator=TokenAuthenticator(load_or_create_token(settings.token_file)),
         local_agents=local_agents,
         workspaces=workspaces,
+        body_log_dir=(settings.token_file.parent / "logs" / "provider-requests")
+        if settings.log_bodies
+        else None,
     )
 
 
