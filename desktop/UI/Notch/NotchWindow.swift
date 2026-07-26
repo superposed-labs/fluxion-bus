@@ -364,11 +364,12 @@ struct NotchIslandView: View {
         // setFrame(display:) redrawing the blur and window shadow of an
         // unchanged frame, on top of the page cross-fade.
         //
-        // Tick `now` every second while the notch is visible. Because `now` is
-        // a @State dependency, SwiftUI re-evaluates body — and every downstream
-        // computed property — on each tick, so countdown displays update live.
+        // Tick `now` every second. The collapsed island can itself show an
+        // exhausted quota's reset countdown, so skipping ticks while collapsed
+        // leaves that always-visible value frozen until another model update.
+        // Because `now` is a @State dependency, SwiftUI re-evaluates body — and
+        // every downstream computed property — on each tick.
         .onReceive(timer) { date in
-            guard model.notchState != .collapsed else { return }
             now = date
         }
     }
