@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from fluxion.core.models.attachment import Attachment, ImageAttachment
 
 
 @dataclass
@@ -16,6 +19,8 @@ class Task:
     workspace: Path
     created_at: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
+    attachments: tuple[Attachment, ...] = ()
+    image_attachments: tuple[ImageAttachment, ...] = ()
 
     @classmethod
     def create(
@@ -26,6 +31,8 @@ class Task:
         text: str,
         workspace: Path,
         metadata: dict[str, Any] | None = None,
+        attachments: Sequence[Attachment] = (),
+        image_attachments: Sequence[ImageAttachment] = (),
     ) -> Task:
         return cls(
             id=str(uuid4()),
@@ -35,4 +42,6 @@ class Task:
             workspace=workspace,
             created_at=datetime.now(UTC),
             metadata=metadata or {},
+            attachments=tuple(attachments),
+            image_attachments=tuple(image_attachments),
         )

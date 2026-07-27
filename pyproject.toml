@@ -14,6 +14,7 @@ dependencies = [
   "websockets>=13.0",
   "lark-oapi>=1.4",
   "mcp[cli]>=1.13.0",
+  "Pillow>=11.0",
 ]
 
 [project.optional-dependencies]

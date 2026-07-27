@@ -28,6 +28,7 @@ from lark_oapi.api.im.v1 import (
     PatchMessageRequestBody,
 )
 
+from fluxion.channels.attachments import copy_stream_limited
 from fluxion.channels.feishu.content import build_text_content
 from fluxion.utils.logger import get_logger
 
@@ -198,8 +199,12 @@ class FeishuClient:
         if stream is None:
             raise FeishuAPIError("im.v1.message_resource.get", None, "no file in response")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open("wb") as out:
-            out.write(stream.read())
+        try:
+            with dest.open("wb") as out:
+                copy_stream_limited(stream, out)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
 
     def _send_media(
         self, receive_id: str, msg_type: str, content: dict, receive_id_type: str

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
 from fluxion.core.models.result import ExecutionResult
@@ -37,3 +37,36 @@ def enforces_read_only(executor: object) -> bool:
     """
     check = getattr(executor, "enforces_read_only", None)
     return bool(check()) if callable(check) else False
+
+
+def supports_native_images(executor: object) -> bool:
+    """Whether an executor can attach ``Task.image_attachments`` natively.
+
+    Unknown third-party executors safely fall back to workspace file paths.
+    """
+    check = getattr(executor, "supports_native_images", None)
+    return bool(check()) if callable(check) else False
+
+
+def native_image_media_types(executor: object) -> frozenset[str] | None:
+    """Native image media types accepted by an executor.
+
+    ``None`` preserves compatibility with third-party executors that only
+    expose the older boolean capability and therefore claim all validated
+    image types. An empty set means no native image interface.
+    """
+    declared = getattr(executor, "native_image_media_types", None)
+    if callable(declared):
+        values = declared()
+        if isinstance(values, str):
+            return frozenset({values.lower()})
+        if isinstance(values, Iterable):
+            return frozenset(str(value).lower() for value in values)
+        return frozenset()
+    return None if supports_native_images(executor) else frozenset()
+
+
+def accepts_native_image(executor: object, media_type: str) -> bool:
+    """Whether ``media_type`` should be sent through the native image API."""
+    accepted = native_image_media_types(executor)
+    return accepted is None or media_type.lower() in accepted

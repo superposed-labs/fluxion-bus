@@ -183,7 +183,7 @@ To create the Slack app:
 Minimum required:
 
 - Enable Socket Mode
-- Bot token scopes: `chat:write`, `im:history`, `files:write`
+- Bot token scopes: `chat:write`, `im:history`, `files:read`, `files:write`
 - Bot events: `message.im`
 - Install app to workspace
 
@@ -223,6 +223,30 @@ FLUXION_MENU_TELEGRAM_NOTIFY_REFRESH=false
 
 Telegram user IDs are numeric. Message a user-info bot, or inspect the gateway
 logs after a first inbound message, to find the ID for allowlisting.
+
+#### File and image attachments
+
+Slack, Telegram, LINE, QQ, Feishu, and WeChat downloads are represented as
+structured task attachments; their private inbox paths are not part of the
+user's prompt or final reply.
+JPEG, PNG, GIF, and WebP files are validated and delivered through the selected
+executor's native image interface when it has one. On macOS, HEIC and HEIF
+uploads are converted with ImageIO into a validated PNG before execution, so a
+headless agent does not need shell permission merely to decode an iPhone photo.
+The original upload remains in the transient `.fluxion_inbox` directory until
+the normal inbox TTL removes it.
+
+Telegram's **photo** mode is normalized by Telegram itself and normally reaches
+the bot as JPEG. Sending the same item as a **document** preserves its original
+name and format; Fluxion then applies the normalization described above.
+Unsupported or non-image files remain generic attachments and are left to the
+executor's own file capabilities and permission policy.
+
+Each inbound message may contain up to 8 files, with a 20 MiB limit per file
+and 48 MiB combined. Downloads are streamed to disk under those bounds instead
+of being buffered without a ceiling. Corrupt images, oversized files, and
+excess attachment counts are rejected with a channel reply before an executor
+starts.
 
 ### LINE
 

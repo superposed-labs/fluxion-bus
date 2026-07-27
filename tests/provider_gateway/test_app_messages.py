@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from fluxion.core.models.result import ExecutionResult
 from fluxion.provider_gateway.app import GatewayContext, create_app
@@ -19,6 +22,12 @@ from fluxion.provider_gateway.upstream.local_agent import LocalAgentUpstream
 TOKEN = "gateway-token"
 CANDIDATE = "local_claude:haiku"
 SESSION = "9653cd7b-b208-4c59-b96f-e58bf8ed39f1"
+
+
+def png_bytes() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (4, 3), color=(0, 160, 96)).save(output, format="PNG")
+    return output.getvalue()
 
 
 class RecordingExecutor:
@@ -50,7 +59,10 @@ class RecordingExecutor:
 
 def build_ctx(tmp_path, executor=None):
     executor = executor or RecordingExecutor()
-    caps = ModelCapabilities(frozenset({"streaming", "tool_calling"}), max_context_tokens=200_000)
+    caps = ModelCapabilities(
+        frozenset({"streaming", "tool_calling", "image_input"}),
+        max_context_tokens=200_000,
+    )
     return GatewayContext(
         router=Router(
             policies={"p": PolicySpec("p", candidates=(CANDIDATE,))},
@@ -170,6 +182,151 @@ def test_a_different_conversation_starts_cold(tmp_path):
     post(client, session="11111111-2222-3333-4444-555555555555")
 
     assert executor.tasks[1].metadata["executor_session_id"] == ""
+
+
+def test_an_inline_image_is_materialized_for_the_agent(tmp_path):
+    executor = RecordingExecutor()
+    png = png_bytes()
+    body = {
+        "model": "haiku",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect this image"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(png).decode(),
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    task = executor.tasks[0]
+    assert "inspect this image" in task.text
+    assert ".fluxion_inbox/" in task.text
+    assert len(task.image_attachments) == 1
+    assert task.image_attachments[0].path.read_bytes() == png
+    assert str(task.image_attachments[0].path.relative_to(tmp_path)) in task.text
+
+
+def test_an_image_only_turn_still_runs(tmp_path):
+    executor = RecordingExecutor()
+    png = png_bytes()
+    body = {
+        "model": "haiku",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(png).decode(),
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    assert "without a text instruction" in executor.tasks[0].text
+
+
+def test_remote_anthropic_image_url_is_passed_without_downloading(tmp_path):
+    executor = RecordingExecutor()
+    body = {
+        "model": "haiku",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect the remote image"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/image.avif",
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    assert "https://example.com/image.avif" in executor.tasks[0].text
+    assert executor.tasks[0].attachments == ()
+    assert executor.tasks[0].image_attachments == ()
+
+
+def test_messages_output_never_exposes_internal_attachment_references(tmp_path):
+    class LeakyImageExecutor(RecordingExecutor):
+        def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+            self.tasks.append(task)
+            attachment = task.image_attachments[0]
+            relative = str(attachment.path.relative_to(task.workspace))
+            if stream_output:
+                split = relative.index("image_")
+                stream_output(f"Observed {relative[:split]}")
+                stream_output(f"{relative[split:]}. ")
+            return ExecutionResult(
+                success=True,
+                summary=f"Summary for {attachment.path.name}",
+                stdout="",
+                stderr="",
+                exit_code=0,
+                executor_session_id="claude-image-session",
+            )
+
+    executor = LeakyImageExecutor()
+    png = png_bytes()
+    body = {
+        "model": "haiku",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(png).decode(),
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(
+        TestClient(create_app(build_ctx(tmp_path, executor))),
+        body,
+        stream=False,
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["content"][0]["text"]
+    assert ".fluxion_inbox" not in answer
+    assert executor.tasks[0].image_attachments[0].path.name not in answer
+    assert answer == "Observed attached image. Summary for attached image"
 
 
 # ── non-streaming ────────────────────────────────────────────────────

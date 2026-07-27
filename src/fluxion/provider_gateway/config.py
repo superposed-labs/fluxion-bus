@@ -57,6 +57,10 @@ _LOCAL_AGENT_IMPLIED_CAPABILITIES = {
     # already the accepted shape of this mode (see the doc, section 1.1).
     # Refusing the request instead would trade an empty pane for no answer.
     "reasoning_summary": True,
+    # Protocol images are materialized into the workspace inbox and the local
+    # agent receives their paths, matching Fluxion's existing IM attachment
+    # contract. This is image support through the agent's file tools, not a
+    # claim that every executor has a native multimodal CLI flag.
     "image_input": True,
     # A compaction turn is "summarize this conversation", delivered as a normal
     # streaming Responses request since remote_compaction_v2 became the default.
@@ -85,8 +89,14 @@ class GatewaySettings:
     config_file: Path = Path("config/provider_routes.json")
     default_policy: str = "balanced"
     sticky_ttl_seconds: float | None = DEFAULT_TTL_SECONDS
-    max_request_bytes: int = 32 * 1024 * 1024
+    # Base64 expands binary images by roughly one third. Keep the outer HTTP
+    # ceiling above MAX_TOTAL_IMAGE_BYTES so the decoded limit, not JSON
+    # overhead, remains the meaningful attachment limit.
+    max_request_bytes: int = 48 * 1024 * 1024
     max_concurrency: int = 12
+    # Match the default sticky-route lifetime: a conversation that is still
+    # resumable should not lose the images it may refer back to.
+    inbox_ttl_hours: int = DEFAULT_TTL_SECONDS // 3600
     # Off by default and deliberately hard to turn on: request bodies contain
     # the user's source code and the model's output.
     log_bodies: bool = False
@@ -108,8 +118,24 @@ class GatewaySettings:
             # 0 disables expiry entirely, for users who would rather manage
             # routes by hand than have them vanish on a schedule.
             sticky_ttl_seconds=None if ttl_hours <= 0 else ttl_hours * 3600,
-            max_request_bytes=_int(env.get("FLUXION_PROVIDER_MAX_REQUEST_BYTES"), 32 * 1024 * 1024),
-            max_concurrency=_int(env.get("FLUXION_PROVIDER_MAX_CONCURRENCY"), 12),
+            max_request_bytes=_positive_int(
+                env.get("FLUXION_PROVIDER_MAX_REQUEST_BYTES"),
+                48 * 1024 * 1024,
+                "FLUXION_PROVIDER_MAX_REQUEST_BYTES",
+            ),
+            max_concurrency=_positive_int(
+                env.get("FLUXION_PROVIDER_MAX_CONCURRENCY"),
+                12,
+                "FLUXION_PROVIDER_MAX_CONCURRENCY",
+            ),
+            inbox_ttl_hours=max(
+                0,
+                _int(
+                    env.get("FLUXION_PROVIDER_IMAGE_TTL_HOURS")
+                    or env.get("FLUXION_INBOX_TTL_HOURS"),
+                    DEFAULT_TTL_SECONDS // 3600,
+                ),
+            ),
             log_bodies=_bool(env.get("FLUXION_PROVIDER_LOG_BODIES"), False),
         )
 
@@ -347,3 +373,15 @@ def _port(value: str | None, default: int) -> int:
     if not 1 <= port <= 65535:
         raise ConfigError(f"FLUXION_PROVIDER_PORT must be between 1 and 65535, got {port}")
     return port
+
+
+def _positive_int(value: str | None, default: int, name: str) -> int:
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{name} must be greater than zero, got {parsed}")
+    return parsed

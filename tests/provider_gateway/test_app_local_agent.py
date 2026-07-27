@@ -6,10 +6,13 @@ subscription-based agent rather than a model API.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from fluxion.core.models.result import ExecutionResult
 from fluxion.provider_gateway.app import GatewayContext, build_context, create_app
@@ -30,6 +33,12 @@ from fluxion.provider_gateway.upstream.local_agent import LocalAgentUpstream
 
 TOKEN = "gateway-token"
 CANDIDATE = "local_claude:opus"
+
+
+def png_bytes() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (4, 3), color=(255, 128, 0)).save(output, format="PNG")
+    return output.getvalue()
 
 
 class RecordingExecutor:
@@ -59,10 +68,16 @@ class RecordingExecutor:
         )
 
 
+class NativeImageExecutor(RecordingExecutor):
+    def supports_native_images(self):
+        return True
+
+
 def build_ctx(tmp_path, executor=None, workspace=None):
     executor = executor or RecordingExecutor()
     caps = ModelCapabilities(
-        frozenset({"streaming", "tool_calling", "reasoning"}), max_context_tokens=200_000
+        frozenset({"streaming", "tool_calling", "reasoning", "image_input"}),
+        max_context_tokens=200_000,
     )
     return GatewayContext(
         router=Router(
@@ -109,6 +124,162 @@ def test_local_agent_serves_the_turn(tmp_path):
     assert EV_OUTPUT_TEXT_DELTA in types
     assert types[-1] == EV_COMPLETED
     assert executor.tasks[0].text == "review auth.py"
+
+
+def test_responses_image_is_materialized_for_the_agent(tmp_path):
+    executor = RecordingExecutor()
+    png = png_bytes()
+    body = {
+        "model": "opus",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "review this screenshot"},
+                    {
+                        "type": "input_image",
+                        "image_url": ("data:image/png;base64," + base64.b64encode(png).decode()),
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    task = executor.tasks[0]
+    assert "review this screenshot" in task.text
+    assert len(task.image_attachments) == 1
+    assert task.image_attachments[0].path.read_bytes() == png
+    assert str(task.image_attachments[0].path.relative_to(tmp_path)) in task.text
+
+
+def test_native_image_executor_receives_attachment_without_a_path_manifest(tmp_path):
+    executor = NativeImageExecutor()
+    png = png_bytes()
+    body = {
+        "model": "opus",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "inspect natively"},
+                    {
+                        "type": "input_image",
+                        "image_url": ("data:image/png;base64," + base64.b64encode(png).decode()),
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    task = executor.tasks[0]
+    assert task.text == "inspect natively"
+    assert len(task.image_attachments) == 1
+    assert task.image_attachments[0].path.read_bytes() == png
+
+
+def test_codex_app_source_path_is_rewritten_before_file_bridge_execution(tmp_path):
+    executor = RecordingExecutor()
+    png = png_bytes()
+    original = "/Users/user/Downloads/ChatGPT Image 2026.png"
+    body = {
+        "model": "opus",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            f"请查看图片。图片路径：{original}\n"
+                            f'<image name=[Image #1] path="{original}">\n</image>'
+                        ),
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": ("data:image/png;base64," + base64.b64encode(png).decode()),
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    task = executor.tasks[0]
+    relative = str(task.image_attachments[0].path.relative_to(tmp_path))
+    assert original not in task.text
+    assert "<image" not in task.text
+    assert "图片路径：[Attached image 1]" in task.text
+    assert "[Attached image 1]" in task.text
+    assert task.text.count(relative) == 1
+    assert "Internal attachment file(s)" in task.text
+
+
+def test_remote_responses_image_url_is_passed_without_gateway_download(tmp_path):
+    executor = RecordingExecutor()
+    body = {
+        "model": "opus",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "review this screenshot"},
+                    {
+                        "type": "input_image",
+                        "image_url": "https://example.com/screenshot.png",
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    assert len(executor.tasks) == 1
+    assert "https://example.com/screenshot.png" in executor.tasks[0].text
+    assert "gateway did not download" in executor.tasks[0].text.lower()
+    assert executor.tasks[0].attachments == ()
+    assert executor.tasks[0].image_attachments == ()
+
+
+def test_unknown_image_format_reaches_the_agent_as_a_file_attachment(tmp_path):
+    executor = NativeImageExecutor()
+    payload = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00example"
+    body = {
+        "model": "opus",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "inspect this HEIC"},
+                    {
+                        "type": "input_image",
+                        "image_url": (
+                            "data:image/heic;base64," + base64.b64encode(payload).decode()
+                        ),
+                    },
+                ],
+            }
+        ],
+    }
+
+    response = post(TestClient(create_app(build_ctx(tmp_path, executor))), body)
+
+    assert response.status_code == 200
+    task = executor.tasks[0]
+    assert task.image_attachments == ()
+    assert len(task.attachments) == 1
+    assert task.attachments[0].path.read_bytes() == payload
+    assert task.attachments[0].path.suffix == ".heic"
+    assert str(task.attachments[0].path.relative_to(tmp_path)) in task.text
 
 
 def test_agent_output_streams_into_the_window(tmp_path):

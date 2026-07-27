@@ -13,6 +13,7 @@ Request path:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -26,6 +27,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from fluxion.core.models.attachment import Attachment, ImageAttachment
+from fluxion.executors.base import accepts_native_image
 from fluxion.provider_gateway.attribution import (
     BILLING_API,
     BILLING_SUBSCRIPTION,
@@ -47,6 +50,13 @@ from fluxion.provider_gateway.config import (
     RoutingConfig,
 )
 from fluxion.provider_gateway.identity import RequestIdentity
+from fluxion.provider_gateway.image_inputs import (
+    ImageInputError,
+    anthropic_remote_image_urls,
+    materialize_anthropic_images,
+    materialize_responses_images,
+    prepare_image_prompt,
+)
 from fluxion.provider_gateway.ingress.messages import (
     AnthropicMessagesIngress,
     extract_messages_prompt,
@@ -89,6 +99,9 @@ class GatewayContext:
     # Where FLUXION_PROVIDER_LOG_BODIES writes captured requests. Off unless set:
     # a request body carries the full delegated task and the parent's context.
     body_log_dir: Path | None = None
+    inbox_ttl_hours: float = 24.0
+    max_request_bytes: int = 48 * 1024 * 1024
+    max_concurrency: int = 12
 
     def local_agent_for(self, decision: RouteDecision) -> LocalAgentUpstream | None:
         return self.local_agents.get(decision.provider_id)
@@ -133,6 +146,115 @@ class GatewayContext:
         )
 
 
+class _ProviderLimitsMiddleware:
+    """Bound inference request memory and in-flight local-agent turns.
+
+    This is pure ASGI middleware rather than ``BaseHTTPMiddleware`` so a
+    concurrency slot remains occupied until the final streaming response byte
+    has been sent. Releasing when the endpoint merely returns a
+    ``StreamingResponse`` would make the limit ineffective for the gateway's
+    normal long-lived SSE requests.
+    """
+
+    _LIMITED_PATHS = frozenset({"/v1/responses", "/v1/responses/compact", "/v1/messages"})
+
+    def __init__(self, app: Any, *, max_request_bytes: int, max_concurrency: int) -> None:
+        self._app = app
+        self._max_request_bytes = max_request_bytes
+        self._max_concurrency = max_concurrency
+        self._active = 0
+        self._lock = asyncio.Lock()
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("path") not in self._LIMITED_PATHS:
+            await self._app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", ())}
+        content_length = headers.get(b"content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = -1
+            if declared_size > self._max_request_bytes:
+                await self._send_error(
+                    send,
+                    413,
+                    "request_too_large",
+                    f"request body exceeds {self._max_request_bytes} bytes",
+                )
+                return
+
+        async with self._lock:
+            if self._active >= self._max_concurrency:
+                await self._send_error(
+                    send,
+                    429,
+                    "concurrency_limit_exceeded",
+                    f"provider gateway already has {self._max_concurrency} active request(s)",
+                    retry_after=True,
+                )
+                return
+            self._active += 1
+
+        received = 0
+
+        async def bounded_receive() -> dict[str, Any]:
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b""))
+                if received > self._max_request_bytes:
+                    raise _RequestTooLarge
+            return message
+
+        try:
+            await self._app(scope, bounded_receive, send)
+        except _RequestTooLarge:
+            await self._send_error(
+                send,
+                413,
+                "request_too_large",
+                f"request body exceeds {self._max_request_bytes} bytes",
+            )
+        finally:
+            async with self._lock:
+                self._active -= 1
+
+    @staticmethod
+    async def _send_error(
+        send: Any,
+        status: int,
+        kind: str,
+        message: str,
+        *,
+        retry_after: bool = False,
+    ) -> None:
+        body = json.dumps({"error": {"type": kind, "message": message}}).encode()
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        if retry_after:
+            headers.append((b"retry-after", b"1"))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+
+class _RequestTooLarge(Exception):
+    """The ASGI receive stream crossed the configured byte ceiling."""
+
+
+def _native_images(executor: object, attachments: list[Attachment]) -> tuple[ImageAttachment, ...]:
+    return tuple(
+        attachment
+        for attachment in attachments
+        if isinstance(attachment, ImageAttachment)
+        and accepts_native_image(executor, attachment.media_type)
+    )
+
+
 def create_app(context: GatewayContext) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -147,6 +269,11 @@ def create_app(context: GatewayContext) -> FastAPI:
 
     app = FastAPI(
         title="Fluxion Provider Gateway", docs_url=None, redoc_url=None, lifespan=lifespan
+    )
+    app.add_middleware(
+        _ProviderLimitsMiddleware,
+        max_request_bytes=context.max_request_bytes,
+        max_concurrency=context.max_concurrency,
     )
 
     @app.get("/healthz")
@@ -224,14 +351,14 @@ async def _handle_messages(context: GatewayContext, request: Request):
     raw = RawRequest.create(body, request.headers)
     normalized = context.messages_ingress.normalize(raw)
     identity = context.messages_ingress.extract_identity(normalized)
-    requirements = derive_requirements({}, is_compaction=False)
+    # Reuse the Responses capability detector over the Messages content tree:
+    # it recursively recognizes Anthropic `type: image` blocks as image input.
+    requirements = derive_requirements({"input": body.get("messages", [])}, is_compaction=False)
 
     sticky = context.sticky.lookup(identity.route_key)
     session_id = sticky.executor_session_id if sticky else ""
     # Whether the agent still remembers this conversation decides how much of it
     # to resend — see `extract_messages_prompt`.
-    prompt = extract_messages_prompt(body, resuming=bool(session_id))
-
     try:
         decision = context.router.select(
             identity, requirements, sticky_candidate=sticky.candidate_id if sticky else None
@@ -243,12 +370,47 @@ async def _handle_messages(context: GatewayContext, request: Request):
     except NoRouteAvailableError as err:
         return _error_response(503, "no_route_available", str(err))
 
+    try:
+        images = materialize_anthropic_images(
+            body,
+            workspace=workspace,
+            resuming=bool(session_id),
+            ttl_hours=context.inbox_ttl_hours,
+            storage_key=identity.route_key,
+        )
+        remote_urls = anthropic_remote_image_urls(body, resuming=bool(session_id))
+    except ImageInputError as err:
+        return _error_response(err.status_code, err.kind, str(err))
+    prompt = extract_messages_prompt(body, resuming=bool(session_id))
+    native_images = _native_images(upstream.executor, images)
+    if images or remote_urls:
+        log.info(
+            "provider image input route=%s files=%d urls=%d bytes=%d pixels=%d "
+            "formats=%s native=%d file_bridge=%d",
+            identity.route_key[:12],
+            len(images),
+            len(remote_urls),
+            sum(image.byte_size for image in images),
+            sum(image.pixel_count for image in images if isinstance(image, ImageAttachment)),
+            ",".join(sorted({image.media_type for image in images})),
+            len(native_images),
+            len(images) - len(native_images),
+        )
+        prompt = prepare_image_prompt(
+            prompt,
+            images,
+            workspace=workspace,
+            native_attachments=native_images,
+            remote_urls=remote_urls,
+        )
+
     turn = upstream.stream_messages(
         body,
         decision.upstream_model,
         prompt=prompt,
         workspace=workspace,
         session_id=session_id,
+        image_attachments=images,
     )
 
     # `stream` defaults to false in the Messages API, and a caller that wants
@@ -382,6 +544,8 @@ async def _handle(context: GatewayContext, request: Request, *, force_compaction
         first = await anext(stream)
     except NoRouteAvailableError as err:
         return _error_response(503, "no_route_available", str(err))
+    except ImageInputError as err:
+        return _error_response(err.status_code, err.kind, str(err))
     except StopAsyncIteration:
         return _error_response(502, "upstream_error", "the local agent produced no events")
 
@@ -463,12 +627,33 @@ async def _run_local_agent(
     # Resume the agent session this sub-thread used last time, so a follow-up
     # turn continues rather than starting cold with no memory of its own work.
     session_id = sticky.executor_session_id if sticky else ""
+    images = materialize_responses_images(
+        raw.body,
+        workspace=workspace,
+        resuming=bool(session_id),
+        ttl_hours=context.inbox_ttl_hours,
+        storage_key=identity.route_key,
+    )
+    if images:
+        native_images = _native_images(upstream.executor, images)
+        log.info(
+            "provider image input route=%s files=%d bytes=%d pixels=%d formats=%s "
+            "native=%d file_bridge=%d",
+            identity.route_key[:12],
+            len(images),
+            sum(image.byte_size for image in images),
+            sum(image.pixel_count for image in images if isinstance(image, ImageAttachment)),
+            ",".join(sorted({image.media_type for image in images})),
+            len(native_images),
+            len(images) - len(native_images),
+        )
 
     async for event in upstream.stream(
         raw.body,
         decision.upstream_model,
         workspace=workspace,
         session_id=session_id,
+        image_attachments=images,
         # The role file's `sandbox_mode` binds Codex's sub-thread, which runs no
         # tools here, so enforcing it is ours to do — see codex_config.
         read_only=is_read_only_role(identity.route_hint),
@@ -628,6 +813,9 @@ def build_context(
         body_log_dir=(settings.token_file.parent / "logs" / "provider-requests")
         if settings.log_bodies
         else None,
+        inbox_ttl_hours=settings.inbox_ttl_hours,
+        max_request_bytes=settings.max_request_bytes,
+        max_concurrency=settings.max_concurrency,
     )
 
 

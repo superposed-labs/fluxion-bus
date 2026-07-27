@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PIL import Image
+
+from fluxion.channels.attachments import DownloadedFile, normalize_downloaded_files
 from fluxion.core.models.task import Task
 from fluxion.executors.prompt_builder import RAW_PROMPT_MODE, AgentPromptBuilder, is_raw_prompt
 
@@ -48,3 +51,38 @@ def test_raw_mode_requires_the_exact_marker(tmp_path):
     # stripping the answer contract the IM channels depend on.
     assert not is_raw_prompt(_task(tmp_path, prompt_mode="RAW-ish"))
     assert "FINAL_ANSWER" in AgentPromptBuilder().build(_task(tmp_path, prompt_mode="RAW-ish"))
+
+
+def test_image_path_is_bridged_only_when_executor_lacks_native_delivery(tmp_path):
+    inbox = tmp_path / ".fluxion_inbox" / "abc"
+    inbox.mkdir(parents=True)
+    path = inbox / "private.png"
+    Image.new("RGB", (8, 8)).save(path)
+    _, images = normalize_downloaded_files([DownloadedFile(path=path, media_type="image/png")])
+    task = Task.create(
+        channel="slack",
+        user_id="user",
+        text="describe it",
+        workspace=tmp_path,
+        image_attachments=images,
+    )
+
+    bridged = AgentPromptBuilder().build(task)
+    native = AgentPromptBuilder().build(
+        task,
+        native_image_media_types={"image/png"},
+    )
+
+    assert ".fluxion_inbox/abc/private.png" in bridged
+    assert "Do not mention file names" in bridged
+    assert "private.png" not in native
+    assert native.endswith("User request:\ndescribe it\n")
+
+
+def test_prepared_attachment_prompt_is_not_appended_twice(tmp_path):
+    task = _task(tmp_path, attachment_prompt_prepared=True)
+    task.text = "describe it\n\nInternal attachment file(s): one.png"
+
+    prompt = AgentPromptBuilder().build(task)
+
+    assert prompt.count("Internal attachment file(s)") == 1

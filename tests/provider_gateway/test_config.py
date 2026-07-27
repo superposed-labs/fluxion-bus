@@ -41,6 +41,8 @@ def test_settings_have_safe_defaults():
     assert settings.host == "127.0.0.1"
     assert settings.port == 8787
     assert settings.enabled is False
+    assert settings.max_request_bytes == 48 * 1024 * 1024
+    assert settings.inbox_ttl_hours == 2160
     assert settings.log_bodies is False
 
 
@@ -50,11 +52,52 @@ def test_settings_read_the_environment():
             "FLUXION_PROVIDER_ENABLED": "true",
             "FLUXION_PROVIDER_PORT": "9999",
             "FLUXION_PROVIDER_DEFAULT_POLICY": "quality-first",
+            "FLUXION_INBOX_TTL_HOURS": "12",
         }
     )
     assert settings.enabled is True
     assert settings.port == 9999
     assert settings.default_policy == "quality-first"
+    assert settings.inbox_ttl_hours == 12
+
+
+def test_settings_read_provider_limits():
+    settings = GatewaySettings.load(
+        env={
+            "FLUXION_PROVIDER_MAX_REQUEST_BYTES": "12345",
+            "FLUXION_PROVIDER_MAX_CONCURRENCY": "3",
+        }
+    )
+    assert settings.max_request_bytes == 12345
+    assert settings.max_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["FLUXION_PROVIDER_MAX_REQUEST_BYTES", "FLUXION_PROVIDER_MAX_CONCURRENCY"],
+)
+def test_provider_limits_must_be_positive(name):
+    with pytest.raises(ConfigError, match=f"{name} must be greater than zero"):
+        GatewaySettings.load(env={name: "0"})
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["FLUXION_PROVIDER_MAX_REQUEST_BYTES", "FLUXION_PROVIDER_MAX_CONCURRENCY"],
+)
+def test_provider_limits_must_be_integers(name):
+    with pytest.raises(ConfigError, match=f"{name} must be an integer"):
+        GatewaySettings.load(env={name: "many"})
+
+
+def test_provider_image_ttl_takes_precedence_over_the_legacy_alias():
+    settings = GatewaySettings.load(
+        env={
+            "FLUXION_PROVIDER_IMAGE_TTL_HOURS": "48",
+            "FLUXION_INBOX_TTL_HOURS": "12",
+        }
+    )
+    assert settings.inbox_ttl_hours == 48
 
 
 def test_zero_ttl_disables_expiry():

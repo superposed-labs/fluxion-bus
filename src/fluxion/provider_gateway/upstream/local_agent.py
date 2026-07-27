@@ -33,16 +33,23 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fluxion.core.models.attachment import Attachment, ImageAttachment
 from fluxion.core.models.task import Task
-from fluxion.executors.base import Executor, enforces_read_only
+from fluxion.executors.base import Executor, accepts_native_image, enforces_read_only
 from fluxion.executors.prompt_builder import RAW_PROMPT_MODE
 from fluxion.provider_gateway.capabilities import ModelCapabilities
+from fluxion.provider_gateway.image_inputs import (
+    AttachmentReferenceRedactor,
+    prepare_image_prompt,
+    redact_attachment_references,
+    responses_remote_image_urls,
+)
 from fluxion.provider_gateway.messages_stream import (
     content_block_delta,
     content_block_start,
@@ -134,6 +141,18 @@ class LocalAgentRun:
     token_usage: Mapping[str, int] = field(default_factory=dict)
 
 
+def _native_image_attachments(
+    executor: object, attachments: Sequence[Attachment]
+) -> tuple[ImageAttachment, ...]:
+    """Select only formats the executor explicitly accepts natively."""
+    return tuple(
+        attachment
+        for attachment in attachments
+        if isinstance(attachment, ImageAttachment)
+        and accepts_native_image(executor, attachment.media_type)
+    )
+
+
 @dataclass
 class LocalAgentUpstream:
     """Adapts one Fluxion executor to the Responses event protocol."""
@@ -154,6 +173,7 @@ class LocalAgentUpstream:
         *,
         workspace: Path,
         session_id: str = "",
+        image_attachments: Sequence[Attachment] = (),
         request_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         read_only: bool = False,
@@ -168,6 +188,14 @@ class LocalAgentUpstream:
         # Whether the agent still remembers this sub-thread decides how much of
         # it to resend — see `extract_prompt`.
         prompt = extract_prompt(body, resuming=bool(session_id))
+        native_attachments = _native_image_attachments(self.executor, image_attachments)
+        prompt = prepare_image_prompt(
+            prompt,
+            image_attachments,
+            workspace=workspace,
+            native_attachments=native_attachments,
+            remote_urls=responses_remote_image_urls(body, resuming=bool(session_id)),
+        )
         if not prompt:
             yield _failed(response_id, "no user input found in the request")
             return
@@ -207,13 +235,19 @@ class LocalAgentUpstream:
             thought: list[str] = []
 
             async for channel, chunk, run in self._run(
-                prompt, model, workspace, session_id, is_cancelled, read_only
+                prompt,
+                model,
+                workspace,
+                session_id,
+                is_cancelled,
+                read_only,
+                image_attachments,
             ):
                 if chunk is not None:
                     if channel != open_channel:
                         if open_channel is not None:
                             yield _close(response_id, open_channel, open_id, "".join(buffer))
-                        open_channel, open_id, buffer = channel, _fresh_id(), []
+                        open_channel, open_id, buffer = channel, _fresh_id(channel), []
                         yield _open(response_id, open_channel, open_id)
                     buffer.append(chunk)
                     if channel == _ANSWER:
@@ -252,6 +286,7 @@ class LocalAgentUpstream:
         prompt: str,
         workspace: Path,
         session_id: str = "",
+        image_attachments: Sequence[Attachment] = (),
         request_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         read_only: bool = False,
@@ -288,7 +323,13 @@ class LocalAgentUpstream:
             streamed: list[str] = []
             opened = True
             async for _channel, chunk, run in self._run(
-                prompt, model, workspace, session_id, is_cancelled, read_only
+                prompt,
+                model,
+                workspace,
+                session_id,
+                is_cancelled,
+                read_only,
+                image_attachments,
             ):
                 if chunk is not None:
                     streamed.append(chunk)
@@ -327,6 +368,7 @@ class LocalAgentUpstream:
         session_id: str,
         is_cancelled: Callable[[], bool] | None,
         read_only: bool,
+        image_attachments: Sequence[Attachment],
     ) -> AsyncIterator[tuple[str | None, str | None, LocalAgentRun | None]]:
         """Bridge the blocking executor onto the event loop.
 
@@ -339,6 +381,13 @@ class LocalAgentUpstream:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Any] = asyncio.Queue()
         cancelled = threading.Event()
+        redaction_lock = threading.Lock()
+        redaction_sequence = 0
+        redaction_last_seen: dict[str, int] = {}
+        redactors = {
+            _ANSWER: AttachmentReferenceRedactor(image_attachments, workspace=workspace),
+            _REASONING: AttachmentReferenceRedactor(image_attachments, workspace=workspace),
+        }
 
         task = Task(
             id=f"codex-subagent-{uuid.uuid4().hex[:12]}",
@@ -350,6 +399,9 @@ class LocalAgentUpstream:
             metadata={
                 "source": "provider_gateway",
                 "model": model,
+                # `prepare_image_prompt` already split native image delivery
+                # from workspace-file bridging before this Task was built.
+                "attachment_prompt_prepared": True,
                 # Codex already supplies the framing: the role's
                 # `developer_instructions` arrive in the request and are part of
                 # `prompt`. Letting Fluxion prepend its own IM-oriented preamble
@@ -372,6 +424,16 @@ class LocalAgentUpstream:
                 # `sandbox_mode` binds a Codex thread that runs no tools.
                 "read_only": read_only,
             },
+            attachments=tuple(
+                attachment
+                for attachment in image_attachments
+                if not isinstance(attachment, ImageAttachment)
+            ),
+            image_attachments=tuple(
+                attachment
+                for attachment in image_attachments
+                if isinstance(attachment, ImageAttachment)
+            ),
         )
 
         def post(item: Any) -> None:
@@ -387,11 +449,32 @@ class LocalAgentUpstream:
             except RuntimeError:
                 log.debug("dropping local agent output: event loop is gone")
 
+        def redact_and_post(channel: str, chunk: str) -> None:
+            nonlocal redaction_sequence
+            with redaction_lock:
+                redaction_sequence += 1
+                redaction_last_seen[channel] = redaction_sequence
+                safe = redactors[channel].feed(chunk)
+            if safe:
+                post((channel, safe))
+
         def on_output(chunk: str) -> None:
-            post((_ANSWER, chunk))
+            redact_and_post(_ANSWER, chunk)
 
         def on_reasoning(chunk: str) -> None:
-            post((_REASONING, chunk))
+            redact_and_post(_REASONING, chunk)
+
+        def flush_redactors() -> None:
+            # Preserve the last observed channel order when both streams hold a
+            # short tail waiting to see whether it completes a sensitive path.
+            with redaction_lock:
+                tails = [
+                    (redaction_last_seen.get(channel, -1), channel, redactor.flush())
+                    for channel, redactor in redactors.items()
+                ]
+            for _sequence, channel, tail in sorted(tails):
+                if tail:
+                    post((channel, tail))
 
         def worker() -> None:
             try:
@@ -403,7 +486,11 @@ class LocalAgentUpstream:
                 )
                 run = LocalAgentRun(
                     success=result.success,
-                    summary=result.summary,
+                    summary=redact_attachment_references(
+                        result.summary,
+                        image_attachments,
+                        workspace=workspace,
+                    ),
                     session_id=result.executor_session_id,
                     changed_files=tuple(result.changed_files),
                     token_usage=dict(result.token_usage),
@@ -411,8 +498,15 @@ class LocalAgentUpstream:
             except Exception as err:  # noqa: BLE001 - surfaced as a failed turn
                 log.exception("local agent %s raised", self.provider_id)
                 run = LocalAgentRun(
-                    success=False, summary=f"{type(err).__name__}: {err}", session_id=""
+                    success=False,
+                    summary=redact_attachment_references(
+                        f"{type(err).__name__}: {err}",
+                        image_attachments,
+                        workspace=workspace,
+                    ),
+                    session_id="",
                 )
+            flush_redactors()
             post((_DONE, run))
 
         thread = threading.Thread(
@@ -694,8 +788,16 @@ def _created(response_id: str, model: str) -> dict[str, Any]:
     }
 
 
-def _fresh_id() -> str:
-    return f"msg_{uuid.uuid4().hex[:24]}"
+def _fresh_id(channel: str) -> str:
+    """Return an item id whose prefix matches its Responses item type.
+
+    Codex accepts a ``msg_`` id on a reasoning item while streaming the first
+    turn, but rejects that persisted item when a cold-resumed thread replays
+    its history. Responses reasoning items use ``rs_``; assistant messages use
+    ``msg_``.
+    """
+    prefix = "rs" if channel == _REASONING else "msg"
+    return f"{prefix}_{uuid.uuid4().hex[:24]}"
 
 
 def _open(response_id: str, channel: str, item_id: str) -> dict[str, Any]:

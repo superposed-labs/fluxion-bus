@@ -42,6 +42,13 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    copy_stream_limited,
+    ensure_attachment_count,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import SettingsHotReloader, authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
 from fluxion.channels.inbox import make_inbox_dir
@@ -370,26 +377,27 @@ class QQBotChannelAdapter:
 
         task_text = text
         if attachments:
-            saved = self._download_attachments(
+            try:
+                ensure_attachment_count(len(attachments))
+            except AttachmentNormalizationError as exc:
+                self._reply_now(target_type, openid, msg_id, f"Rejected attachment: {exc}")
+                return
+            downloaded = self._download_attachments(
                 attachments=attachments,
                 workspace=workspace,
                 target_type=target_type,
                 openid=openid,
                 msg_id=msg_id,
             )
-            if saved:
-                rel = [str(p.relative_to(workspace)) for p in saved]
-                note = "Attached image(s) saved in the workspace:\n" + "\n".join(
-                    f"- {r}" for r in rel
-                )
-                task_text = (
-                    f"{text}\n\n{note}".strip()
-                    if text
-                    else (
-                        "The user sent the following image(s) without a text instruction. "
-                        "Inspect them and respond appropriately.\n\n" + note
-                    )
-                )
+        else:
+            downloaded = []
+        if attachments and not downloaded and not task_text:
+            return
+        try:
+            task_attachments, task_images = normalize_downloaded_files(downloaded)
+        except AttachmentNormalizationError as exc:
+            self._reply_now(target_type, openid, msg_id, f"Rejected attachment: {exc}")
+            return
 
         override = self._gateway._sessions.get_executor_override(
             conversation_key=convo_key,
@@ -407,6 +415,8 @@ class QQBotChannelAdapter:
                 "executor": executor_to_use,
                 "conversation_key": convo_key,
             },
+            attachments=task_attachments,
+            image_attachments=task_images,
         )
 
         with self._lock:
@@ -499,11 +509,11 @@ class QQBotChannelAdapter:
 
     @staticmethod
     def _extract_image_attachments(d: dict[str, Any]) -> list[dict[str, Any]]:
-        """Pull downloadable image attachments from an inbound QQ message.
+        """Pull downloadable attachments from an inbound QQ message.
 
         QQ carries media in ``d.attachments`` (each with ``content_type``,
-        ``filename``, ``url``). We keep images only; other media types are ignored
-        in this version.
+        ``filename``, ``url``). Classification belongs to the shared attachment
+        layer, so unusual formats remain available to the selected executor.
         """
         raw = d.get("attachments")
         if not isinstance(raw, list):
@@ -517,15 +527,16 @@ class QQBotChannelAdapter:
                 continue
             content_type = str(att.get("content_type") or "").lower()
             filename = str(att.get("filename") or "")
-            is_image = content_type.startswith("image") or filename.lower().endswith(
-                (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
-            )
-            if not is_image:
-                continue
             # QQ sometimes returns scheme-less CDN URLs; default to https.
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
-            images.append({"url": url, "name": filename or None})
+            images.append(
+                {
+                    "url": url,
+                    "name": filename or None,
+                    "media_type": content_type,
+                }
+            )
         return images
 
     def _download_attachments(
@@ -536,9 +547,9 @@ class QQBotChannelAdapter:
         target_type: str,
         openid: str,
         msg_id: str,
-    ) -> list[Path]:
+    ) -> list[DownloadedFile]:
         attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
-        saved: list[Path] = []
+        saved: list[DownloadedFile] = []
         for idx, att in enumerate(attachments):
             url = str(att.get("url") or "")
             if not url:
@@ -547,18 +558,29 @@ class QQBotChannelAdapter:
             dest = attach_dir / self._safe_filename(str(name))
             try:
                 self._download_url(url, dest)
-                saved.append(dest)
+                saved.append(
+                    DownloadedFile(
+                        path=dest,
+                        media_type=str(att.get("media_type") or ""),
+                    )
+                )
+            except AttachmentNormalizationError as exc:
+                self._reply_now(target_type, openid, msg_id, f"Rejected attachment: {exc}")
             except Exception:
                 logger.exception("Failed to download QQ attachment %s", url)
-                self._reply_now(target_type, openid, msg_id, "Failed to download the sent image.")
+                self._reply_now(target_type, openid, msg_id, "Failed to download the attachment.")
         return saved
 
     @staticmethod
     def _download_url(url: str, dest: Path) -> None:
         req = urllib.request.Request(url, headers={"User-Agent": "Fluxion"})
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(req, timeout=30) as resp, dest.open("wb") as out:
-            out.write(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp, dest.open("wb") as out:
+                copy_stream_limited(resp, out)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _safe_filename(name: str) -> str:

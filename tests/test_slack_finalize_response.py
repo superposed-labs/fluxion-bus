@@ -2,7 +2,11 @@
 engine's workspace snapshot), and send_result must not double-finalize."""
 
 import threading
+from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+from PIL import Image
 
 from fluxion.channels.slack.adapter import SlackChannelAdapter, _SlackStreamState
 from fluxion.core.models.result import ExecutionResult
@@ -105,3 +109,49 @@ def test_control_command_posts_mrkdwn_blocks():
             },
         }
     ]
+
+
+def test_slack_download_preserves_reported_media_type(monkeypatch, tmp_path):
+    adapter = _adapter()
+    adapter._settings = SimpleNamespace(
+        inbox_ttl_hours=24,
+        slack_bot_token="xoxb-test",
+    )
+    payload = BytesIO()
+    Image.new("RGB", (8, 8)).save(payload, format="PNG")
+
+    class _Response:
+        def __init__(self):
+            self._stream = BytesIO(payload.getvalue())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size=-1):
+            return self._stream.read(size)
+
+    monkeypatch.setattr(
+        "fluxion.channels.slack.adapter.urllib.request.urlopen",
+        lambda *_args, **_kwargs: _Response(),
+    )
+
+    downloaded = adapter._download_files(  # noqa: SLF001
+        files=[
+            {
+                "id": "F1",
+                "name": "logo.png",
+                "mimetype": "image/png",
+                "url_private_download": "https://files.slack.test/logo",
+            }
+        ],
+        workspace=tmp_path,
+        event={"channel": "D1"},
+        say=MagicMock(),
+    )
+
+    assert len(downloaded) == 1
+    assert downloaded[0].media_type == "image/png"
+    assert downloaded[0].path.read_bytes() == payload.getvalue()

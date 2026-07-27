@@ -17,8 +17,15 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    copy_stream_limited,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import SettingsHotReloader, authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
+from fluxion.channels.inbox import make_inbox_dir
 from fluxion.channels.line.pending_store import PendingUserStore
 from fluxion.config.settings import Settings
 from fluxion.core.models.result import ExecutionResult
@@ -194,7 +201,7 @@ class LineChannelAdapter:
                     continue
                 message = event.get("message") or {}
                 mtype = message.get("type")
-                if mtype not in {"text", "image"}:
+                if mtype not in {"text", "image", "file"}:
                     continue
 
                 source = event.get("source") or {}
@@ -252,20 +259,31 @@ class LineChannelAdapter:
                     continue
 
                 task_text = text or ""
-                if mtype == "image":
+                downloaded: list[DownloadedFile] = []
+                if mtype in {"image", "file"}:
                     # Show loading animation early since downloading takes a moment
                     self._show_loading(user_id, seconds=30)
 
-                    from fluxion.channels.inbox import make_inbox_dir
-
                     attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
-                    saved_path = self._download_image(message_id, attach_dir)
-                    if saved_path:
-                        rel_path = saved_path.relative_to(workspace)
-                        task_text = f"Attached file(s) saved in the workspace:\n- {rel_path}"
-                    else:
-                        self._reply_line(reply_token, "Error: Failed to download the sent image.")
+                    try:
+                        saved_attachment = self._download_attachment(
+                            message_id,
+                            attach_dir,
+                            filename=str(message.get("fileName") or "") if mtype == "file" else "",
+                        )
+                    except AttachmentNormalizationError as exc:
+                        self._reply_line(reply_token, f"Rejected attachment: {exc}")
                         continue
+                    if saved_attachment:
+                        downloaded.append(saved_attachment)
+                    else:
+                        self._reply_line(reply_token, "Error: Failed to download the attachment.")
+                        continue
+                try:
+                    task_attachments, task_images = normalize_downloaded_files(downloaded)
+                except AttachmentNormalizationError as exc:
+                    self._reply_line(reply_token, f"Rejected attachment: {exc}")
+                    continue
 
                 convo_key = f"line:{user_id}:{user_id}"
                 override = self._gateway._sessions.get_executor_override(
@@ -284,6 +302,8 @@ class LineChannelAdapter:
                         "executor": executor_to_use,
                         "conversation_key": convo_key,
                     },
+                    attachments=task_attachments,
+                    image_attachments=task_images,
                 )
 
                 # Store the reply token to be consumed when the task completes
@@ -385,8 +405,14 @@ class LineChannelAdapter:
             logger.exception("Failed to get LINE user profile for language detection")
             return None
 
-    def _download_image(self, message_id: str, dest_dir: Path) -> Path | None:
-        """Download binary content of an image message from LINE and save it to dest_dir."""
+    def _download_attachment(
+        self,
+        message_id: str,
+        dest_dir: Path,
+        *,
+        filename: str = "",
+    ) -> DownloadedFile | None:
+        """Download binary content of a LINE image/file message."""
         if not self._settings.line_channel_access_token:
             logger.error("LINE token not configured for image download")
             return None
@@ -396,6 +422,7 @@ class LineChannelAdapter:
             headers={"Authorization": f"Bearer {self._settings.line_channel_access_token}"},
             method="GET",
         )
+        dest_path: Path | None = None
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -406,15 +433,23 @@ class LineChannelAdapter:
                 elif "gif" in content_type:
                     ext = ".gif"
 
-                filename = f"line_image_{message_id}{ext}"
-                dest_path = dest_dir / filename
+                safe_name = Path(filename).name.strip()
+                if not safe_name:
+                    safe_name = f"line_attachment_{message_id}{ext}"
+                dest_path = dest_dir / safe_name
 
                 with open(dest_path, "wb") as f:
-                    f.write(resp.read())
+                    copy_stream_limited(resp, f)
 
                 logger.info("Successfully downloaded LINE image to %s", dest_path)
-                return dest_path
+                return DownloadedFile(path=dest_path, media_type=content_type)
+        except AttachmentNormalizationError:
+            if dest_path is not None:
+                dest_path.unlink(missing_ok=True)
+            raise
         except Exception:
+            if dest_path is not None:
+                dest_path.unlink(missing_ok=True)
             logger.exception("Failed to download LINE message content: %s", message_id)
             return None
 

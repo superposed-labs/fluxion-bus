@@ -109,6 +109,14 @@ class CodexExecutor:
         """`codex exec -s read-only` is a documented sandbox policy."""
         return True
 
+    def supports_native_images(self) -> bool:
+        """Both fresh and resumed `codex exec` turns accept `--image`."""
+        return True
+
+    def native_image_media_types(self) -> frozenset[str]:
+        """Formats passed to Codex's native ``--image`` interface."""
+        return frozenset({"image/gif", "image/jpeg", "image/png", "image/webp"})
+
     def supports(self, task: Task) -> bool:
         return True
 
@@ -119,7 +127,10 @@ class CodexExecutor:
         stream_output: Callable[[str], None] | None = None,
         stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
-        prompt = self._prompt_builder.build(task)
+        prompt = self._prompt_builder.build(
+            task,
+            native_image_media_types=self.native_image_media_types(),
+        )
         start = time.monotonic()
         command: list[str] | None = None
         live_log_file = self._logs_dir / f"task-{task.id}.codex.log"
@@ -581,6 +592,8 @@ class CodexExecutor:
                 model, effort = self._resolve_cheapest_model_and_effort()
                 command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
             command.extend(guard)
+            for attachment in task.image_attachments:
+                command.extend(["--image", str(attachment.path)])
             # The session id is positional and `codex exec resume` reads it last.
             command.append(session_id)
             return command
@@ -600,6 +613,8 @@ class CodexExecutor:
             model, effort = self._resolve_cheapest_model_and_effort()
             command.extend(["-m", model, "-c", f"model_reasoning_effort={effort}"])
         command.extend(guard)
+        for attachment in task.image_attachments:
+            command.extend(["--image", str(attachment.path)])
         return command
 
     def _recursion_guard(self, *, ignores_user_config: bool) -> list[str]:

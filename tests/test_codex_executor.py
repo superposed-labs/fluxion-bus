@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from fluxion.core.models.attachment import Attachment, ImageAttachment
 from fluxion.core.models.task import Task
 from fluxion.executors.codex.executor import CodexExecutor
 
@@ -216,6 +217,70 @@ def test_build_resume_command_enables_json_events(tmp_path: Path):
 
     assert command[1:4] == ["exec", "resume", "--json"]
     assert command[-1] == "019f0720-22d4-72f3-9b73-f8c8c9bfdf2f"
+
+
+def _image_attachment(path: Path) -> ImageAttachment:
+    return ImageAttachment(
+        path=path,
+        media_type="image/png",
+        sha256="abc",
+        byte_size=123,
+        width=4,
+        height=3,
+    )
+
+
+def test_build_command_passes_images_through_the_native_cli_flag(tmp_path: Path):
+    image = tmp_path / "screenshot.png"
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="inspect",
+        workspace=tmp_path,
+        image_attachments=[_image_attachment(image)],
+    )
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert command[command.index("--image") + 1] == str(image)
+
+
+def test_resume_command_puts_images_before_the_positional_session_id(tmp_path: Path):
+    image = tmp_path / "follow-up.png"
+    session_id = "019f0720-22d4-72f3-9b73-f8c8c9bfdf2f"
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="inspect the follow-up",
+        workspace=tmp_path,
+        metadata={"executor_session_id": session_id},
+        image_attachments=[_image_attachment(image)],
+    )
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert command[command.index("--image") + 1] == str(image)
+    assert command[-1] == session_id
+
+
+def test_generic_attachment_is_left_for_the_agent_file_bridge(tmp_path: Path):
+    attachment = Attachment(
+        path=tmp_path / "sample.heic",
+        media_type="image/heic",
+        sha256="def",
+        byte_size=123,
+    )
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="inspect the attached file",
+        workspace=tmp_path,
+        attachments=[attachment],
+    )
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert "--image" not in command
 
 
 def test_build_command_uses_model_override(tmp_path: Path):

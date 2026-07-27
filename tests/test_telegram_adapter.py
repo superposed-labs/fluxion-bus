@@ -182,3 +182,34 @@ def test_telegram_edit_text_falls_back_to_plain_on_parse_error():
 
     assert adapter._edit_text(chat_id=1, message_id=2, text="*bad*")  # noqa: SLF001
     assert client.plain_texts == ["*bad*"]
+
+
+def test_telegram_photo_and_document_keep_platform_media_types():
+    adapter = _make_adapter()
+
+    attachments = adapter._collect_attachments(  # noqa: SLF001
+        {
+            "photo": [
+                {"file_id": "small"},
+                {"file_id": "largest"},
+            ],
+            "document": {
+                "file_id": "document",
+                "file_name": "camera.heic",
+                "mime_type": "image/heic",
+            },
+        }
+    )
+
+    assert attachments == [
+        {
+            "file_id": "largest",
+            "name": None,
+            "media_type": "image/jpeg",
+        },
+        {
+            "file_id": "document",
+            "name": "camera.heic",
+            "media_type": "image/heic",
+        },
+    ]

@@ -208,6 +208,34 @@ If none of the three yields a real directory the turn is refused. Guessing would
 
 For Codex this means the native sub-agent card renders and streams live, but its trace shows narration rather than file reads and commands. For a Messages client it means more: Claude Code declares about 40 tools per request and expects the model to drive them. None will be driven. This ingress serves callers that want an **answer**, not callers that want a model to run their loop.
 
+**Inline images become workspace attachments.** Anthropic base64 image blocks
+and Responses `input_image` data URLs are bounded and saved under the task
+workspace's `.fluxion_inbox/`. PNG, JPEG, GIF, and WebP are fully validated and
+may use an executor's declared native image interface. On macOS, HEIC and HEIF
+are normalized through ImageIO into validated PNG attachments before routing.
+Other declared `image/*` formats are not rejected merely because the gateway
+cannot decode them: they are saved as generic attachments and handed to the
+agent through a numbered relative-path manifest, leaving inspection or
+conversion to the executor. Files are content-addressed and isolated by a
+hashed conversation key, so repeated turns reuse identical bytes without
+exposing the session identifier.
+
+Remote image URLs are passed to the agent as user input but are never fetched
+by the gateway. This keeps network access under the executor's own sandbox and
+permission policy instead of turning the gateway into an SSRF-capable
+downloader. Up to 8 image inputs, 12 MiB per inline file, and 32 MiB decoded
+inline data are accepted per turn. Fully validated raster images additionally
+enforce 40 megapixels per image and 80 megapixels total.
+When Codex also serializes the attachment's original absolute path into an
+`<image path="…">` task envelope, the gateway rewrites every occurrence to a
+path-free attachment marker. Native-image executors receive no attachment path
+in their prompt. File-bridge executors receive the workspace path once in an
+internal manifest, and the streaming response bridge deterministically redacts
+the absolute path, relative path, and content-addressed file name if the
+executor echoes any of them. A headless agent therefore cannot accidentally
+choose an out-of-workspace source that requires interactive permission, and
+transport details do not leak into the user-facing answer.
+
 **Concurrent writers are possible.** Fluxion serializes the local agents it launches against each other, but `spawn_agent` does not block: the main Codex agent keeps running its own tools in the same tree while a sub-agent works, in a separate process with no lock to join. The role files carry advisory text about this, which is the whole of the available mitigation.
 
 **Read-only roles are enforced by the gateway, not by Codex.** `sandbox_mode` in a role file configures Codex's sub-thread, which runs no tools here and therefore constrains nothing. The gateway enforces the declaration itself and refuses to route a read-only role to an executor that cannot run read-only, rather than quietly downgrading — a role advertised as read-only that can still edit the tree is worse than no declaration at all.
@@ -228,10 +256,19 @@ For Codex this means the native sub-agent card renders and streams live, but its
 | `FLUXION_PROVIDER_DEFAULT_POLICY` | `balanced` | Policy used when a role maps to nothing |
 | `FLUXION_PROVIDER_STICKY_TTL_HOURS` | `2160` (90 days) | How long a conversation stays resumable; `0` disables expiry |
 | `FLUXION_PROVIDER_MAX_CONCURRENCY` | `12` | Concurrent in-flight requests |
-| `FLUXION_PROVIDER_MAX_REQUEST_BYTES` | `33554432` | Request body size limit |
+| `FLUXION_PROVIDER_MAX_REQUEST_BYTES` | `50331648` | Request body size limit; leaves room for base64 overhead above the 32 MiB decoded-image limit |
+| `FLUXION_PROVIDER_IMAGE_TTL_HOURS` | `2160` (90 days) | Conversation image retention; defaults to the sticky-route lifetime |
+| `FLUXION_INBOX_TTL_HOURS` | — | Legacy alias for `FLUXION_PROVIDER_IMAGE_TTL_HOURS` |
 | `FLUXION_PROVIDER_LOG_BODIES` | `false` | Dump every request body to `data/logs/provider-requests/` |
 
 > `FLUXION_PROVIDER_LOG_BODIES` is a debugging aid for questions like "did the sub-agent actually receive its task?". Captured bodies contain the full task text and any source code in the conversation. Leave it off unless you are actively debugging, and delete the directory afterwards.
+
+The request-byte ceiling is enforced while reading the ASGI body, including
+requests without a trustworthy `Content-Length`. Oversized requests receive
+`413 request_too_large`. The concurrency slot remains occupied until the final
+SSE byte is sent; a request arriving after all slots are occupied receives
+`429 concurrency_limit_exceeded` with `Retry-After: 1`. Both settings must be
+positive integers.
 
 ---
 

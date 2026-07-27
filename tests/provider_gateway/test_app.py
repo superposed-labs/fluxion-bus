@@ -7,13 +7,18 @@ produces; this file covers everything wrapped around it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 from fluxion.core.models.result import ExecutionResult
-from fluxion.provider_gateway.app import GatewayContext, create_app
+from fluxion.provider_gateway.app import (
+    GatewayContext,
+    _ProviderLimitsMiddleware,
+    create_app,
+)
 from fluxion.provider_gateway.auth import TokenAuthenticator
 from fluxion.provider_gateway.capabilities import (
     COMPACT,
@@ -119,6 +124,93 @@ def events_of(response) -> list[str]:
 @pytest.fixture
 def client(tmp_path):
     return client_for(build_context(tmp_path))
+
+
+# ── resource limits ──────────────────────────────────────────────────
+def test_request_body_limit_rejects_before_json_parsing(tmp_path):
+    context = build_context(tmp_path)
+    context.max_request_bytes = 16
+    response = TestClient(create_app(context)).post(
+        "/v1/responses",
+        content=b'{"input":"' + (b"x" * 32) + b'"}',
+        headers={"authorization": f"Bearer {TOKEN}"},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["type"] == "request_too_large"
+
+
+def test_request_body_limit_counts_stream_without_content_length():
+    async def scenario():
+        async def body_reader(scope, receive, send):  # noqa: ANN001
+            await receive()
+
+        middleware = _ProviderLimitsMiddleware(
+            body_reader,
+            max_request_bytes=4,
+            max_concurrency=1,
+        )
+        scope = {"type": "http", "path": "/v1/messages", "headers": []}
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"12345", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+        return sent
+
+    messages = asyncio.run(scenario())
+    assert messages[0]["status"] == 413
+    assert json.loads(messages[1]["body"])["error"]["type"] == "request_too_large"
+
+
+def test_concurrency_limit_is_held_until_stream_finishes():
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_app(scope, receive, send):  # noqa: ANN001
+            started.set()
+            await release.wait()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = _ProviderLimitsMiddleware(
+            slow_app,
+            max_request_bytes=1024,
+            max_concurrency=1,
+        )
+        scope = {
+            "type": "http",
+            "path": "/v1/responses",
+            "headers": [],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        first_messages = []
+        second_messages = []
+
+        async def send_first(message):
+            first_messages.append(message)
+
+        async def send_second(message):
+            second_messages.append(message)
+
+        first = asyncio.create_task(middleware(scope, receive, send_first))
+        await started.wait()
+        await middleware(scope, receive, send_second)
+        release.set()
+        await first
+        return first_messages, second_messages
+
+    first, second = asyncio.run(scenario())
+    assert first[0]["status"] == 200
+    assert second[0]["status"] == 429
+    assert json.loads(second[1]["body"])["error"]["type"] == "concurrency_limit_exceeded"
 
 
 # ── auth ─────────────────────────────────────────────────────────────

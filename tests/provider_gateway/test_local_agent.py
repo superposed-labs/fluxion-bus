@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from fluxion.core.models.attachment import ImageAttachment
 from fluxion.core.models.result import ExecutionResult
 from fluxion.executors.prompt_builder import RAW_PROMPT_MODE, AgentPromptBuilder
 from fluxion.provider_gateway.capabilities import TOOL_CALLING, ModelCapabilities
@@ -85,12 +86,13 @@ def build(executor=None, **kwargs):
 
 def run_stream(upstream, body=None, **kwargs):
     async def main():
+        workspace = kwargs.pop("workspace", Path("/tmp/ws"))
         return [
             event
             async for event in upstream.stream(
                 body or {"input": [{"role": "user", "content": "do the thing"}]},
                 "opus",
-                workspace=Path("/tmp/ws"),
+                workspace=workspace,
                 **kwargs,
             )
         ]
@@ -352,6 +354,51 @@ def test_output_streams_as_it_arrives():
     events = run_stream(build(FakeExecutor(chunks=("a", "b", "c"))))
     narration_id = next(e for e in events if e["type"] == EV_OUTPUT_ITEM_ADDED)["item"]["id"]
     assert _deltas_for(events, narration_id) == ["a", "b", "c"]
+
+
+def test_attachment_references_are_redacted_from_stream_and_summary(tmp_path):
+    image = tmp_path / ".fluxion_inbox" / "abc" / "image_deadbeefdeadbeef.png"
+    relative = str(image.relative_to(tmp_path))
+
+    class LeakyExecutor(FakeExecutor):
+        def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+            self.seen_task = task
+            leak = f"Observed `{relative}`."
+            if stream_output:
+                # Split inside the sensitive path to exercise the streaming
+                # holdback, not just complete-string replacement.
+                midpoint = leak.index("deadbeef")
+                stream_output(leak[:midpoint])
+                stream_output(leak[midpoint:])
+            return ExecutionResult(
+                success=True,
+                summary=f"Result from {image.name}",
+                stdout="",
+                stderr="",
+                exit_code=0,
+                executor_session_id="sess-image",
+            )
+
+    attachment = ImageAttachment(
+        path=image,
+        media_type="image/png",
+        sha256="deadbeef" * 8,
+        byte_size=100,
+        width=10,
+        height=10,
+    )
+    events = run_stream(
+        build(LeakyExecutor()),
+        body={"input": [{"role": "user", "content": "inspect"}]},
+        workspace=tmp_path,
+        image_attachments=[attachment],
+    )
+
+    rendered = json.dumps(events)
+    assert relative not in rendered
+    assert image.name not in rendered
+    assert "Observed `attached image`." in rendered
+    assert "Result from attached image" in rendered
 
 
 def test_answer_item_carries_the_executor_summary():
@@ -915,6 +962,24 @@ def test_reasoning_item_commits_its_text():
         e for e in events if e["type"] == EV_OUTPUT_ITEM_DONE and e["item"]["type"] == "reasoning"
     )
     assert done["item"]["summary"] == [{"type": "summary_text", "text": "Read(README.md)"}]
+
+
+def test_output_item_ids_match_their_responses_types():
+    """Persisted items are replayed after close/resume, when Codex validates
+    the protocol-specific id prefix instead of merely rendering the stream."""
+    events = run_stream(build(ThinkingExecutor()))
+    items = [
+        event["item"]
+        for event in events
+        if event["type"] in (EV_OUTPUT_ITEM_ADDED, EV_OUTPUT_ITEM_DONE)
+    ]
+
+    assert all(
+        item["id"].startswith("rs_")
+        if item["type"] == "reasoning"
+        else item["id"].startswith("msg_")
+        for item in items
+    )
 
 
 def test_only_one_item_is_open_at_a_time():

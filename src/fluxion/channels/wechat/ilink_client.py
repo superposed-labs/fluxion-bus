@@ -17,6 +17,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from fluxion.channels.attachments import (
+    MAX_ATTACHMENT_BYTES,
+    AttachmentNormalizationError,
+    read_stream_limited,
+)
 from fluxion.channels.wechat.models import (
     Credentials,
     GetUpdatesResp,
@@ -385,10 +390,14 @@ class ILinkClient:
 
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=120) as resp:
-            ciphertext = resp.read()
+            ciphertext = read_stream_limited(resp, max_bytes=MAX_ATTACHMENT_BYTES + 32)
 
         key_bytes = decode_aes_key(aes_key, key_is_hex)
         decrypted = decrypt_aes_ecb(ciphertext, key_bytes)
+        if len(decrypted) > MAX_ATTACHMENT_BYTES:
+            raise AttachmentNormalizationError(
+                f"attachment exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB"
+            )
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         dest_path.write_bytes(decrypted)
