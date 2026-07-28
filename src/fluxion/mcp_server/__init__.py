@@ -2,7 +2,7 @@
 
 Split into submodules — threads (thread/session resolution), payloads (run
 acceptance + error payloads), logs (executor-log tail cleanup), views (task
-status/result views), server (FastMCP wiring). The public surface and the
+status/result views), server (MCPServer wiring). The public surface and the
 internals referenced by tests are re-exported so ``from fluxion.mcp_server
 import ...`` and ``fluxion.mcp_server.<name>`` keep working.
 """

@@ -135,7 +135,7 @@ def run_subagent_tool(
 
 def create_server():
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server import MCPServer
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "The MCP Python SDK is not installed. Install Fluxion with its project "
@@ -144,7 +144,7 @@ def create_server():
 
     settings = Settings.load()
     runner = SubagentRunner(settings)
-    mcp = FastMCP("Fluxion")
+    mcp = MCPServer("Fluxion")
 
     @mcp.tool()
     def run_subagent(
