@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from fluxion.availability import (
     Availability,
     available_executors,
@@ -14,22 +16,28 @@ from fluxion.availability import (
 
 
 def test_detect_executor_uses_path() -> None:
-    with patch("fluxion.availability.shutil.which", return_value="/opt/bin/codex"):
+    with patch("fluxion.codex_command.shutil.which", return_value="/opt/bin/codex"):
         result = detect_executor("codex")
     assert result.status == "available"
     assert result.path == "/opt/bin/codex"
 
 
-def test_detect_executor_finds_codex_app_bundled_cli() -> None:
-    bundled = "/Applications/Codex.app/Contents/Resources/codex"
+@pytest.mark.parametrize(
+    "bundled",
+    [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/Codex.app/Contents/Resources/codex",
+    ],
+)
+def test_detect_executor_finds_app_bundled_cli(bundled: str) -> None:
 
     def fake_access(path: object, _mode: int) -> bool:
         return str(path) == bundled
 
     with (
-        patch("fluxion.availability.shutil.which", return_value=None),
-        patch("fluxion.availability.Path.is_file", return_value=True),
-        patch("fluxion.availability.os.access", side_effect=fake_access),
+        patch("fluxion.codex_command.shutil.which", return_value=None),
+        patch("fluxion.codex_command.Path.is_file", return_value=True),
+        patch("fluxion.codex_command.os.access", side_effect=fake_access),
     ):
         result = detect_executor("codex")
 

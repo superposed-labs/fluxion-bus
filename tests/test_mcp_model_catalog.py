@@ -60,7 +60,7 @@ def _prices():
 
 def test_codex_models_use_live_catalog_enriched_with_prices(monkeypatch):
     monkeypatch.setattr(model_catalog.price_data, "load_price_json", lambda name: _prices())
-    monkeypatch.setattr(model_catalog.shutil, "which", lambda name: "/bin/codex")
+    monkeypatch.setattr(model_catalog, "resolve_codex_command", lambda: "/bin/codex")
 
     def fake_run(*args, **kwargs):  # noqa: ARG001
         return types.SimpleNamespace(
@@ -160,6 +160,48 @@ def test_antigravity_models_empty_when_live_catalog_unavailable(monkeypatch):
     assert view["source"] == "live_catalog_unavailable+local_prices"
     assert view["sort"] == "price_high_to_low"
     assert view["warnings"] == ["`agy models` timed out after 30s; models[] is empty."]
+
+
+def test_antigravity_slug_catalog_uses_exact_version_price(monkeypatch):
+    prices = _prices()
+    prices["models"]["gemini-3.5-flash"] = {
+        "provider": "antigravity",
+        "rates": [
+            {
+                "effective_date": "2026-05-19",
+                "in": 1.5,
+                "out": 9.0,
+                "cw": 1.5,
+                "cr": 0.15,
+            }
+        ],
+    }
+    prices["families"]["flash"] = [
+        {
+            "effective_date": "2026-07-21",
+            "in": 1.5,
+            "out": 7.5,
+            "cw": 1.5,
+            "cr": 0.15,
+        }
+    ]
+    monkeypatch.setattr(model_catalog.price_data, "load_price_json", lambda name: prices)
+    monkeypatch.setattr(
+        antigravity_models,
+        "load_antigravity_model_catalog",
+        lambda command="": (
+            ["gemini-3.6-flash-low", "gemini-3.5-flash-low"],
+            "",
+        ),
+    )
+
+    view = model_catalog.list_agent_models_view(
+        agent="antigravity", project="", settings=_Settings()
+    )
+    by_id = {item["id"]: item for item in view["models"]}
+
+    assert by_id["gemini-3.5-flash-low"]["output_per_1m"] == 9.0
+    assert by_id["gemini-3.6-flash-low"]["output_per_1m"] == 7.5
 
 
 def test_auto_agent_uses_project_default(monkeypatch):

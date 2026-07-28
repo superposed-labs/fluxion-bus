@@ -431,10 +431,11 @@ function SummaryTab({ task }: { task: Task }): JSX.Element {
 }
 
 function KvRow({ k, v }: { k: string; v: string }): JSX.Element {
+  const stacked = k === "conversation_key";
   return (
-    <div className="kvbox">
+    <div className={`kvbox ${stacked ? "kvbox-stacked" : ""}`}>
       <span className="k">{k}</span>
-      <span style={{ flex: 1, textAlign: "right" }}>
+      <span className="kvbox-value">
         <span className="v">{v}</span>
       </span>
     </div>

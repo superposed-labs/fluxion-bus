@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
+from fluxion.codex_command import resolve_codex_command
 from fluxion.config.settings import Settings
 from fluxion.executors.antigravity import models as antigravity_models
 from fluxion.subagent import AUTO_AGENT_VALUES, resolve_agent
 from fluxion.usage import price_data
+from fluxion.usage.model_rates import resolve_standard_rate
 
 _CLAUDE_EXECUTOR_ALIASES = ("fable", "opus", "sonnet", "haiku")
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -218,19 +218,7 @@ def _load_codex_debug_models() -> list[dict[str, Any]]:
 
 
 def _resolve_codex_command() -> str:
-    resolved = shutil.which("codex")
-    if resolved:
-        return resolved
-    for candidate in (
-        "~/.local/bin/codex",
-        "~/bin/codex",
-        "/usr/local/bin/codex",
-        "/opt/homebrew/bin/codex",
-    ):
-        path = Path(candidate).expanduser()
-        if path.exists() and path.is_file():
-            return str(path)
-    return "codex"
+    return resolve_codex_command() or "codex"
 
 
 def _price_derived_models(
@@ -317,37 +305,7 @@ def _model_entry(
 
 
 def _rate_for_model(*, model_id: str, provider: str, prices: dict[str, Any]) -> dict[str, Any]:
-    models = prices.get("models") or {}
-    exact = models.get(model_id) or models.get(model_id.lower())
-    if isinstance(exact, dict):
-        rate = _pick_latest_rate(exact.get("rates"))
-        if rate:
-            return rate
-    lower = model_id.lower()
-    for family, rate_list in (prices.get("families") or {}).items():
-        if _family_match(str(family), lower):
-            rate = _pick_latest_rate(rate_list)
-            if rate:
-                return rate
-    return _pick_latest_rate((prices.get("providers") or {}).get(provider))
-
-
-def _pick_latest_rate(value: Any) -> dict[str, Any]:
-    if not isinstance(value, list) or not value:
-        return {}
-    entries = [item for item in value if isinstance(item, dict)]
-    if not entries:
-        return {}
-    return sorted(entries, key=lambda item: str(item.get("effective_date", "")))[-1]
-
-
-def _family_match(family: str, model_low: str) -> bool:
-    idx = model_low.find(family)
-    while idx != -1:
-        if idx == 0 or not model_low[idx - 1].isalpha():
-            return True
-        idx = model_low.find(family, idx + 1)
-    return False
+    return resolve_standard_rate(prices, provider=provider, model=model_id) or {}
 
 
 def _reasoning_efforts(item: dict[str, Any]) -> list[str]:

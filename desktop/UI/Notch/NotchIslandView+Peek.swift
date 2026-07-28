@@ -286,23 +286,22 @@ extension NotchIslandView {
         }
     }
 
-    @ViewBuilder
-    func peekSeg(for p: ProviderUsage) -> some View {
+    func peekSeg(for p: ProviderUsage) -> AnyView {
         let visual = providerVisual(for: p.provider)
         let state = quotaState(for: p)
 
         if state.mode == .loading {
             // Not fetched yet — a quiet ellipsis, not a fake 100% or an error.
-            HStack(spacing: 6) {
+            return AnyView(HStack(spacing: 6) {
                 peekGauge(mode: .loading, remaining: 0, brandColor: visual.brandColor)
                 Text("…")
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
                     .fixedSize(horizontal: true, vertical: false)
-            }
+            })
         } else if state.mode == .credits, let creds = state.credits {
             // On reserve credits — show the balance, no countdown.
-            HStack(spacing: 6) {
+            return AnyView(HStack(spacing: 6) {
                 peekGauge(mode: .credits, remaining: 0, brandColor: visual.brandColor)
                 HStack(spacing: 2) {
                     Circle()
@@ -315,7 +314,7 @@ extension NotchIslandView {
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
-            }
+            })
         } else if state.mode == .locked {
             // Locked — the reset countdown IS the headline (the design mock's
             // "28m / Exhausted" treatment); a dead "0%" says nothing the user
@@ -334,25 +333,25 @@ extension NotchIslandView {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if model.peekReset == "both" {
-                VStack(alignment: .leading, spacing: 3) {
+                return AnyView(VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         peekGauge(mode: .locked, remaining: 0, brandColor: visual.brandColor)
                         headline
                     }
                     exhaustedCaption(lockLabel)
-                }
+                })
             } else {
-                HStack(spacing: 6) {
+                return AnyView(HStack(spacing: 6) {
                     peekGauge(mode: .locked, remaining: 0, brandColor: visual.brandColor)
                     headline
                     compactTag(lockLabel, color: Color(NSColor.systemRed).opacity(0.85))
-                }
+                })
             }
         } else if state.mode == .recovering {
-            HStack(spacing: 6) {
+            return AnyView(HStack(spacing: 6) {
                 peekGauge(mode: .recovering, remaining: 0, brandColor: visual.brandColor)
                 peekConfirming()
-            }
+            })
         } else if model.peekReset == "both" {
             // Both timers: header row over two labeled countdowns, stacked so
             // the tray grows DOWN, not sideways. Numbers-inside placement puts
@@ -361,7 +360,7 @@ extension NotchIslandView {
             let tw = getWeeklyResetTimer(for: p)
             let isThreeProviderPeek = model.providers.count == 3
             let fiveUncapped = isCodexFiveHourTemporarilyUncapped(p)
-            VStack(alignment: .leading, spacing: 3) {
+            return AnyView(VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     peekGauge(
                         mode: .healthy,
@@ -414,7 +413,7 @@ extension NotchIslandView {
                     peekTimer(t5, label: "5H")
                 }
                 if !tw.isEmpty && tw != "now" { peekTimer(tw, label: "WK") }
-            }
+            })
         } else {
             // Single window — the one the user chose (5-hour or weekly).
             // If that window is absent, fall back to the real window that is
@@ -425,7 +424,7 @@ extension NotchIslandView {
                 : (state.fiveHour ?? state.weekly)
             let remaining = preferred?.remaining ?? state.bindingRemaining
             let timer = timerString(for: preferred)
-            HStack(spacing: 6) {
+            return AnyView(HStack(spacing: 6) {
                 peekGauge(
                     mode: .healthy,
                     remaining: remaining,
@@ -441,7 +440,7 @@ extension NotchIslandView {
                 if !timer.isEmpty && timer != "now" {
                     peekTimer(timer)
                 }
-            }
+            })
         }
     }
 

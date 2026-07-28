@@ -6,6 +6,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fluxion.usage.history import pricing
+from fluxion.usage.model_identity import identify_model
+from fluxion.usage.model_rates import short_request_price_rank
+
 _AGY_MODEL_TIMEOUT_SEC = 30.0
 _AGY_MODEL_CATALOG_TTL_SEC = 3600.0
 _AGY_MODEL_CATALOG_FAILURE_TTL_SEC = 30.0
@@ -121,13 +125,13 @@ def _pool_name(pool_key: str) -> str:
 
 
 def _model_pool(model_name: str) -> str:
-    name = model_name.strip().lower()
-    if name.startswith("gemini "):
-        return "gemini"
-    return "external"
+    return identify_model("antigravity", model_name).quota_pool
 
 
-def _ping_model_rank(model_name: str, pool: str) -> tuple[int, int, int, str]:
+def _ping_model_rank(
+    model_name: str,
+    pool: str,
+) -> tuple[tuple[int, float, float, float, float], int, int, int, tuple[int, ...], str]:
     name = model_name.lower()
     if pool == "gemini":
         family_rank = _first_match_rank(
@@ -149,26 +153,35 @@ def _ping_model_rank(model_name: str, pool: str) -> tuple[int, int, int, str]:
             ),
             default=4,
         )
-    return (family_rank, _effort_rank(name), _thinking_rank(name), name)
+    return (
+        _price_rank(model_name),
+        family_rank,
+        _effort_rank(name),
+        _thinking_rank(name),
+        _newest_version_rank(name),
+        name,
+    )
+
+
+def _price_rank(model_name: str) -> tuple[int, float, float, float, float]:
+    """Rank a live model by its current short-request token rates.
+
+    Auto-ping prompts have a non-trivial fixed input and a tiny output, so input
+    price is the primary cost signal and output price breaks an input-price tie.
+    Cache rates follow as deterministic secondary price keys. Missing or
+    malformed price data ranks after every model with a usable rate, where the
+    existing family/effort heuristics remain the fallback.
+    """
+    return short_request_price_rank(pricing.current_rates_for("antigravity", model_name))
+
+
+def _newest_version_rank(name: str) -> tuple[int, ...]:
+    return tuple(-part for part in identify_model("antigravity", name).version)
 
 
 def _effort_rank(name: str) -> int:
-    return _first_match_rank(
-        name,
-        (
-            ("(low)", 0),
-            (" low", 0),
-            ("(medium)", 1),
-            (" medium", 1),
-            ("(high)", 2),
-            (" high", 2),
-            ("(xhigh)", 3),
-            (" xhigh", 3),
-            ("(max)", 4),
-            (" max", 4),
-        ),
-        default=5,
-    )
+    effort = identify_model("antigravity", name).effort
+    return {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}.get(effort, 5)
 
 
 def _thinking_rank(name: str) -> int:

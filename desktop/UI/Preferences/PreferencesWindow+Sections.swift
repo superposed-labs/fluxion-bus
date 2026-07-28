@@ -171,11 +171,6 @@ extension PreferencesWindow {
             titlebarSep.heightAnchor.constraint(equalToConstant: 0.5)
         ])
         
-        let brandDiamond = BrandDiamondView()
-        brandDiamond.translatesAutoresizingMaskIntoConstraints = false
-        brandDiamond.widthAnchor.constraint(equalToConstant: 13).isActive = true
-        brandDiamond.heightAnchor.constraint(equalToConstant: 13).isActive = true
-
         let winTitleLabel = NSTextField(labelWithString: L10n.tr("preferences.title"))
         winTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         winTitleLabel.textColor = Palette.primaryText
@@ -184,17 +179,11 @@ extension PreferencesWindow {
         winTitleLabel.isBordered = false
         winTitleLabel.drawsBackground = false
         winTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleStack = NSStackView(views: [brandDiamond, winTitleLabel])
-        titleStack.orientation = .horizontal
-        titleStack.spacing = 8
-        titleStack.alignment = .centerY
-        titleStack.translatesAutoresizingMaskIntoConstraints = false
-        rightTitlebarView.addSubview(titleStack)
+        rightTitlebarView.addSubview(winTitleLabel)
 
         NSLayoutConstraint.activate([
-            titleStack.centerXAnchor.constraint(equalTo: rightTitlebarView.centerXAnchor),
-            titleStack.centerYAnchor.constraint(equalTo: rightTitlebarView.centerYAnchor)
+            winTitleLabel.centerXAnchor.constraint(equalTo: rightTitlebarView.centerXAnchor),
+            winTitleLabel.centerYAnchor.constraint(equalTo: rightTitlebarView.centerYAnchor)
         ])
         
 

@@ -13,11 +13,14 @@ lives apart from the parsing/aggregation pipeline.
 from __future__ import annotations
 
 import functools
-import re
 from typing import Any
 
-from fluxion.usage import price_data
+from fluxion.usage import model_rates, price_data
 from fluxion.usage.history.entry import UsageEntry
+from fluxion.usage.model_identity import billing_model_id
+
+_family_match = model_rates.family_match
+_pick_rate = model_rates.pick_rate
 
 # Estimated API rates, USD per 1M tokens. The table is shared with the
 # standalone repo github.com/superposed-labs/llm-price-table. Each entry is a
@@ -88,28 +91,6 @@ _FALLBACK_PRICES: dict[str, Any] = {
     },
 }
 
-_GEMINI_DISPLAY_MODEL_RE = re.compile(
-    r"^gemini\s+(?P<version>\d+(?:\.\d+)*)\s+"
-    r"(?P<tier>flash(?:[-\s]lite)?|pro)(?:\s*\([^()]+\))?$",
-    re.IGNORECASE,
-)
-
-
-def _canonical_model_id(model: str) -> str:
-    """Return the billing model id for a provider display label.
-
-    Antigravity records labels such as ``Gemini 3.5 Flash (High)``. The
-    parenthesized value controls thinking depth and token consumption, not the
-    per-token rate, so collapse those labels to Google's official model id
-    before exact price lookup. Other providers' model ids are only lowercased.
-    """
-    low = model.strip().lower()
-    match = _GEMINI_DISPLAY_MODEL_RE.fullmatch(low)
-    if match is None:
-        return low
-    tier = re.sub(r"\s+", "-", match.group("tier"))
-    return f"gemini-{match.group('version')}-{tier}"
-
 
 @functools.lru_cache(maxsize=2)
 def _load_prices_for_stamp(stamp: tuple) -> dict[str, Any]:
@@ -126,32 +107,6 @@ def _load_prices() -> dict[str, Any]:
     changes on disk (the stamp is the cache key), so refreshes and upgrades
     land in a running service without a restart."""
     return _load_prices_for_stamp(price_data.price_file_stamp("model_prices.json"))
-
-
-def _pick_rate(rate_list: Any, at_date: str | None) -> dict[str, float] | None:
-    """Choose a rate from a dated list. `at_date=None` → the current (latest)
-    rate; otherwise the latest rate whose effective_date is on or before it."""
-    if not isinstance(rate_list, list) or not rate_list:
-        return None
-    ordered = sorted(rate_list, key=lambda r: str(r.get("effective_date", "")))
-    if at_date is None:
-        return ordered[-1]
-    eligible = [r for r in ordered if str(r.get("effective_date", "")) <= at_date]
-    return eligible[-1] if eligible else ordered[0]
-
-
-def _family_match(family: str, model_low: str) -> bool:
-    """True if `family` appears in the model id at a word boundary — i.e. at the
-    start or right after a non-letter (`-`, `.`, digit). This stops "mini" from
-    matching inside "gemini"; "flash" still matches "gemini-3-flash"."""
-    start = 0
-    while True:
-        i = model_low.find(family, start)
-        if i == -1:
-            return False
-        if i == 0 or not model_low[i - 1].isalpha():
-            return True
-        start = i + 1
 
 
 def _resolve_fast(
@@ -180,22 +135,17 @@ def _rates_for_stamp(
     stamp: tuple, provider: str, model: str, at_date: str | None, fast: bool
 ) -> dict[str, float] | None:
     prices = _load_prices()
-    low = _canonical_model_id(model)
+    low = billing_model_id(provider, model)
     if fast:
         fast_rate = _resolve_fast(prices, model, low, at_date)
         if fast_rate is not None:
             return fast_rate
-    exact = prices["models"].get(model) or prices["models"].get(low)
-    if isinstance(exact, dict):
-        rate = _pick_rate(exact.get("rates"), at_date)
-        if rate is not None:
-            return rate
-    for family, rate_list in prices["families"].items():
-        if _family_match(family, low):
-            rate = _pick_rate(rate_list, at_date)
-            if rate is not None:
-                return rate
-    return _pick_rate(prices["providers"].get(provider), at_date)
+    return model_rates.resolve_standard_rate(
+        prices,
+        provider=provider,
+        model=model,
+        at_date=at_date,
+    )
 
 
 def _rates_for(
@@ -214,6 +164,11 @@ def _rates_for(
 # the public name so callers (tests, price_data._invalidate_loaders) don't
 # depend on the two-layer split.
 _rates_for.cache_clear = _rates_for_stamp.cache_clear  # type: ignore[attr-defined]
+
+
+def current_rates_for(provider: str, model: str) -> dict[str, float] | None:
+    """Resolve the current standard rate for a live model name."""
+    return _rates_for(provider, model)
 
 
 def _rate_for_entry(e: UsageEntry, rate: dict[str, float] | None) -> dict[str, float] | None:
