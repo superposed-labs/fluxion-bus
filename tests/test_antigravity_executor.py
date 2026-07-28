@@ -3,6 +3,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+from fluxion.core.models.task import Task
+from fluxion.executors.antigravity.executor import AntiGravityExecutor
 from tests.test_antigravity_trajectory_stream import (
     RUN_WC,
     VIEW_A,
@@ -10,9 +12,6 @@ from tests.test_antigravity_trajectory_stream import (
     append_steps,
     write_db,
 )
-
-from fluxion.core.models.task import Task
-from fluxion.executors.antigravity.executor import AntiGravityExecutor
 
 
 class _FakePipe:
