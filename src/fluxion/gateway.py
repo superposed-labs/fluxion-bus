@@ -113,6 +113,7 @@ def main() -> None:
         change_set_max_total_bytes=settings.change_set_max_total_bytes,
         typing_heartbeat_sec=settings.slack_typing_heartbeat_sec,
         running_update_sec=settings.slack_running_update_sec,
+        workspace_lock_timeout_sec=settings.workspace_lock_timeout_sec,
         settings=settings,
     )
     gateway.start()

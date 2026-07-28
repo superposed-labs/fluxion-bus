@@ -21,13 +21,23 @@ from fluxion.executors.codex.events import (
     parse_codex_json_events,
 )
 from fluxion.executors.codex.prompt_builder import CodexPromptBuilder
+from fluxion.executors.common.actions import (
+    extract_actions_json,
+    find_last_marker,
+    resolve_uploads_from_text,
+    upload_paths,
+)
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
+from fluxion.executors.common.process import (
+    drain_reader_threads,
+    start_process,
+    terminate_process_tree,
+)
 from fluxion.executors.prompt_builder import is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history import pricing
 from fluxion.usage.model_identity import identify_model
 from fluxion.usage.model_rates import short_request_price_rank
-from fluxion.workspace.artifact_collector import select_uploadable_paths
 
 _CODEX_EFFORT_RANKS = {
     "none": 0,
@@ -150,7 +160,10 @@ class CodexExecutor:
             touch_live_log(live_log_file)
             command = self._build_command(task)
             env = self._build_env(task.workspace)
-            proc = subprocess.Popen(
+            # Own process group: the CLI spawns MCP servers and tool
+            # subprocesses that would otherwise survive termination and keep our
+            # stdout/stderr pipes open forever.
+            proc = start_process(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -254,8 +267,7 @@ class CodexExecutor:
             # returning. If execute() returns early, Gateway may finalize the Slack
             # stream first and any late stdout deltas will show up as a second
             # follow-up message or make "reply complete" appear too early.
-            stdout_thread.join()
-            stderr_thread.join()
+            drain_reader_threads((stdout_thread, stderr_thread), proc=proc)
             if comm_error:
                 raise comm_error[0]
             out_stdout = "".join(out_holder["stdout"])
@@ -394,14 +406,7 @@ class CodexExecutor:
         )
 
     def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        if proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
-            if proc.poll() is None:
-                proc.kill()
+        terminate_process_tree(proc)
 
     def _build_env(self, workspace: Path) -> dict[str, str]:
         env = os.environ.copy()
@@ -480,73 +485,20 @@ class CodexExecutor:
         return block.lstrip("\n")
 
     def _resolve_action_uploads(self, *, stdout: str, workspace: Path) -> list[str]:
-        paths = self._extract_action_upload_paths(stdout)
-        if not paths:
-            return []
-        return select_uploadable_paths(
+        return resolve_uploads_from_text(
+            text=stdout,
             workspace=workspace,
-            raw_paths=paths,
             max_files=self._max_structured_uploads,
         )
 
     def _extract_action_upload_paths(self, stdout: str) -> list[str]:
-        payload = self._extract_actions_json(stdout)
-        if not isinstance(payload, dict):
-            return []
-        raw = payload.get("upload_files")
-        if not isinstance(raw, list):
-            return []
-        paths: list[str] = []
-        seen: set[str] = set()
-        for item in raw:
-            value = ""
-            if isinstance(item, str):
-                value = item.strip()
-            elif isinstance(item, dict):
-                value = str(item.get("path", "")).strip()
-            if not value:
-                continue
-            key = value.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(value)
-        return paths
+        return upload_paths(extract_actions_json(stdout))
 
     def _extract_actions_json(self, stdout: str) -> dict | None:
-        text = stdout or ""
-        marker_match = self._find_last_marker(text, "ACTIONS_JSON")
-        if marker_match is None:
-            return None
-        tail = text[marker_match.end() :].strip()
-        if not tail:
-            return None
-
-        if tail.startswith("```"):
-            lines = tail.splitlines()
-            if lines:
-                lines = lines[1:]
-            content: list[str] = []
-            for line in lines:
-                if line.strip().startswith("```"):
-                    break
-                content.append(line)
-            tail = "\n".join(content).strip()
-            if not tail:
-                return None
-
-        decoder = json.JSONDecoder()
-        try:
-            obj, _ = decoder.raw_decode(tail)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            return None
-        return None
+        return extract_actions_json(stdout)
 
     def _find_last_marker(self, text: str, marker: str) -> re.Match[str] | None:
-        matches = list(re.finditer(rf"(?m)^\s*{re.escape(marker)}:?\s*$", text or ""))
-        return matches[-1] if matches else None
+        return find_last_marker(text, marker)
 
     def _clip(self, text: str, limit: int) -> str:
         if len(text) <= limit:

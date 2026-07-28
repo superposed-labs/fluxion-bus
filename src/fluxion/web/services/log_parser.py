@@ -14,16 +14,23 @@ def _is_jsonl(content: str) -> bool:
     return False
 
 
-def _parse_jsonl(content: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _parse_jsonl(
+    content: str, *, fold_extra_streams: bool = True
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     """Parse the structured format written by executors/common/log_writer.py.
 
     First non-empty line is the header (no `stream` field, ignored here).
-    Subsequent lines each carry `stream` / `lvl` / `body`. Unknown streams
-    (e.g. antigravity's `agy`) are folded into stdout so the UI surfaces them
-    without needing a per-stream tab.
+    Subsequent lines each carry `stream` / `lvl` / `body`.
+
+    Streams other than stdout/stderr (antigravity's `agy` runtime log) are
+    folded into stdout by default, so the UI surfaces them without needing a
+    per-stream tab. Callers that must keep them apart — an MCP client, where a
+    few hundred lines of runtime plumbing would bury the agent's own output —
+    pass ``fold_extra_streams=False`` and read the third return value.
     """
     stdout: list[dict[str, Any]] = []
     stderr: list[dict[str, Any]] = []
+    extra: dict[str, list[dict[str, Any]]] = {}
     stdout_idx = 0
     stderr_idx = 0
     for raw in content.splitlines():
@@ -43,10 +50,13 @@ def _parse_jsonl(content: str) -> tuple[list[dict[str, Any]], list[dict[str, Any
         if stream == "stderr":
             stderr.append({"t": stderr_idx * 100, "lvl": lvl, "body": body})
             stderr_idx += 1
-        else:
+        elif stream == "stdout" or fold_extra_streams:
             stdout.append({"t": stdout_idx * 100, "lvl": lvl, "body": body})
             stdout_idx += 1
-    return stdout, stderr
+        else:
+            rows = extra.setdefault(str(stream), [])
+            rows.append({"t": len(rows) * 100, "lvl": lvl, "body": body})
+    return stdout, stderr, extra
 
 
 # ── Legacy [stdout]/[stderr] format readers ────────────────────────
@@ -111,13 +121,30 @@ def load_task_logs(
     fallback_stdout: Any = "",
     fallback_stderr: Any = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """stdout/stderr for the UI, with any executor runtime log folded into stdout."""
+    stdout, stderr, _extra = load_task_streams(
+        log_path,
+        fallback_stdout=fallback_stdout,
+        fallback_stderr=fallback_stderr,
+    )
+    return stdout, stderr
+
+
+def load_task_streams(
+    log_path: Path,
+    *,
+    fallback_stdout: Any = "",
+    fallback_stderr: Any = "",
+    fold_extra_streams: bool = True,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Same as ``load_task_logs`` but can keep executor runtime logs separate."""
     if log_path.exists():
         try:
             content = log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             content = ""
         if content and _is_jsonl(content):
-            return _parse_jsonl(content)
+            return _parse_jsonl(content, fold_extra_streams=fold_extra_streams)
 
     stdout_lines, stderr_lines = _parse_legacy(log_path)
     if not stdout_lines and not stderr_lines:
@@ -132,4 +159,4 @@ def load_task_logs(
         {"t": i * 100, "lvl": _classify_stderr(line), "body": line}
         for i, line in enumerate(stderr_lines)
     ]
-    return formatted_stdout, formatted_stderr
+    return formatted_stdout, formatted_stderr, {}

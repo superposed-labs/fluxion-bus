@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from fluxion.config.settings import Settings
+from fluxion.mcp_server.diagnostics import force_cancel_view, reconcile_view, status_view
+from fluxion.mcp_server.logs import _output_view
 from fluxion.mcp_server.model_catalog import list_agent_models_view
 from fluxion.mcp_server.payloads import _error_payload, _timed_out_still_running_payload
 from fluxion.mcp_server.threads import _resolve_thread
@@ -17,7 +19,6 @@ from fluxion.mcp_server.views import (
 )
 from fluxion.subagent import SubagentRunner, SubagentRunRequest, visible_changed_files
 from fluxion.web.services.aggregator import reset_cache, wait_for_terminal
-from fluxion.web.services.log_parser import load_task_logs
 from fluxion.workspace.change_set import revert_change_set
 
 
@@ -212,11 +213,16 @@ def create_server():
 
         Results: both are finalized only at terminal status (changed_files_available
         stays false until then). changed_files is the authoritative, run-scoped list of
-        what THIS run touched — act on it. diff_summary's additions/deletions are a rough
-        magnitude from `git diff --stat` over the WHOLE working tree vs HEAD, not scoped
-        to this run: pre-existing edits and consecutive uncommitted runs accumulate into
-        it, so don't attribute its line counts to this run. To confirm exact changes,
-        read the changed_files or run `git diff` yourself.
+        what THIS run touched — act on it. diff_summary.files mirrors that count, but its
+        additions/deletions are NOT measured per run and are always 0, flagged by
+        lines_counted=false — a whole-tree `git diff --stat` would fold in pre-existing
+        edits and earlier runs, so no line total is reported rather than a misleading
+        one. For exact line counts, run `git diff` over the changed_files yourself.
+
+        artifacts is not an inventory of files the run produced: it lists only files the
+        agent explicitly declared for delivery via ACTIONS_JSON.upload_files, which it is
+        prompted to do only when asked to send files. Screenshots and other by-products
+        of the work appear in changed_files, not here.
         """
         return run_subagent_tool(
             runner=runner,
@@ -355,8 +361,50 @@ def create_server():
             "status": status or ("CANCEL_REQUESTED" if canceled else "UNKNOWN"),
             "summary": reason,
             "found": task is not None,
-            "terminal": status in {"RETURNED", "FAILED", "CANCELED"},
+            "terminal": status in _TERMINAL_STATUSES,
         }
+
+    @mcp.tool()
+    def force_cancel_subagent_run(run_id: str) -> dict[str, Any]:
+        """Cancel a run that plain cancel_subagent_run cannot reach.
+
+        Use after cancel_subagent_run reports the run is unknown to this process,
+        or a run has been non-terminal far longer than it should be.
+
+        Runs are owned by the Fluxion process that started them. If this process
+        owns it, the request is delivered to the executor and terminates its whole
+        process group. If another LIVE process owns it, this reports that owner
+        and changes nothing — closing the record here would leave that agent
+        running. If the owner is gone, the run is closed out as INTERRUPTED.
+        """
+        return force_cancel_view(run_id=run_id, settings=settings, runner=runner)
+
+    @mcp.tool()
+    def reconcile_tasks() -> dict[str, Any]:
+        """Close out runs whose owning Fluxion process no longer exists.
+
+        A process that dies mid-run leaves its tasks recorded as RUNNING forever;
+        this marks those INTERRUPTED so status polls stop reporting work that is
+        not happening. Runs owned by a live process are never touched. This also
+        happens automatically when a Fluxion process starts.
+        """
+        return reconcile_view(settings=settings)
+
+    @mcp.tool()
+    def get_fluxion_status() -> dict[str, Any]:
+        """Which Fluxion is serving this session, and what it is doing.
+
+        Returns the installation actually in use (code root, .env path, data dir,
+        version, git commit), the settings THIS process loaded at startup, its
+        queue/worker state, other live Fluxion processes, and current workspace
+        locks with their holders.
+
+        Use it when a config change appears to have had no effect: config is read
+        once at startup, and a dev checkout and an installed copy can each have
+        their own .env. config_file_changed_since_start=true means the file was
+        edited after this process read it — restart to apply.
+        """
+        return status_view(settings=settings, runner=runner)
 
     @mcp.tool()
     def revert_subagent_run(run_id: str) -> dict[str, Any]:
@@ -385,7 +433,14 @@ def create_server():
         include_output: bool = False,
         raw: bool = False,
     ) -> dict[str, Any]:
-        """Get a model-friendly result view, optionally including raw output."""
+        """Get a model-friendly result view, optionally including raw output.
+
+        With include_output=true, `stdout`/`stderr` are the agent's own output.
+        An executor runtime log (Antigravity's `agy` log) is returned separately
+        as `executor_log`, with its transport-level glog chatter filtered out —
+        folding it into stdout buried the agent's answer under hundreds of lines
+        of plumbing. Pass raw=true for the unfiltered persisted record.
+        """
         task = _find_task(run_id)
         if task is None:
             return {"found": False, "run_id": run_id}
@@ -394,13 +449,13 @@ def create_server():
         result.pop("_fallback_stderr", None)
         if include_output:
             log_path = settings.data_dir / "logs" / f"task-{task['task_id']}.log"
-            stdout, stderr = load_task_logs(
-                log_path,
-                fallback_stdout=str(task.get("_fallback_stdout", "")),
-                fallback_stderr=str(task.get("_fallback_stderr", "")),
+            result.update(
+                _output_view(
+                    log_path,
+                    fallback_stdout=str(task.get("_fallback_stdout", "")),
+                    fallback_stderr=str(task.get("_fallback_stderr", "")),
+                )
             )
-            result["stdout"] = stdout
-            result["stderr"] = stderr
         else:
             result.pop("stdout", None)
             result.pop("stderr", None)

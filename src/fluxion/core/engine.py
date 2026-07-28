@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import queue
-import tempfile
 import threading
 import time
 import traceback
@@ -25,6 +25,13 @@ from fluxion.core.models.attachment import (
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
 from fluxion.core.router import TaskRouter
+from fluxion.core.runtime_registry import (
+    INTERRUPTED_STATUS,
+    RuntimeRegistry,
+    current_owner,
+    prune_dead_instances,
+    reconcile_orphaned_tasks,
+)
 from fluxion.core.session_manager import SessionManager
 from fluxion.core.storage import JsonlStorage
 from fluxion.utils.logger import get_logger
@@ -37,6 +44,7 @@ from fluxion.workspace.change_set import (
     take_content_snapshot,
 )
 from fluxion.workspace.git_tools import get_git_diff_summary
+from fluxion.workspace.lock_state import LOCK_DIR
 from fluxion.workspace.snapshot import FileFingerprint, diff_snapshot, take_snapshot
 
 logger = get_logger(__name__)
@@ -48,9 +56,50 @@ logger = get_logger(__name__)
 # reaper's completion event always fires first under normal operation.
 _PENDING_FINALIZE_TIMEOUT_SEC = 180
 
+# How often a task blocked on a busy workspace re-publishes why it is waiting.
+_BLOCKED_NOTICE_INTERVAL_SEC = 30
+# Polling cadence while waiting for the cross-process workspace lock. The wait
+# is bounded and cancellable, which a blocking flock() would not be.
+_LOCK_POLL_INTERVAL_SEC = 0.5
+
 
 def _control_response(kind: str, text: str, data: dict[str, Any] | None = None) -> ControlResponse:
     return ControlResponse(kind=kind, text=text, data=data)
+
+
+class _WorkspaceBusy(RuntimeError):
+    """A workspace-write run could not take the workspace within its budget."""
+
+
+def _write_lock_holder(handle: Any, *, task: Task) -> None:
+    """Stamp the lock file with who holds it, for waiters and for diagnosis."""
+    payload = {
+        "task_id": task.id,
+        "workspace": str(task.workspace),
+        "acquired_at": datetime.now(UTC).isoformat(),
+        **current_owner().to_payload(),
+    }
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.flush()
+    except OSError:
+        logger.debug("could not stamp workspace lock holder", exc_info=True)
+
+
+def _read_lock_holder(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 @dataclass
@@ -72,6 +121,12 @@ class _TaskRecord:
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     summary: str = ""
+    # Why a task that has left the queue still hasn't started — almost always
+    # another run holding its workspace. Without this a caller polling a queued
+    # task can only see that nothing is happening, not what to do about it.
+    blocked_reason: str = ""
+    blocked_by_workspace: str = ""
+    blocked_by: dict[str, Any] | None = None
 
 
 class GatewayCore:
@@ -92,6 +147,8 @@ class GatewayCore:
         change_set_max_total_bytes: int = 20_000_000,
         typing_heartbeat_sec: int = 6,
         running_update_sec: int = 30,
+        workspace_lock_timeout_sec: int = 1800,
+        reconcile_on_start: bool = True,
         settings: Any | None = None,
     ) -> None:
         self._router = router
@@ -109,6 +166,9 @@ class GatewayCore:
         self._change_set_max_total_bytes = max(0, change_set_max_total_bytes)
         self._typing_heartbeat_sec = max(0, typing_heartbeat_sec)
         self._running_update_sec = max(0, running_update_sec)
+        self._workspace_lock_timeout_sec = max(1, workspace_lock_timeout_sec)
+        self._reconcile_on_start = reconcile_on_start
+        self._registry = RuntimeRegistry(storage.data_dir, role="engine")
         self._queue: queue.Queue[_TaskEnvelope] = queue.Queue()
         self._workers: list[threading.Thread] = []
         self._metrics_lock = threading.Lock()
@@ -124,6 +184,21 @@ class GatewayCore:
     def start(self) -> None:
         if self._workers:
             return
+        self._registry.start()
+        if self._reconcile_on_start:
+            # Any task still marked non-terminal by a process that no longer
+            # exists is closed out now, before this process starts adding its
+            # own. Without it those rows stay RUNNING for good and mislead every
+            # later status poll.
+            try:
+                reconcile_orphaned_tasks(storage=self._storage, data_dir=self._storage.data_dir)
+                # Heartbeat files outlive processes that were killed rather than
+                # shut down — an MCP client that starts a server just to read its
+                # tool list leaves one behind every launch. Sweep them here so the
+                # directory stays self-limiting.
+                prune_dead_instances(self._storage.data_dir)
+            except Exception:
+                logger.exception("startup task reconciliation failed")
         for idx in range(self._worker_count):
             worker = threading.Thread(
                 target=self._worker_loop,
@@ -132,6 +207,15 @@ class GatewayCore:
             )
             worker.start()
             self._workers.append(worker)
+
+    def stop(self) -> None:
+        """Stop publishing this process's heartbeat.
+
+        Workers are daemon threads that die with the process; this only retracts
+        the ownership claim, so a clean shutdown leaves no heartbeat file that a
+        later reconciliation would have to age out.
+        """
+        self._registry.stop()
 
     def submit_task(
         self,
@@ -156,7 +240,11 @@ class GatewayCore:
             user_id=task.user_id,
             executor_name=executor_name,
         )
-        if model_override:
+        # The conversation-level override is a default for turns that didn't
+        # pick a model, not an override of one that did: a caller passing an
+        # explicit model (MCP `run_subagent(model=...)`) must get that model, or
+        # its run silently lands in a different quota pool than it asked for.
+        if model_override and not str(task.metadata.get("model") or "").strip():
             task.metadata["model"] = model_override
 
         with self._records_lock:
@@ -202,7 +290,7 @@ class GatewayCore:
             record = self._records.get(task_id)
             if record is None:
                 return False, "task not found"
-            if record.status in {"RETURNED", "FAILED", "CANCELED"}:
+            if record.status in {"RETURNED", "FAILED", "CANCELED", INTERRUPTED_STATUS}:
                 return False, f"task already finished with status={record.status}"
             if record.status in {"RUNNING", "RETRYING"}:
                 record.cancel_requested = True
@@ -658,6 +746,10 @@ class GatewayCore:
             details.append(f"out=${output_rate:g}/1M")
         return f" ({', '.join(details)})" if details else ""
 
+    def registry_snapshot(self) -> dict[str, Any]:
+        """This process's ownership identity, for the operator status view."""
+        return self._registry.snapshot()
+
     def get_runtime_status(self) -> dict[str, int]:
         with self._metrics_lock:
             uptime_sec = int((datetime.now(UTC) - self._started_at).total_seconds())
@@ -685,6 +777,9 @@ class GatewayCore:
                 "finished_at": record.finished_at.isoformat() if record.finished_at else None,
                 "summary": record.summary,
                 "workspace": str(record.task.workspace),
+                "blocked_reason": record.blocked_reason,
+                "blocked_by_workspace": record.blocked_by_workspace,
+                "blocked_by_task_id": str((record.blocked_by or {}).get("task_id") or ""),
             }
 
     def list_recent_tasks(self, *, limit: int = 8) -> list[dict[str, Any]]:
@@ -731,6 +826,30 @@ class GatewayCore:
         channel_adapter: ChannelAdapter,
         channel_context: dict[str, Any],
     ) -> None:
+        # Take the workspace locks BEFORE announcing RUNNING. Waiting for
+        # another run to release the workspace is queueing, not running, and
+        # reporting it as RUNNING made a blocked task indistinguishable from a
+        # working one — including to the caller deciding whether to cancel.
+        try:
+            workspace_lock, workspace_file_lock = self._acquire_workspace_locks(
+                task=task,
+                channel_adapter=channel_adapter,
+                channel_context=channel_context,
+            )
+        except _WorkspaceBusy as busy:
+            self._finalize_lock_timeout(
+                task=task,
+                channel_adapter=channel_adapter,
+                channel_context=channel_context,
+                reason=str(busy),
+            )
+            return
+        if self._is_canceled(task.id):
+            # Canceled while it sat behind the workspace lock.
+            self._release_workspace_locks(workspace_lock, workspace_file_lock)
+            self._finalize_canceled(task_id=task.id)
+            return
+
         self._sessions.set_active_task(
             conversation_key=self._conversation_key(task),
             channel=task.channel,
@@ -739,7 +858,8 @@ class GatewayCore:
         )
         with self._metrics_lock:
             self._running_tasks += 1
-        self._update_record(task.id, status="RUNNING")
+        self._registry.track(task.id)
+        self._update_record(task.id, status="RUNNING", blocked_reason="")
         channel_adapter.send_status(
             task.id,
             "RUNNING",
@@ -747,10 +867,6 @@ class GatewayCore:
             detail="started",
         )
         self._set_status(task, "RUNNING")
-        workspace_lock = self._workspace_write_lock(task)
-        if workspace_lock is not None:
-            workspace_lock.acquire()
-        workspace_file_lock = self._workspace_file_lock(task)
         before_snapshot = self._take_snapshot(task.workspace)
         before_content_snapshot = self._take_content_snapshot(task)
         heartbeat_stop = threading.Event()
@@ -911,6 +1027,16 @@ class GatewayCore:
                     executor_name=executor_name,
                     session_id=result.executor_session_id,
                 )
+                # Remember which model created this conversation, so a later
+                # resume can tell the caller it may not get the model it asked
+                # for (and therefore not the quota pool it expected).
+                self._sessions.set_session_model(
+                    conversation_key=self._conversation_key(task),
+                    channel=task.channel,
+                    user_id=task.user_id,
+                    session_id=result.executor_session_id,
+                    model=str(task.metadata.get("model") or ""),
+                )
             _stop_heartbeat()
             channel_adapter.send_result(task.id, result, channel_context)
         except Exception as exc:
@@ -958,13 +1084,8 @@ class GatewayCore:
                 user_id=task.user_id,
                 task_id=None,
             )
-            if workspace_file_lock is not None:
-                try:
-                    fcntl.flock(workspace_file_lock.fileno(), fcntl.LOCK_UN)
-                finally:
-                    workspace_file_lock.close()
-            if workspace_lock is not None:
-                workspace_lock.release()
+            self._registry.untrack(task.id)
+            self._release_workspace_locks(workspace_lock, workspace_file_lock)
 
     def _should_retry(self, *, result: ExecutionResult, attempt: int) -> bool:
         if attempt > self._max_retries:
@@ -1005,6 +1126,10 @@ class GatewayCore:
         with self._records_lock:
             record = self._records.get(task_id)
             if record is None:
+                return
+            if record.status == "CANCELED" and record.finished_at is not None:
+                # cancel_task already finalized this one (it was still queued
+                # when the request landed); don't emit a second result.
                 return
             record.status = "CANCELED"
             record.summary = "Task canceled by request."
@@ -1184,48 +1309,209 @@ class GatewayCore:
             else None
         )
 
-    def _workspace_write_lock(self, task: Task) -> threading.Lock | None:
+    def _acquire_workspace_locks(
+        self,
+        *,
+        task: Task,
+        channel_adapter: ChannelAdapter,
+        channel_context: dict[str, Any],
+    ) -> tuple[threading.Lock | None, Any]:
+        """Serialize writes to one workspace, in-process and across processes.
+
+        Both waits are bounded and observable. The previous implementation used
+        a blocking ``Lock.acquire()`` and a blocking ``flock()``, so a holder
+        that never finished parked this worker forever with no way to see why.
+
+        Raises ``_WorkspaceBusy`` if the workspace stays held past the timeout.
+        """
+        if not self._needs_workspace_write_lock(task):
+            return None, None
+        workspace = str(task.workspace.resolve())
+        deadline = time.monotonic() + self._workspace_lock_timeout_sec
+        thread_lock = self._workspace_write_lock_for(workspace)
+        acquired = False
+        while not acquired:
+            acquired = thread_lock.acquire(timeout=_LOCK_POLL_INTERVAL_SEC)
+            if acquired:
+                break
+            if self._cancel_requested(task.id):
+                raise _WorkspaceBusy(f"canceled while waiting for workspace {workspace}")
+            if time.monotonic() >= deadline:
+                raise _WorkspaceBusy(
+                    f"workspace {workspace} still held by another run in this process "
+                    f"after {self._workspace_lock_timeout_sec}s"
+                )
+            self._note_blocked(
+                task=task,
+                channel_adapter=channel_adapter,
+                channel_context=channel_context,
+                workspace=workspace,
+                holder=None,
+            )
+        try:
+            file_lock = self._acquire_workspace_file_lock(
+                task=task,
+                channel_adapter=channel_adapter,
+                channel_context=channel_context,
+                workspace=workspace,
+                deadline=deadline,
+            )
+        except BaseException:
+            thread_lock.release()
+            raise
+        return thread_lock, file_lock
+
+    def _needs_workspace_write_lock(self, task: Task) -> bool:
         subagent = task.metadata.get("subagent")
         if not isinstance(subagent, dict):
-            return None
-        if str(subagent.get("mode") or "") != "workspace-write":
-            return None
-        key = str(task.workspace.resolve())
+            return False
+        return str(subagent.get("mode") or "") == "workspace-write"
+
+    def _workspace_write_lock_for(self, workspace: str) -> threading.Lock:
         with self._workspace_locks_guard:
-            lock = self._workspace_write_locks.get(key)
+            lock = self._workspace_write_locks.get(workspace)
             if lock is None:
                 lock = threading.Lock()
-                self._workspace_write_locks[key] = lock
+                self._workspace_write_locks[workspace] = lock
             return lock
 
-    def _workspace_file_lock(self, task: Task):
+    def _acquire_workspace_file_lock(
+        self,
+        *,
+        task: Task,
+        channel_adapter: ChannelAdapter,
+        channel_context: dict[str, Any],
+        workspace: str,
+        deadline: float,
+    ):
         """Cross-process advisory lock for workspace-write runs.
 
-        ``_workspace_write_lock`` only serializes within one process. Different
-        caller conversations spawn their own fluxion-mcp process, so two of them
-        writing the same workspace concurrently would not be serialized by that
-        in-memory lock. This flock-based lock (keyed by the resolved workspace
-        path) closes that gap across processes; the OS releases it automatically
-        if a holder crashes. Returns the open lock handle, or None when not
+        The in-memory lock only serializes within one process, and each caller
+        conversation gets its own fluxion-mcp process. This flock (keyed by the
+        resolved workspace path) closes that gap; the OS releases it if a holder
+        crashes. The holder's identity is written into the file so a blocked run
+        can say who it is waiting for. Returns the open handle, or None when not
         applicable (read-only run, or no fcntl on this platform).
         """
         if fcntl is None:
             return None
-        subagent = task.metadata.get("subagent")
-        if not isinstance(subagent, dict):
-            return None
-        if str(subagent.get("mode") or "") != "workspace-write":
-            return None
-        digest = hashlib.sha1(str(task.workspace.resolve()).encode("utf-8")).hexdigest()
-        lock_dir = Path(tempfile.gettempdir()) / "fluxion-locks"
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        handle = open(lock_dir / f"{digest}.lock", "w")
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        except OSError:
-            handle.close()
-            raise
+        digest = hashlib.sha1(workspace.encode("utf-8")).hexdigest()
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        lock_path = LOCK_DIR / f"{digest}.lock"
+        # r+ so a waiter can read the holder's identity; the file is never
+        # truncated on open, which would erase it for everyone.
+        handle = open(lock_path, "a+", encoding="utf-8")
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                pass
+            except OSError:
+                handle.close()
+                raise
+            if self._cancel_requested(task.id):
+                handle.close()
+                raise _WorkspaceBusy(f"canceled while waiting for workspace {workspace}")
+            if time.monotonic() >= deadline:
+                holder = _read_lock_holder(lock_path)
+                handle.close()
+                raise _WorkspaceBusy(
+                    f"workspace {workspace} still locked by another Fluxion process "
+                    f"after {self._workspace_lock_timeout_sec}s (holder: {holder or 'unknown'})"
+                )
+            self._note_blocked(
+                task=task,
+                channel_adapter=channel_adapter,
+                channel_context=channel_context,
+                workspace=workspace,
+                holder=_read_lock_holder(lock_path),
+            )
+            time.sleep(_LOCK_POLL_INTERVAL_SEC)
+        _write_lock_holder(handle, task=task)
         return handle
+
+    def _release_workspace_locks(self, thread_lock: threading.Lock | None, file_lock: Any) -> None:
+        if file_lock is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(file_lock.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                logger.debug("workspace file lock release failed", exc_info=True)
+            finally:
+                try:
+                    file_lock.close()
+                except Exception:
+                    logger.debug("workspace file lock close failed", exc_info=True)
+        if thread_lock is not None:
+            try:
+                thread_lock.release()
+            except RuntimeError:
+                logger.debug("workspace lock was already released", exc_info=True)
+
+    def _note_blocked(
+        self,
+        *,
+        task: Task,
+        channel_adapter: ChannelAdapter,
+        channel_context: dict[str, Any],
+        workspace: str,
+        holder: dict[str, Any] | None,
+    ) -> None:
+        """Record why a task that left the queue still hasn't started."""
+        reason = "workspace_busy"
+        with self._records_lock:
+            record = self._records.get(task.id)
+            if record is None:
+                return
+            already_noted = record.blocked_reason == reason
+            record.blocked_reason = reason
+            record.blocked_by_workspace = workspace
+            record.blocked_by = holder
+            record.last_updated_at = datetime.now(UTC)
+            since_notice = (record.last_updated_at - record.submitted_at).total_seconds()
+        if already_noted and since_notice % _BLOCKED_NOTICE_INTERVAL_SEC > _LOCK_POLL_INTERVAL_SEC:
+            return
+        detail = f"waiting for workspace {workspace}"
+        if holder:
+            detail += f" held by task {str(holder.get('task_id') or '')[:8]}"
+        self._set_status(
+            task,
+            "QUEUED",
+            extra={"blocked": {"reason": reason, "workspace": workspace, "holder": holder}},
+        )
+        try:
+            channel_adapter.send_status(task.id, "QUEUED", channel_context, detail=detail)
+        except Exception:
+            logger.debug("blocked status notice failed for task %s", task.id, exc_info=True)
+
+    def _finalize_lock_timeout(
+        self,
+        *,
+        task: Task,
+        channel_adapter: ChannelAdapter,
+        channel_context: dict[str, Any],
+        reason: str,
+    ) -> None:
+        if self._cancel_requested(task.id):
+            self._finalize_canceled(task_id=task.id)
+            return
+        result = ExecutionResult(
+            success=False,
+            summary=f"Task did not start: {reason}.",
+            stdout="",
+            stderr="",
+            exit_code=1,
+        )
+        self._update_record(
+            task.id,
+            status="FAILED",
+            summary=result.summary,
+            finished_at=datetime.now(UTC),
+        )
+        self._set_status(task, "FAILED", extra={"result": asdict(result)})
+        channel_adapter.send_status(task.id, "FAILED", channel_context, detail="workspace busy")
+        channel_adapter.send_result(task.id, result, channel_context)
 
     def _update_record(
         self,
@@ -1235,11 +1521,17 @@ class GatewayCore:
         attempts: int | None = None,
         summary: str | None = None,
         finished_at: datetime | None = None,
+        blocked_reason: str | None = None,
     ) -> None:
         with self._records_lock:
             record = self._records.get(task_id)
             if record is None:
                 return
+            if blocked_reason is not None:
+                record.blocked_reason = blocked_reason
+                if not blocked_reason:
+                    record.blocked_by_workspace = ""
+                    record.blocked_by = None
             if status is not None:
                 record.status = status
             if attempts is not None:
@@ -1256,6 +1548,9 @@ class GatewayCore:
             "task_id": task.id,
             "status": status,
             "task": asdict(task),
+            # Who to ask about this task — and, once that process is gone, the
+            # evidence that lets startup reconciliation close it out.
+            "owner": current_owner().to_payload(),
         }
         if extra:
             payload.update(extra)

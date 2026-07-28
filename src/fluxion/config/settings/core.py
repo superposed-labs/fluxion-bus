@@ -53,6 +53,7 @@ class Settings:
     enabled_executors: list[str]
     task_timeout_sec: int
     worker_count: int
+    workspace_lock_timeout_sec: int
     max_pending_per_user: int
     max_retries: int
     retry_backoff_sec: int
@@ -217,9 +218,27 @@ class Settings:
                 os.environ.get("FLUXION_ENABLED_EXECUTORS", "claude,codex,antigravity")
             ),
             task_timeout_sec=_parse_int(os.environ.get("FLUXION_TASK_TIMEOUT_SEC"), default=1800),
-            worker_count=max(1, _parse_int(os.environ.get("FLUXION_WORKER_COUNT"), default=1)),
+            # Runs execute concurrently across workers. Writes to the *same*
+            # workspace stay serialized regardless — that is the workspace lock's
+            # job, not the worker count's — so this only decides how much
+            # unrelated work can proceed at once. Each worker can drive a full
+            # agent CLI, so raise it against available CPU and provider quota.
+            worker_count=max(1, _parse_int(os.environ.get("FLUXION_WORKER_COUNT"), default=3)),
+            # How long a workspace-write run waits for another run to release the
+            # same workspace before giving up. Defaults to the task budget: a
+            # holder can never legitimately outlive its own timeout.
+            workspace_lock_timeout_sec=max(
+                1,
+                _parse_int(
+                    os.environ.get("FLUXION_WORKSPACE_LOCK_TIMEOUT_SEC"),
+                    default=_parse_int(os.environ.get("FLUXION_TASK_TIMEOUT_SEC"), default=1800),
+                ),
+            ),
+            # Kept above worker_count on purpose: at parity there is no queue at
+            # all, so the first submission past a full set of busy workers is
+            # rejected rather than waiting a moment for one to free up.
             max_pending_per_user=max(
-                1, _parse_int(os.environ.get("FLUXION_MAX_PENDING_PER_USER"), default=3)
+                1, _parse_int(os.environ.get("FLUXION_MAX_PENDING_PER_USER"), default=5)
             ),
             max_retries=max(0, _parse_int(os.environ.get("FLUXION_MAX_RETRIES"), default=1)),
             retry_backoff_sec=max(

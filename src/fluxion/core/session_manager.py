@@ -102,6 +102,38 @@ class SessionManager:
         state.trajectory_idx[key] = int(idx)
         self._persist_state(state)
 
+    def get_session_model(
+        self,
+        *,
+        conversation_key: str,
+        channel: str,
+        user_id: str,
+        session_id: str,
+    ) -> str:
+        """The model an executor session was created with, if recorded."""
+        state = self.touch(conversation_key=conversation_key, channel=channel, user_id=user_id)
+        key = (session_id or "").strip()
+        return state.session_models.get(key, "") if key else ""
+
+    def set_session_model(
+        self,
+        *,
+        conversation_key: str,
+        channel: str,
+        user_id: str,
+        session_id: str,
+        model: str,
+    ) -> None:
+        state = self.touch(conversation_key=conversation_key, channel=channel, user_id=user_id)
+        key = (session_id or "").strip()
+        value = (model or "").strip()
+        if not key or not value:
+            return
+        # First writer wins: the model a conversation was created with is the
+        # one an agent may keep honouring on resume.
+        state.session_models.setdefault(key, value)
+        self._persist_state(state)
+
     def get_executor_override(
         self,
         *,
@@ -169,6 +201,7 @@ class SessionManager:
         state.active_task_id = None
         state.executor_sessions.clear()
         state.trajectory_idx.clear()
+        state.session_models.clear()
         state.executor_override = None
         state.model_overrides.clear()
         state.last_seen_at = datetime.now(UTC)
@@ -186,6 +219,7 @@ class SessionManager:
             "active_task_id": state.active_task_id,
             "executor_sessions": dict(sorted(state.executor_sessions.items())),
             "trajectory_idx": dict(sorted(state.trajectory_idx.items())),
+            "session_models": dict(sorted(state.session_models.items())),
             "executor_override": state.executor_override,
             "model_overrides": dict(sorted(state.model_overrides.items())),
         }
@@ -224,6 +258,13 @@ class SessionManager:
                         continue
                     if sid:
                         state.trajectory_idx[sid] = idx_val
+            raw_session_models = payload.get("session_models")
+            if isinstance(raw_session_models, dict):
+                for name, value in raw_session_models.items():
+                    sid = str(name).strip()
+                    model = str(value).strip()
+                    if sid and model:
+                        state.session_models[sid] = model
             raw_models = payload.get("model_overrides")
             if isinstance(raw_models, dict):
                 for name, value in raw_models.items():

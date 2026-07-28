@@ -17,7 +17,13 @@ from fluxion.executors.antigravity.trajectory_stream import (
     TrajectoryNarrator,
     read_max_step_idx,
 )
+from fluxion.executors.common.actions import resolve_uploads_from_text
 from fluxion.executors.common.log_writer import write_jsonl_log
+from fluxion.executors.common.process import (
+    drain_reader_threads,
+    start_process,
+    terminate_process_tree,
+)
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
@@ -39,12 +45,14 @@ class AntiGravityExecutor:
         dangerously_skip_permissions: bool,
         print_timeout_sec: int,
         logs_dir: Path,
+        max_structured_uploads: int = 5,
     ) -> None:
         self._timeout_sec = timeout_sec
         self._command = command.strip()
         self._sandbox = sandbox
         self._dangerously_skip_permissions = dangerously_skip_permissions
         self._print_timeout_sec = max(1, print_timeout_sec)
+        self._max_structured_uploads = max(1, max_structured_uploads)
         self._logs_dir = Path(logs_dir).resolve()
         self._logs_dir.mkdir(parents=True, exist_ok=True)
         self._prompt_builder = AgentPromptBuilder()
@@ -104,7 +112,10 @@ class AntiGravityExecutor:
                 log_file=agy_log_file,
             )
             env = self._build_env(task.workspace)
-            proc = subprocess.Popen(
+            # Own process group: `agy` spawns language servers and build /
+            # simulator tooling that would otherwise survive termination and
+            # keep our stdout/stderr pipes open forever.
+            proc = start_process(
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -231,8 +242,7 @@ class AntiGravityExecutor:
                 time.sleep(0.1)
 
             if cancelled or timed_out:
-                stdout_thread.join()
-                stderr_thread.join()
+                drain_reader_threads((stdout_thread, stderr_thread), proc=proc)
                 if read_error:
                     raise read_error[0]
                 stdout = "".join(out_holder["stdout"])
@@ -298,6 +308,7 @@ class AntiGravityExecutor:
                     executor_session_id=self._extract_session_id(agy_log_file, stderr),
                     duration_sec=duration,
                     pending_finalization=True,
+                    artifacts=self._resolve_action_uploads(stdout=stdout, workspace=task.workspace),
                 )
                 self._reap_in_background(
                     proc=proc,
@@ -312,8 +323,7 @@ class AntiGravityExecutor:
 
             # Process exited on its own before a complete answer (e.g. no
             # ACTIONS_JSON block, or an early failure).
-            stdout_thread.join()
-            stderr_thread.join()
+            drain_reader_threads((stdout_thread, stderr_thread), proc=proc)
             if read_error:
                 raise read_error[0]
             stdout = "".join(out_holder["stdout"])
@@ -342,6 +352,7 @@ class AntiGravityExecutor:
                 ),
                 executor_session_id=self._extract_session_id(agy_log_file, stderr),
                 duration_sec=duration,
+                artifacts=self._resolve_action_uploads(stdout=stdout, workspace=task.workspace),
             )
         except FileNotFoundError:
             duration = time.monotonic() - start
@@ -419,7 +430,7 @@ class AntiGravityExecutor:
         ]
         if self._sandbox:
             command.append("--sandbox")
-        if self._dangerously_skip_permissions:
+        if self._dangerously_skip_permissions or self._write_intent_granted(task):
             command.append("--dangerously-skip-permissions")
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
         if session_id:
@@ -492,15 +503,53 @@ class AntiGravityExecutor:
             extra_streams={"agy": agy_log} if agy_log else None,
         )
 
+    def _write_intent_granted(self, task: Task) -> bool:
+        """Whether this run was already authorized to write, run by run.
+
+        `agy` has one permission control and it is all-or-nothing: without
+        `--dangerously-skip-permissions` it soft-denies `Edit` and `Bash`, which
+        is every way it could change code. So a run that Fluxion has already
+        authorized to write would otherwise stop without answering, and the only
+        escape was a global env flag that auto-approved *every* run in *every*
+        workspace — far broader than the task at hand.
+
+        Deriving it instead grants nothing new. Two explicit decisions must
+        already have been made before a task reaches here:
+
+        * the caller asked for `mode="workspace-write"`, and
+        * the engine authorized that workspace for writes — a registered project
+          or an allow-listed path — refusing the run outright otherwise
+          (`Settings.authorize_run_workspace`).
+
+        Read-only runs are untouched — the flag is withheld — but that is not a
+        guarantee they cannot write. Whether agy then soft-denies `Edit` is its
+        own decision, and once it has trusted a workspace it stops asking:
+        measured here, a read-only run in a previously used workspace edited a
+        file with zero soft-deny entries in agy's log. `enforces_read_only()`
+        returns False for exactly this reason. Withholding the flag is a
+        narrower blast radius, not a sandbox.
+        """
+        subagent = task.metadata.get("subagent")
+        if not isinstance(subagent, dict):
+            # No declared mode (IM/gateway tasks): fall back to the global flag
+            # rather than inferring an intent the caller never expressed.
+            return False
+        return str(subagent.get("mode") or "") == "workspace-write"
+
+    def _resolve_action_uploads(self, *, stdout: str, workspace: Path) -> list[str]:
+        """Files the agent declared via ACTIONS_JSON.upload_files.
+
+        agy emits the same trailing block as the other executors, but nothing
+        ever read it here, so every declared upload was dropped on the floor.
+        """
+        return resolve_uploads_from_text(
+            text=stdout,
+            workspace=workspace,
+            max_files=self._max_structured_uploads,
+        )
+
     def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        if proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
-            if proc.poll() is None:
-                proc.kill()
+        terminate_process_tree(proc)
 
     def _reap_in_background(
         self,
@@ -530,11 +579,13 @@ class AntiGravityExecutor:
                 self._terminate_process(proc)
             except Exception:  # pragma: no cover - defensive
                 pass
-            for thread in threads:
-                try:
-                    thread.join(timeout=5)
-                except Exception:  # pragma: no cover - defensive
-                    pass
+            try:
+                # Bounded, and it kills the process group if a descendant is
+                # still holding the pipes — otherwise these reader threads leak
+                # one pair per run for the lifetime of the process.
+                drain_reader_threads(threads, proc=proc)
+            except Exception:  # pragma: no cover - defensive
+                pass
             try:
                 self._write_log(
                     task_id=task_id,

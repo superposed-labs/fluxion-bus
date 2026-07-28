@@ -39,6 +39,7 @@ const EN: Messages = {
   "status.RETURNED": "Returned",
   "status.FAILED": "Failed",
   "status.CANCELED": "Canceled",
+  "status.INTERRUPTED": "Interrupted",
 
   "common.none": "none",
   "common.unknown": "unknown",
@@ -498,6 +499,7 @@ const ZH: Messages = {
   "status.RETURNED": "已返回",
   "status.FAILED": "失败",
   "status.CANCELED": "已取消",
+  "status.INTERRUPTED": "已中断",
   "common.none": "无",
   "common.unknown": "未知",
   "common.unavailable": "不可用",
@@ -947,6 +949,7 @@ const JA: Messages = {
   "status.RETURNED": "完了",
   "status.FAILED": "失敗",
   "status.CANCELED": "キャンセル",
+  "status.INTERRUPTED": "中断",
   "common.none": "なし",
   "common.unknown": "不明",
   "common.unavailable": "利用不可",

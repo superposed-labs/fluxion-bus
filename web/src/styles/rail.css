@@ -112,6 +112,7 @@
 .tlrow[data-st="VALIDATED"]::before { box-shadow: 0 0 0 2px var(--st-validated); }
 .tlrow[data-st="RECEIVED"]::before  { box-shadow: 0 0 0 2px var(--st-received); }
 .tlrow[data-st="CANCELED"]::before  { box-shadow: 0 0 0 2px var(--st-canceled); }
+.tlrow[data-st="INTERRUPTED"]::before { box-shadow: 0 0 0 2px var(--st-interrupted); }
 .tlrow.sel::before { box-shadow: 0 0 0 2px var(--accent); }
 
 .tlrow-head {

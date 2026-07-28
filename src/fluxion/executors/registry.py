@@ -52,6 +52,7 @@ def build_all_executors(settings: Settings) -> dict[str, Executor]:
             dangerously_skip_permissions=settings.antigravity_dangerously_skip_permissions,
             print_timeout_sec=settings.antigravity_print_timeout_sec,
             logs_dir=logs_dir,
+            max_structured_uploads=settings.artifact_max_files,
         ),
     }
 

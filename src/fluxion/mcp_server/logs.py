@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fluxion.subagent import compact_tail
+from fluxion.web.services.log_parser import load_task_streams
 
 
 def _log_progress(*, task_id: str, data_dir: Path) -> dict[str, Any]:
@@ -69,6 +70,45 @@ _GLOG_NOISE_RE = re.compile(
 
 def _is_glog_noise(line: str) -> bool:
     return bool(_GLOG_NOISE_RE.match(line))
+
+
+# Even filtered, an executor runtime log is context the caller rarely reads in
+# full. Keep the most recent slice — failures surface at the end.
+_EXECUTOR_LOG_MAX_ROWS = 200
+
+
+def _output_view(
+    log_path: Path,
+    *,
+    fallback_stdout: str,
+    fallback_stderr: str,
+) -> dict[str, Any]:
+    """stdout/stderr plus any executor runtime log, kept apart and de-noised.
+
+    Antigravity's `agy` log is pure glog transport chatter — one sampled run was
+    505 of 505 lines — and it used to be folded into stdout, so asking for a
+    run's output returned mostly plumbing.
+    """
+    stdout, stderr, extra = load_task_streams(
+        log_path,
+        fallback_stdout=fallback_stdout,
+        fallback_stderr=fallback_stderr,
+        fold_extra_streams=False,
+    )
+    view: dict[str, Any] = {"stdout": stdout, "stderr": stderr}
+    executor_log: list[dict[str, Any]] = []
+    dropped = 0
+    for rows in extra.values():
+        for row in rows:
+            if _is_glog_noise(str(row.get("body", "")).strip()):
+                dropped += 1
+                continue
+            executor_log.append(row)
+    truncated = len(executor_log) > _EXECUTOR_LOG_MAX_ROWS
+    view["executor_log"] = executor_log[-_EXECUTOR_LOG_MAX_ROWS:]
+    view["executor_log_truncated"] = truncated
+    view["executor_log_noise_filtered"] = dropped
+    return view
 
 
 def _human_log_tail(text: str) -> str:

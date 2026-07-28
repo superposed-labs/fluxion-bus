@@ -1,36 +1,15 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from fluxion.core.runtime_registry import TERMINAL_STATUSES
+
 # Sub-agent run statuses that mean the run is finished (success or not).
-TERMINAL_RUN_STATUSES = frozenset({"RETURNED", "FAILED", "CANCELED"})
-
-# `git diff --stat` summary line, e.g. "3 files changed, 338 insertions(+), 1 deletion(-)".
-_DIFFSTAT_INSERTIONS_RE = re.compile(r"(\d+)\s+insertion")
-_DIFFSTAT_DELETIONS_RE = re.compile(r"(\d+)\s+deletion")
-
-
-def _parse_diffstat_totals(value: Any) -> tuple[int, int]:
-    """Extract (additions, deletions) from a get_git_diff_summary() string.
-
-    The string embeds `git diff --stat`'s trailing summary line. Returns (0, 0)
-    when the value isn't such a string or carries no counts — e.g. only new,
-    untracked files, which `git diff --stat` does not tally.
-    """
-    if not isinstance(value, str):
-        return (0, 0)
-    insertions = _DIFFSTAT_INSERTIONS_RE.search(value)
-    deletions = _DIFFSTAT_DELETIONS_RE.search(value)
-    return (
-        int(insertions.group(1)) if insertions else 0,
-        int(deletions.group(1)) if deletions else 0,
-    )
-
+TERMINAL_RUN_STATUSES = TERMINAL_STATUSES
 
 # Bundled artifact extension → kind classification.
 _ARTIFACT_KIND_BY_EXT: dict[str, str] = {
@@ -172,6 +151,8 @@ def _initial_task(task_id: str, event: dict[str, Any]) -> dict[str, Any]:
             "started_at": None,
             "ended_at": None,
         },
+        "owner": None,
+        "blocked": None,
         "changed_files": [],
         "risk_flags": [],
         "change_set_file": "",
@@ -191,6 +172,7 @@ _TIMESTAMP_FIELD_BY_STATUS: dict[str, str] = {
     "RETURNED": "ended_at",
     "FAILED": "ended_at",
     "CANCELED": "ended_at",
+    "INTERRUPTED": "ended_at",
 }
 
 
@@ -205,6 +187,14 @@ def _apply_event(task_obj: dict[str, Any], event: dict[str, Any]) -> None:
     field = _TIMESTAMP_FIELD_BY_STATUS.get(status or "")
     if field and timestamp:
         task_obj["timestamp"][field] = timestamp
+
+    owner = event.get("owner")
+    if isinstance(owner, dict):
+        task_obj["owner"] = owner
+    # Only the latest event's blocked-ness is meaningful: a run that started is
+    # no longer waiting on anything.
+    blocked = event.get("blocked")
+    task_obj["blocked"] = blocked if isinstance(blocked, dict) else None
 
     if task_data.get("text"):
         metadata = task_data.get("metadata", {})
@@ -234,13 +224,17 @@ def _apply_event(task_obj: dict[str, Any], event: dict[str, Any]) -> None:
     if isinstance(result_diff_summary, dict):
         task_obj["diff_summary"] = result_diff_summary
     else:
-        # String diff_summary values come from `git diff --stat` over the whole
-        # workspace, so they are not task-scoped. Keep the task line delta empty
-        # unless structured per-run data is available.
+        # A string diff_summary is `git diff --stat` over the WHOLE working
+        # tree, so its line counts include other people's uncommitted edits and
+        # every earlier run. Reporting them next to a run-scoped `files` count
+        # would invite exactly the wrong attribution, so they stay 0 and
+        # `lines_counted` says so rather than leaving a reader to guess whether
+        # zero means "no lines changed" or "not measured".
         task_obj["diff_summary"] = {
             "files": len(changed_files),
             "additions": 0,
             "deletions": 0,
+            "lines_counted": False,
         }
     task_obj["artifacts"] = [
         a

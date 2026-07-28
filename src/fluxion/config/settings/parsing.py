@@ -173,7 +173,16 @@ def _is_git_repo(path: Path) -> bool:
 
 
 def _parse_status_updates(raw: str) -> set[str]:
-    allowed = {"RECEIVED", "QUEUED", "RUNNING", "RETRYING", "RETURNED", "FAILED", "CANCELED"}
+    allowed = {
+        "RECEIVED",
+        "QUEUED",
+        "RUNNING",
+        "RETRYING",
+        "RETURNED",
+        "FAILED",
+        "CANCELED",
+        "INTERRUPTED",
+    }
     parsed = {x.strip().upper() for x in raw.split(",") if x.strip()}
     valid = parsed & allowed
     if not valid:

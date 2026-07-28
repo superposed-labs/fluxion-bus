@@ -34,6 +34,8 @@
     --st-failed-bg: rgba(242, 109, 91, 0.16);
     --st-canceled: #717887;
     --st-canceled-bg: rgba(113, 120, 135, 0.16);
+    --st-interrupted: #b8792f;
+    --st-interrupted-bg: rgba(184, 121, 47, 0.16);
     --warn: var(--accent);
     --warn-bg: var(--accent-faint);
     --warn-ink: #2b1a00;

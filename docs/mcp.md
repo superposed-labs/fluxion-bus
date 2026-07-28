@@ -56,8 +56,9 @@ After registration, restart the client or start a new session to reload MCP
 tools. Tool names are exposed as `mcp__fluxion__run_subagent`,
 `mcp__fluxion__list_projects`, `mcp__fluxion__get_project`,
 `mcp__fluxion__get_task_status`, `mcp__fluxion__cancel_subagent_run`,
-`mcp__fluxion__revert_subagent_run`, `mcp__fluxion__get_task_result`, and
-`mcp__fluxion__list_subagent_runs`.
+`mcp__fluxion__force_cancel_subagent_run`, `mcp__fluxion__reconcile_tasks`,
+`mcp__fluxion__get_fluxion_status`, `mcp__fluxion__revert_subagent_run`,
+`mcp__fluxion__get_task_result`, and `mcp__fluxion__list_subagent_runs`.
 
 **Runtime notes:**
 
@@ -161,6 +162,13 @@ For implementation, edit, fix, or refactor tasks, explicitly pass
 read-only. If an edit-looking prompt is submitted as read-only, submit a
 corrected call with `profile=implement` and `mode=workspace-write`.
 
+The response echoes `requested_model` and `effective_model` so the quota pool a
+run bills is visible at submit time. Resuming a thread whose executor
+conversation was created with a *different* model adds `model_binding_warning`:
+agent CLIs may keep the conversation's original model, so the run can bill a
+pool other than the one requested. Pass `session_policy="new"` (or a fresh
+`thread`) when the model matters more than the retained context.
+
 ### `list_subagent_runs`
 
 List recent runs from `tasks.jsonl`.
@@ -187,7 +195,44 @@ Returns compact polling status for one `run_id`.
 
 Request cancellation for an active run. Required parameter: `run_id`.
 Cancellation only applies to active runs owned by the current MCP server
-process.
+process; the request terminates the executor's entire process group, not just
+its direct child. For a run this process does not own, use
+`force_cancel_subagent_run`.
+
+### `force_cancel_subagent_run`
+
+Recovery path for a run that `cancel_subagent_run` cannot reach. Required
+parameter: `run_id`.
+
+Runs are owned by the Fluxion process that started them, and each MCP client
+session gets its own process. Behaviour depends on that owner:
+
+| Owner | Result |
+| --- | --- |
+| This process | Same as `cancel_subagent_run`; terminates the process group. |
+| Another live process | Refused, and the owner (pid, instance) is reported. Closing the record here would leave that agent running. |
+| Gone | The run is closed out as `INTERRUPTED`. |
+
+### `reconcile_tasks`
+
+Closes out runs whose owning process no longer exists, marking them
+`INTERRUPTED`, and prunes dead instance records. Runs owned by a live process
+are never touched. This also runs automatically when a Fluxion process starts,
+so it is only needed to clean up mid-session. No parameters.
+
+### `get_fluxion_status`
+
+Reports which installation is serving this session and what it is doing:
+`installation` (code root, `.env` path, data dir, version, git commit),
+`effective_settings` (what **this** process loaded at startup), `process`
+(pid, instance, queue depth, worker count, active runs), `other_instances`,
+and `workspace_locks` with their holders. No parameters.
+
+Use it when a config change seems to have had no effect: settings are read once
+at startup, and a development checkout and an installed copy each have their own
+`.env`. `installation.config_file` is the file actually loaded, and
+`config_file_changed_since_start=true` means it was edited afterwards — restart
+the process to apply.
 
 ### `revert_subagent_run`
 
@@ -216,6 +261,24 @@ Return the result for a completed run.
 
 Default compact shape includes: `final_summary`, `changed_files`,
 `change_set_file`, `artifacts`, `needs_review`, and `log_file`.
+
+**`changed_files` vs `artifacts`.** `changed_files` is the run-scoped list of
+what the run touched — including files it created, such as screenshots.
+`artifacts` is narrower: files the agent explicitly declared for delivery via
+`ACTIONS_JSON.upload_files`, which agents are prompted to populate only when the
+user asked for files to be sent. An empty `artifacts` on a run that produced
+files is expected; look in `changed_files`.
+
+**`diff_summary` line counts.** `files` is run-scoped, but `additions` and
+`deletions` are always `0` with `lines_counted: false`. Per-run line counts are
+not measured: `git diff --stat` covers the whole working tree, so its totals
+would fold in unrelated uncommitted edits and earlier runs. Run `git diff` over
+`changed_files` when exact counts matter.
+
+`include_output=true` returns the executor's own stdout/stderr. Antigravity's
+verbose runtime log is returned separately as `executor_log` rather than mixed
+into stdout, and its transport-level glog chatter is filtered out; pass
+`raw=true` if the unfiltered bundle is needed.
 
 ## Usage flows
 
@@ -262,18 +325,19 @@ When a sub-agent produced unwanted file changes:
 | --- | --- | --- |
 | `RECEIVED` | Request accepted by the gateway. | |
 | `VALIDATED` | Inputs validated; ready to enqueue. | |
-| `QUEUED` | Waiting on a worker slot. | |
+| `QUEUED` | Waiting on a worker slot, or on the workspace lock — see `queue_reason`. | |
 | `RUNNING` | Executor is producing output. | |
 | `RETRYING` | Transient failure; gateway is retrying. | |
 | `RETURNED` | Finished successfully. | ✓ |
 | `FAILED` | Finished with an error. | ✓ |
 | `CANCELED` | Stopped via `cancel_subagent_run`. | ✓ |
+| `INTERRUPTED` | The owning process disappeared mid-run; no result was recorded. | ✓ |
 
-`is_terminal` is `true` for `RETURNED`, `FAILED`, and `CANCELED`. The default
-compact status includes helper fields `result_available`,
-`changed_files_available`, `can_cancel`, `elapsed_sec`, `next_action`,
-`suggested_poll_after_sec`, `progress_signal`, `log_size`, `log_updated_at`,
-and `recent_output_tail`. Do not treat
+`is_terminal` is `true` for `RETURNED`, `FAILED`, `CANCELED`, and
+`INTERRUPTED`. The default compact status includes helper fields
+`result_available`, `changed_files_available`, `can_cancel`, `elapsed_sec`,
+`next_action`, `suggested_poll_after_sec`, `progress_signal`, `log_size`,
+`log_updated_at`, and `recent_output_tail`. Do not treat
 `changed_files=[]` on a `RUNNING` task as proof that no files changed; file
 changes are finalized only after a terminal status. Canceled tasks preserve
 partial changed files when Fluxion can compute the workspace delta.
@@ -289,11 +353,30 @@ call `get_task_result` for the final answer and file changes. Pass `detail=true`
 for the fuller status tail (up to 20 lines / roughly 4000 characters). Use
 `get_task_result(include_output=true)` only for failure debugging.
 
+### Liveness and queue fields
+
+The compact status also answers "is anything still working on this, and if it
+is waiting, on what?":
+
+| Field | Meaning |
+| --- | --- |
+| `owner_alive` | Whether the process that owns the run still exists. `null` when unknown (terminal runs, or records written before ownership tracking). |
+| `stale` | `true` when the owner is provably gone: the status will never change again on its own. |
+| `queue_reason` | `workspace_busy`, `waiting_for_worker`, or `queued_elsewhere` (queued in another Fluxion process). |
+| `blocked_by_workspace` | Workspace path the run is waiting to lock. |
+| `blocked_by_task_id` | The run currently holding it. |
+| `model` | The model this run went out with — i.e. which quota pool it bills. |
+
+A workspace-write run waits at most `FLUXION_WORKSPACE_LOCK_TIMEOUT_SEC` for
+the workspace before failing with a message naming the holder. It stays
+`QUEUED` while waiting rather than reporting `RUNNING`.
+
 `next_action` values:
 
 - `poll_later_or_cancel` — wait before polling again, or cancel if no longer needed.
 - `get_task_result` — terminal state reached; fetch the result.
 - `review_result` — returned by `get_task_result`; review and integrate.
+- `reconcile_tasks` — the owning process is gone; polling will never resolve. Close it out.
 - `inspect_status` — unexpected state; inspect the status payload.
 
 `progress_signal` values:

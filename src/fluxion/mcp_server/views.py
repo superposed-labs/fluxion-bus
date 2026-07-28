@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fluxion.config.settings import Settings
+from fluxion.core.runtime_registry import TERMINAL_STATUSES, owner_is_alive
 from fluxion.mcp_server.logs import _log_progress
 from fluxion.subagent import SubagentRunner, compact_tail
 from fluxion.web.services.aggregator import aggregate_tasks_cached
@@ -26,7 +27,7 @@ def _find_task(run_id: str) -> dict[str, Any] | None:
     return None
 
 
-_TERMINAL_STATUSES = {"RETURNED", "FAILED", "CANCELED"}
+_TERMINAL_STATUSES = set(TERMINAL_STATUSES)
 _ACTIVE_STATUSES = {"RECEIVED", "VALIDATED", "QUEUED", "RUNNING", "RETRYING"}
 # A non-terminal run whose log file was written within this window is reported as
 # actively "working" even when there's no human-readable tail yet (Antigravity's
@@ -50,6 +51,7 @@ def _status_view(
         slim["summary"] = _RUNNING_SUMMARY.get(status, f"Status: {status or 'unknown'}.")
     progress = _progress_view(task, settings=settings, runner=runner, terminal=terminal)
     elapsed = _elapsed_sec(task)
+    liveness = _liveness_view(task, settings=settings, runner=runner, terminal=terminal)
     slim.update(
         {
             "found": True,
@@ -58,7 +60,8 @@ def _status_view(
             "changed_files_available": terminal,
             "can_cancel": status in _ACTIVE_STATUSES,
             "elapsed_sec": elapsed,
-            "next_action": _next_action(status),
+            **liveness,
+            "next_action": _next_action(status, liveness),
             "suggested_poll_after_sec": _suggested_poll_after_sec(
                 status=status,
                 terminal=terminal,
@@ -106,6 +109,13 @@ def _status_poll_view(
         "elapsed_sec": detail.get("elapsed_sec"),
         "next_action": detail.get("next_action", "inspect_status"),
         "suggested_poll_after_sec": detail.get("suggested_poll_after_sec", 3),
+        "model": detail.get("model", ""),
+        "owner_alive": detail.get("owner_alive"),
+        "stale": detail.get("stale", False),
+        "stale_hint": detail.get("stale_hint", ""),
+        "queue_reason": detail.get("queue_reason", ""),
+        "blocked_by_workspace": detail.get("blocked_by_workspace", ""),
+        "blocked_by_task_id": detail.get("blocked_by_task_id", ""),
         "progress_signal": detail.get("progress_signal", ""),
         "progress_source": detail.get("progress_source", ""),
         "recent_output_tail": tail,
@@ -119,6 +129,71 @@ def _status_poll_view(
         "log_file": detail.get("log_file", ""),
         "note": detail.get("note", ""),
     }
+
+
+def _liveness_view(
+    task: dict[str, Any],
+    *,
+    settings: Settings,
+    runner: SubagentRunner,
+    terminal: bool,
+) -> dict[str, Any]:
+    """Who owns this run, whether that owner still exists, and what blocks it.
+
+    A queued run used to be indistinguishable from a wedged one. The two
+    questions a caller actually has — "is anything still working on this?" and
+    "if it is waiting, on what?" — are answered here.
+    """
+    task_id = str(task.get("task_id") or "")
+    owner = task.get("owner") if isinstance(task.get("owner"), dict) else None
+    # The owning process's own record is authoritative and more current than the
+    # log; for a run owned elsewhere there is nothing in memory to read.
+    gateway = getattr(runner, "gateway", None)
+    overview = (gateway.get_task_overview(task_id) or {}) if gateway is not None else {}
+    blocked = task.get("blocked") if isinstance(task.get("blocked"), dict) else None
+    reason = str(overview.get("blocked_reason") or "")
+    if not reason and blocked and not overview:
+        reason = str(blocked.get("reason") or "")
+    workspace = str(overview.get("blocked_by_workspace") or (blocked or {}).get("workspace") or "")
+    holder = (blocked or {}).get("holder") if isinstance(blocked, dict) else None
+    blocked_by_task_id = str(
+        overview.get("blocked_by_task_id") or (holder or {}).get("task_id") or ""
+    )
+    # Unknown, not dead: a run recorded before ownership tracking has no owner
+    # to check, and claiming it is stale on that basis would be a guess.
+    # Reconciliation still ages those out on its own schedule.
+    owner_alive = (
+        owner_is_alive(owner, data_dir=settings.data_dir)
+        if owner is not None and not terminal
+        else None
+    )
+    view: dict[str, Any] = {
+        "model": str(task.get("model") or ""),
+        "owner": owner,
+        "owner_alive": owner_alive,
+        "owned_by_this_process": bool(overview),
+        "queue_reason": reason or ("" if terminal else _default_queue_reason(task, overview)),
+        "blocked_by_workspace": workspace,
+        "blocked_by_task_id": blocked_by_task_id,
+    }
+    if owner_alive is False:
+        view["stale"] = True
+        view["stale_hint"] = (
+            "The process that owned this run is gone, so its status will not change "
+            "again. Call reconcile_tasks (or force_cancel_subagent_run) to close it out."
+        )
+    return view
+
+
+def _default_queue_reason(task: dict[str, Any], overview: dict[str, Any]) -> str:
+    status = str(task.get("status") or "")
+    if status not in {"RECEIVED", "VALIDATED", "QUEUED"}:
+        return ""
+    if overview:
+        return "waiting_for_worker"
+    # Queued in a process other than this one; we can see the record but not its
+    # queue, so don't guess at a cause.
+    return "queued_elsewhere"
 
 
 def _progress_view(
@@ -280,13 +355,14 @@ def _suggested_poll_after_sec(
     return 12
 
 
-def _next_action(status: str) -> str:
-    if status in {"RECEIVED", "VALIDATED", "QUEUED"}:
-        return "poll_later_or_cancel"
-    if status in {"RUNNING", "RETRYING"}:
-        return "poll_later_or_cancel"
+def _next_action(status: str, liveness: dict[str, Any] | None = None) -> str:
     if status in _TERMINAL_STATUSES:
         return "get_task_result"
+    if liveness and liveness.get("stale"):
+        # Polling a run whose owner died never resolves; say so instead.
+        return "reconcile_tasks"
+    if status in {"RECEIVED", "VALIDATED", "QUEUED", "RUNNING", "RETRYING"}:
+        return "poll_later_or_cancel"
     return "inspect_status"
 
 
