@@ -307,6 +307,23 @@ fluxion-gateway
 
 更详细的平台配置和工作区授权步骤，请参阅 [参数配置指南](docs/configuration.md#messaging-channel-configuration)。
 
+## Provider 网关
+
+`fluxion-provider` 将 Fluxion 的本地 Agent 执行器（如 Claude、Codex 或 Antigravity）暴露为 API Provider 端点（`http://127.0.0.1:8787`）。外部工具不再调用按量计费的模型 API，而是把活派给你已经订阅的 CLI。同时支持 OpenAI Responses（Codex 子 Agent）与 Anthropic Messages（Claude Code）两种协议。
+
+```bash
+fluxion-provider init
+fluxion-provider serve
+```
+
+一键配置 Codex 客户端路由：
+
+```bash
+fluxion-provider install-codex-config
+```
+
+详细信息、安全鉴权及诊断工具请参阅 [Provider 网关指南](docs/provider-gateway.md)。
+
 ## 文档目录
 
 - [系统架构](docs/architecture.md) — 系统的完整架构拓扑图、接口定义、共享状态说明及项目物理布局
@@ -316,6 +333,7 @@ fluxion-gateway
 - [macOS 应用指南](desktop/README.md) — 桌面安装包编译打包、托管后台配置、系统安装路径及开发调试指南
 - [使用率统计](docs/usage-statistics.md) — 历史数据解析范围、独立用量统计、费用预估算法以及 Fast 模式局限性说明
 - [调度器配置](docs/scheduler.md) — 自动 Ping（窗口激活）、配额重置监听规则、Cron 任务设置及守护进程常驻部署
+- [Provider 网关](docs/provider-gateway.md) — 本地 Provider 端点、Auth Token 鉴权及 Codex 客户端一键挂载指南
 - [参数配置指南](docs/configuration.md) — 任务 Agent 适配、工作区鉴权、消息网关、Web UI 及环境变量详述
 - [服务部署说明](deploy/README.md) — 提供 launchd 和 systemd 系统守护服务的配置模板
 

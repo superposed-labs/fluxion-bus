@@ -22,6 +22,12 @@ class ExecutionResult:
     change_set_file: str = ""
     log_file: str = ""
     executor_session_id: str = ""
+    # Token usage the executor's own stream reported for this run, keyed with the
+    # same names as `fluxion.usage` (input_tokens, output_tokens,
+    # cache_creation_tokens, cache_read_tokens). Empty when the executor does not
+    # report usage. This is the run's authoritative total as the CLI computed it —
+    # do not hand-sum per-message rows, which Claude duplicates 2-4x per turn.
+    token_usage: dict[str, int] = field(default_factory=dict)
     duration_sec: float = 0.0
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     # True when the executor returned early (answer ready) while the underlying

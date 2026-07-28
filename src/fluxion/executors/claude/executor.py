@@ -15,10 +15,12 @@ from fluxion.core.models.task import Task
 from fluxion.executors.claude.events import (
     ClaudeEventCapture,
     extract_claude_stream_message,
+    extract_claude_stream_reasoning,
+    extract_claude_stream_text,
     parse_claude_stream_events,
 )
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
-from fluxion.executors.prompt_builder import AgentPromptBuilder
+from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.workspace.artifact_collector import select_uploadable_paths
 
@@ -30,6 +32,14 @@ from fluxion.workspace.artifact_collector import select_uploadable_paths
 # executor, which picks its cheapest model + lowest reasoning effort for pings.
 _PING_MODEL = "haiku"
 _PING_EFFORT = "low"
+
+# Tool policy for a task marked `read_only` in its metadata, used when a caller
+# has promised the user that this run cannot change anything — a Codex role file
+# declaring `sandbox_mode = "read-only"`, for instance. Codex's own sandbox does
+# not reach in here: the tools run in this process, so the promise is ours to
+# keep.
+_READ_ONLY_TOOLS = "Read,Grep,Glob"
+_MUTATING_TOOLS = "Edit,Write,NotebookEdit,Bash"
 
 
 class ClaudeExecutor:
@@ -78,6 +88,10 @@ class ClaudeExecutor:
     def name(self) -> str:
         return "claude"
 
+    def enforces_read_only(self) -> bool:
+        """Honored in `_build_command` via `--disallowedTools`."""
+        return True
+
     def supports(self, task: Task) -> bool:
         preferred = str(task.metadata.get("executor") or "").strip().lower()
         return preferred in {"", "claude"}
@@ -87,6 +101,7 @@ class ClaudeExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
+        stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         prompt = self._prompt_builder.build(task)
         resolved_command = self._resolve_command()
@@ -107,12 +122,15 @@ class ClaudeExecutor:
             )
             out_holder: dict[str, list[str]] = {"stdout": [], "stderr": []}
             comm_error: list[Exception] = []
-            stream_state = {"sent_len": 0}
+            stream_state = {"sent_len": 0, "reasoning_len": 0}
             stream_lock = threading.Lock()
+            raw_prompt = is_raw_prompt(task)
 
             def _emit_stream_delta() -> None:
                 with stream_lock:
-                    current = self._extract_partial_user_answer("".join(out_holder["stdout"]))
+                    current = self._extract_partial_user_answer(
+                        "".join(out_holder["stdout"]), raw=raw_prompt
+                    )
                     if stream_output is None:
                         return
                     if len(current) <= stream_state["sent_len"]:
@@ -121,6 +139,20 @@ class ClaudeExecutor:
                     stream_state["sent_len"] = len(current)
                 if delta:
                     stream_output(delta)
+
+            def _emit_reasoning_delta() -> None:
+                # Only in raw mode: the IM path renders one answer and has
+                # nowhere to put working notes.
+                if stream_reasoning is None or not raw_prompt:
+                    return
+                with stream_lock:
+                    current = extract_claude_stream_reasoning("".join(out_holder["stdout"]))
+                    if len(current) <= stream_state["reasoning_len"]:
+                        return
+                    delta = current[stream_state["reasoning_len"] :]
+                    stream_state["reasoning_len"] = len(current)
+                if delta:
+                    stream_reasoning(delta)
 
             def _read_pipe(name: str, pipe: subprocess.PIPE[str] | None) -> None:
                 if pipe is None:
@@ -132,6 +164,7 @@ class ClaudeExecutor:
                         out_holder[name].append(chunk)
                         append_live_log(live_log_file, chunk)
                         if name == "stdout":
+                            _emit_reasoning_delta()
                             _emit_stream_delta()
                 except Exception as exc:  # pragma: no cover
                     comm_error.append(exc)
@@ -180,6 +213,7 @@ class ClaudeExecutor:
 
             out_stdout = "".join(out_holder["stdout"])
             out_stderr = "".join(out_holder["stderr"])
+            _emit_reasoning_delta()
             _emit_stream_delta()
             duration = time.monotonic() - start
             returncode = proc.returncode if proc.returncode is not None else -1
@@ -296,6 +330,7 @@ class ClaudeExecutor:
             artifacts=action_uploads,
             changed_files=event_capture.changed_files if success and event_capture else [],
             risk_flags=event_capture.risk_flags if event_capture else [],
+            token_usage=event_capture.token_usage if event_capture else {},
             file_operations=event_capture.operations if success and event_capture else [],
             diff_summary="",
             log_file=self._write_log(
@@ -404,12 +439,29 @@ class ClaudeExecutor:
         if session_id:
             command.extend(["--resume", session_id])
         command.extend(["-p", "--verbose", "--output-format", "stream-json"])
+        if is_raw_prompt(task):
+            # Without this the CLI only reports a message once it is finished,
+            # so a caller rendering output live shows nothing for the length of
+            # a turn and then everything at once. Enabled for raw prompts only:
+            # the IM path waits for the FINAL_ANSWER marker anyway and gains
+            # nothing from token-level chunks.
+            command.append("--include-partial-messages")
         if self._use_bare_mode:
             command.append("--bare")
-        if self._permission_mode:
-            command.extend(["--permission-mode", self._permission_mode])
-        if self._allowed_tools:
-            command.append(f"--allowedTools={self._allowed_tools}")
+        read_only = bool(task.metadata.get("read_only"))
+        if read_only:
+            # `--allowedTools` is an auto-approval list, not a restriction, and
+            # `acceptEdits` waves edits through regardless — so neither one can
+            # make a run read-only on its own. `--disallowedTools` is the hard
+            # deny, and Bash belongs in it: a read-only role that can shell out
+            # can still write.
+            command.extend(["--allowedTools", _READ_ONLY_TOOLS])
+            command.extend(["--disallowedTools", _MUTATING_TOOLS])
+        else:
+            if self._permission_mode:
+                command.extend(["--permission-mode", self._permission_mode])
+            if self._allowed_tools:
+                command.append(f"--allowedTools={self._allowed_tools}")
         model_override = str(task.metadata.get("model") or "").strip()
         if model_override:
             command.extend(["--model", model_override])
@@ -465,7 +517,11 @@ class ClaudeExecutor:
                 return self._clip(result, SLACK_TEXT_SOFT_LIMIT)
         return self._clip((stdout or "").strip() or "Task completed.", SLACK_TEXT_SOFT_LIMIT)
 
-    def _extract_partial_user_answer(self, stdout: str) -> str:
+    def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
+        if raw:
+            # No marker will ever arrive, so there is nothing to strip and
+            # nothing to wait for.
+            return extract_claude_stream_text(stdout)
         stream_message = extract_claude_stream_message(stdout)
         if not stream_message:
             return ""

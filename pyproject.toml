@@ -13,7 +13,8 @@ dependencies = [
   "uvicorn[standard]>=0.32.0",
   "websockets>=13.0",
   "lark-oapi>=1.4",
-  "mcp[cli]>=1.13.0",
+  "mcp[cli]>=1.13.0,<2.0",
+  "Pillow>=11.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,7 @@ fluxion-usage = "fluxion.cli.usage:main"
 fluxion-detect = "fluxion.cli.detect:main"
 fluxion-scheduler = "fluxion.scheduler.cli:main"
 fluxion-gateway = "fluxion.gateway:main"
+fluxion-provider = "fluxion.provider_gateway.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

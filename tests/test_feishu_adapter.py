@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import threading
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+
+from PIL import Image
 
 from fluxion.channels.feishu.adapter import FeishuChannelAdapter
 from fluxion.channels.feishu.feishu_client import FeishuAPIError
@@ -59,7 +62,12 @@ class _FakeClient:
             {"message_id": message_id, "file_key": file_key, "resource_type": resource_type}
         )
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"fake-bytes")
+        if resource_type == "image":
+            payload = BytesIO()
+            Image.new("RGB", (8, 8)).save(payload, format="PNG")
+            dest.write_bytes(payload.getvalue())
+        else:
+            dest.write_bytes(b"fake-bytes")
 
 
 class _FakeSessions:
@@ -195,8 +203,10 @@ def test_image_message_downloads_and_submits(tmp_path):
         "resource_type": "image",
     }
     task, ctx = adapter._gateway.submitted[0]  # noqa: SLF001
-    assert ".fluxion_inbox" in task.text
-    assert "Inspect it" in task.text
+    assert task.text == ""
+    assert task.attachments == ()
+    assert len(task.image_attachments) == 1
+    assert task.image_attachments[0].media_type == "image/png"
     assert ctx["workspace"] == str(tmp_path)
 
 
@@ -211,7 +221,10 @@ def test_file_message_downloads_with_original_name(tmp_path):
 
     assert adapter._client.downloads[0]["resource_type"] == "file"  # noqa: SLF001
     task, _ctx = adapter._gateway.submitted[0]  # noqa: SLF001
-    assert "report.pdf" in task.text
+    assert task.text == ""
+    assert task.image_attachments == ()
+    assert len(task.attachments) == 1
+    assert task.attachments[0].path.name == "report.pdf"
 
 
 def test_send_result_uploads_image_artifact(tmp_path):

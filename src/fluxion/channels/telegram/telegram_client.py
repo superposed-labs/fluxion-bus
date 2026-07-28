@@ -20,6 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fluxion.channels.attachments import copy_stream_limited
 from fluxion.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -180,13 +181,18 @@ class TelegramClient:
         req = urllib.request.Request(url, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
-                data = resp.read()
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with dest.open("wb") as out:
+                    copy_stream_limited(resp, out)
         except urllib.error.HTTPError as exc:
+            dest.unlink(missing_ok=True)
             raise TelegramAPIError("download_file", exc.code, exc.reason or "HTTP error") from exc
         except urllib.error.URLError as exc:
+            dest.unlink(missing_ok=True)
             raise TelegramAPIError("download_file", None, str(exc.reason)) from exc
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _media_fields(

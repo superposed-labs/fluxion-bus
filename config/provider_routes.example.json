@@ -1,0 +1,129 @@
+{
+  "_readme": [
+    "Example routing config for the Fluxion provider gateway.",
+    "",
+    "Copy to config/provider_routes.json and edit. That path is gitignored: it",
+    "names local workspace paths and is specific to one machine. `fluxion-provider",
+    "init` writes a minimal version of this file and never overwrites an existing",
+    "one, so editing in place is safe.",
+    "",
+    "JSON has no comments, so notes live in `_`-prefixed keys. The loader ignores",
+    "unknown keys everywhere except `routes`, whose keys are role names.",
+    "",
+    "Validate any edit with: fluxion-provider doctor",
+    "",
+    "The rationale behind each field lives in the module docstrings under",
+    "src/fluxion/provider_gateway/ — start with config.py and local_agent.py."
+  ],
+
+  "version": 1,
+
+  "providers": [
+    {
+      "_comment": [
+        "A local agent: Fluxion runs an agent CLI on your own subscription and",
+        "renders its output as a model response. No API key, no per-token charge.",
+        "`executor` names a Fluxion executor: claude, codex, or antigravity.",
+        "Capability flags are granted automatically for local agents, so only",
+        "max_context_tokens is worth declaring."
+      ],
+      "id": "local_claude",
+      "protocol": "local_agent",
+      "executor": "claude",
+      "enabled": true,
+      "_default_workspace": [
+        "Where the agent runs when a request carries no workspace. Codex normally",
+        "reports its git repo root, so this is only a fallback. Leave it empty to",
+        "have such requests refused: guessing points an agent at the wrong",
+        "repository, and it starts editing before anyone notices."
+      ],
+      "default_workspace": "",
+      "models": [
+        { "id": "opus", "capabilities": { "max_context_tokens": 200000 } },
+        { "id": "sonnet", "capabilities": { "max_context_tokens": 200000 } }
+      ]
+    },
+
+    {
+      "_comment": [
+        "A second local agent on a different CLI. Useful for review: a reviewer",
+        "backed by a different vendor than the worker will not repeat the worker's",
+        "blind spots."
+      ],
+      "id": "local_codex",
+      "protocol": "local_agent",
+      "executor": "codex",
+      "enabled": false,
+      "default_workspace": "",
+      "models": [{ "id": "gpt-5-codex", "capabilities": { "max_context_tokens": 272000 } }]
+    },
+
+    {
+      "_comment": [
+        "A third CLI. `antigravity` cannot run read-only, so routing a read-only",
+        "role (explorer, reviewer) here is refused rather than run with write",
+        "access — see enforces_read_only() in src/fluxion/executors/base.py.",
+        "",
+        "Its value is as a reviewer of a *different* vendor's work: Gemini reading",
+        "code Claude wrote catches what Claude cannot see in itself."
+      ],
+      "id": "local_agy",
+      "protocol": "local_agent",
+      "executor": "antigravity",
+      "enabled": false,
+      "default_workspace": "",
+      "models": [
+        { "id": "gemini-3.1-pro-high", "capabilities": { "max_context_tokens": 1000000 } },
+        { "id": "gemini-3.6-flash-low", "capabilities": { "max_context_tokens": 1000000 } }
+      ]
+    }
+  ],
+
+  "_policies_note": [
+    "A policy is a named strategy: an ordered candidate list plus optional",
+    "scoring weights. Candidates are `provider_id:model_id`.",
+    "",
+    "`fallback` entries are tried after `candidates`, in order. Order is also the",
+    "tie-break, so two equally-scored models always resolve the same way across",
+    "restarts.",
+    "",
+    "Weight dimensions: quality, cost, latency, quota. An unknown name is a load",
+    "error rather than a silently ignored typo."
+  ],
+
+  "policies": {
+    "cheap": {
+      "candidates": ["local_claude:sonnet"],
+      "fallback": ["local_claude:opus"],
+      "weights": { "cost": 1.0, "latency": 0.5 }
+    },
+    "balanced": {
+      "candidates": ["local_claude:opus"],
+      "fallback": ["local_claude:sonnet"],
+      "weights": { "quality": 0.6, "cost": 0.4 }
+    },
+    "thorough": {
+      "candidates": ["local_claude:opus"],
+      "weights": { "quality": 1.0 }
+    }
+  },
+
+  "_routes_note": [
+    "Role -> policy. Roles arrive as the X-Fluxion-Route header, one per Codex",
+    "provider entry (see `fluxion-provider print-codex-config`).",
+    "",
+    "This object takes no `_`-prefixed notes: every key here is treated as a role",
+    "name and every value must name a defined policy.",
+    "",
+    "`compaction` is not a Codex role — it is the route used when a request is",
+    "recognized as a compaction turn."
+  ],
+
+  "routes": {
+    "auto": "balanced",
+    "explorer": "cheap",
+    "reviewer": "thorough",
+    "worker": "balanced",
+    "compaction": "balanced"
+  }
+}

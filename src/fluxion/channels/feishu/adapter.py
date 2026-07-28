@@ -37,6 +37,11 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
 from fluxion.channels.artifacts import upload_channel_artifacts
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import SettingsHotReloader, authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
 from fluxion.channels.feishu.content import (
@@ -367,20 +372,19 @@ class FeishuChannelAdapter:
 
         task_text = text
         if resource is not None:
-            saved = self._download_resource(
+            downloaded = self._download_resource(
                 message_id=message_id, resource=resource, workspace=workspace, chat_id=chat_id
             )
-            if not saved:
+            if not downloaded:
                 return
-            note = "Attached file saved in the workspace:\n- " + str(saved.relative_to(workspace))
-            task_text = (
-                f"{text}\n\n{note}".strip()
-                if text
-                else (
-                    "The user sent the following file without a text instruction. "
-                    "Inspect it and respond appropriately.\n\n" + note
-                )
-            )
+            downloaded_files = [downloaded]
+        else:
+            downloaded_files = []
+        try:
+            task_attachments, task_images = normalize_downloaded_files(downloaded_files)
+        except AttachmentNormalizationError as exc:
+            self._reply_now(chat_id, f"Rejected attachment: {exc}")
+            return
 
         override = self._gateway._sessions.get_executor_override(
             conversation_key=convo_key,
@@ -398,6 +402,8 @@ class FeishuChannelAdapter:
                 "executor": executor_to_use,
                 "conversation_key": convo_key,
             },
+            attachments=task_attachments,
+            image_attachments=task_images,
         )
 
         with self._lock:
@@ -432,7 +438,7 @@ class FeishuChannelAdapter:
 
     def _download_resource(
         self, *, message_id: str, resource: dict, workspace: Path, chat_id: str
-    ) -> Path | None:
+    ) -> DownloadedFile | None:
         """Download an inbound image/file into the workspace inbox; return its path."""
         attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
         dest = attach_dir / self._safe_filename(str(resource["file_name"]))
@@ -443,7 +449,13 @@ class FeishuChannelAdapter:
                 resource_type=str(resource["resource_type"]),
                 dest=dest,
             )
-            return dest
+            return DownloadedFile(
+                path=dest,
+                media_type="image/png" if resource["resource_type"] == "image" else "",
+            )
+        except AttachmentNormalizationError as exc:
+            self._reply_now(chat_id, f"Rejected attachment: {exc}")
+            return None
         except FeishuAPIError as exc:
             logger.exception("Failed to download Feishu resource for message %s", message_id)
             # 99991672 = "access denied": the app lacks the scope to read message

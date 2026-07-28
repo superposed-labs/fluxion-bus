@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import threading
 import time
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from fluxion.channels.base import SettingsHotReloader
 from fluxion.channels.qqbot.adapter import (
@@ -466,7 +468,9 @@ def test_image_attachment_downloads_and_submits(tmp_path, monkeypatch):
     def fake_download(url, dest):  # noqa: ANN001
         downloaded.append((url, dest))
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"img")
+        payload = BytesIO()
+        Image.new("RGB", (8, 8)).save(payload, format="JPEG")
+        dest.write_bytes(payload.getvalue())
 
     monkeypatch.setattr(adapter, "_download_url", fake_download)
 
@@ -482,22 +486,31 @@ def test_image_attachment_downloads_and_submits(tmp_path, monkeypatch):
     url, _dest = downloaded[0]
     assert url == "https://gchat.qpic.cn/pic.jpg"  # scheme-less URL normalized
     task, _ctx = adapter._gateway.submitted[0]  # noqa: SLF001
-    assert ".fluxion_inbox" in task.text
-    assert "Inspect them" in task.text
+    assert task.text == ""
+    assert task.attachments == ()
+    assert len(task.image_attachments) == 1
+    assert task.image_attachments[0].media_type == "image/jpeg"
 
 
-def test_non_image_attachment_ignored(tmp_path):
+def test_non_image_attachment_is_preserved_for_the_executor(tmp_path, monkeypatch):
     adapter = _make_adapter()
     adapter._settings.resolve_workspace = lambda raw: tmp_path  # noqa: SLF001
+
+    def fake_download(_url, dest):  # noqa: ANN001
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"audio")
+
+    monkeypatch.setattr(adapter, "_download_url", fake_download)
     ev = _c2c_event(
         content="just text",
         attachments=[{"url": "x/voice.silk", "content_type": "audio/silk", "filename": "v.silk"}],
     )
     adapter._handle_event(ev)
 
-    # Audio is not an image, so it is dropped; the text still drives a task.
     task, _ctx = adapter._gateway.submitted[0]  # noqa: SLF001
     assert task.text == "just text"
+    assert len(task.attachments) == 1
+    assert task.attachments[0].media_type == "audio/silk"
     assert ".fluxion_inbox" not in task.text
 
 

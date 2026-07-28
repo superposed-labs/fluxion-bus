@@ -28,6 +28,12 @@ from typing import Any
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
 from fluxion.channels.artifacts import upload_channel_artifacts
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    ensure_attachment_count,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import SettingsHotReloader, authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
 from fluxion.channels.inbox import make_inbox_dir
@@ -456,22 +462,23 @@ class TelegramChannelAdapter:
             return
 
         if attachments:
-            saved = self._download_attachments(
+            try:
+                ensure_attachment_count(len(attachments))
+            except AttachmentNormalizationError as exc:
+                self._send_text(context=context, text=f"Rejected attachment: {exc}")
+                return
+            downloaded = self._download_attachments(
                 attachments=attachments, workspace=workspace, context=context
             )
-            if saved:
-                rel = [str(p.relative_to(workspace)) for p in saved]
-                note = "Attached file(s) saved in the workspace:\n" + "\n".join(
-                    f"- {r}" for r in rel
-                )
-                task_text = (
-                    f"{task_text}\n\n{note}".strip()
-                    if task_text
-                    else (
-                        "The user sent the following file(s) without a text instruction. "
-                        "Inspect them and respond appropriately.\n\n" + note
-                    )
-                )
+        else:
+            downloaded = []
+        if attachments and not downloaded and not task_text:
+            return
+        try:
+            task_attachments, task_images = normalize_downloaded_files(downloaded)
+        except AttachmentNormalizationError as exc:
+            self._send_text(context=context, text=f"Rejected attachment: {exc}")
+            return
 
         convo_key = self._conversation_key(chat_id)
         override = self._gateway._sessions.get_executor_override(
@@ -490,6 +497,8 @@ class TelegramChannelAdapter:
                 "executor": executor_to_use,
                 "conversation_key": convo_key,
             },
+            attachments=task_attachments,
+            image_attachments=task_images,
         )
         submit_context = {**context, "workspace": str(workspace)}
         ok, info = self._gateway.submit_task(
@@ -569,17 +578,29 @@ class TelegramChannelAdapter:
             # `photo` is an array of sizes; the last entry is the highest resolution.
             largest = photos[-1]
             if isinstance(largest, dict) and largest.get("file_id"):
-                attachments.append({"file_id": largest["file_id"], "name": None})
+                attachments.append(
+                    {
+                        "file_id": largest["file_id"],
+                        "name": None,
+                        "media_type": "image/jpeg",
+                    }
+                )
         doc = message.get("document")
         if isinstance(doc, dict) and doc.get("file_id"):
-            attachments.append({"file_id": doc["file_id"], "name": doc.get("file_name")})
+            attachments.append(
+                {
+                    "file_id": doc["file_id"],
+                    "name": doc.get("file_name"),
+                    "media_type": doc.get("mime_type"),
+                }
+            )
         return attachments
 
     def _download_attachments(
         self, *, attachments: list[dict[str, Any]], workspace: Path, context: dict
-    ) -> list[Path]:
+    ) -> list[DownloadedFile]:
         attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
-        saved: list[Path] = []
+        saved: list[DownloadedFile] = []
         for idx, att in enumerate(attachments):
             file_id = str(att.get("file_id") or "")
             if not file_id:
@@ -592,7 +613,12 @@ class TelegramChannelAdapter:
                 name = att.get("name") or Path(file_path).name or f"file_{idx}"
                 dest = attach_dir / self._safe_filename(str(name))
                 self._client.download_file(file_path=file_path, dest=dest)
-                saved.append(dest)
+                saved.append(
+                    DownloadedFile(
+                        path=dest,
+                        media_type=str(att.get("media_type") or ""),
+                    )
+                )
             except Exception:
                 logger.exception("Failed to download Telegram attachment %s", file_id)
                 self._send_text(

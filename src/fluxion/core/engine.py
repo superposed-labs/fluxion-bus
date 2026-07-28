@@ -18,6 +18,10 @@ except ImportError:  # pragma: no cover - non-POSIX platforms
 
 from fluxion.channels.base import ChannelAdapter
 from fluxion.core.control import ControlResponse
+from fluxion.core.models.attachment import (
+    AttachmentReferenceRedactor,
+    redact_attachment_references,
+)
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
 from fluxion.core.router import TaskRouter
@@ -797,12 +801,43 @@ class GatewayCore:
                     )
                     return
                 self._update_record(task.id, attempts=attempt)
+                task_attachments = (*task.attachments, *task.image_attachments)
+                attachment_redactor = AttachmentReferenceRedactor(
+                    task_attachments,
+                    workspace=task.workspace,
+                )
+
+                def send_redacted_output(
+                    text: str,
+                    *,
+                    redactor: AttachmentReferenceRedactor = attachment_redactor,
+                ) -> None:
+                    redacted = redactor.feed(text)
+                    if redacted:
+                        channel_adapter.send_output_delta(task.id, redacted, channel_context)
+
                 result = executor.execute(
                     task,
                     cancel_requested=lambda task_id=task.id: self._cancel_requested(task_id),
-                    stream_output=lambda text, task_id=task.id, ctx=channel_context, adapter=channel_adapter: (
-                        adapter.send_output_delta(task_id, text, ctx)
-                    ),
+                    stream_output=send_redacted_output,
+                )
+                redacted_tail = attachment_redactor.flush()
+                if redacted_tail:
+                    channel_adapter.send_output_delta(task.id, redacted_tail, channel_context)
+                result.summary = redact_attachment_references(
+                    result.summary,
+                    task_attachments,
+                    workspace=task.workspace,
+                )
+                result.stdout = redact_attachment_references(
+                    result.stdout,
+                    task_attachments,
+                    workspace=task.workspace,
+                )
+                result.stderr = redact_attachment_references(
+                    result.stderr,
+                    task_attachments,
+                    workspace=task.workspace,
                 )
                 if self._cancel_requested(task.id):
                     _stop_heartbeat()

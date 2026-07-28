@@ -368,6 +368,23 @@ fluxion-gateway
 See [Configuration](docs/configuration.md#messaging-channel-configuration) for
 channel and workspace settings.
 
+## Provider Gateway
+
+`fluxion-provider` exposes Fluxion's local agent executors (such as Claude, Codex, or Antigravity) as an API provider endpoint (`http://127.0.0.1:8787`). External tools call it instead of a metered model API, and the work runs on a CLI you already have a subscription for. It speaks the OpenAI Responses API (Codex sub-agents) and the Anthropic Messages API (Claude Code).
+
+```bash
+fluxion-provider init
+fluxion-provider serve
+```
+
+To configure Codex to route sub-agents to Fluxion:
+
+```bash
+fluxion-provider install-codex-config
+```
+
+See [Provider Gateway](docs/provider-gateway.md) for details, security token setup, and diagnostic commands.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — full system diagram, surfaces, shared
@@ -385,6 +402,7 @@ channel and workspace settings.
   limitations
 - [Scheduler](docs/scheduler.md) — auto-ping, quota-reset triggers, cron rules,
   and deployment
+- [Provider Gateway](docs/provider-gateway.md) — local provider endpoint, auth tokens, and Codex integration
 - [Configuration](docs/configuration.md) — executors, authorization, channels,
   Web UI, and environment variables
 - [Deployment](deploy/README.md) — launchd and systemd service templates

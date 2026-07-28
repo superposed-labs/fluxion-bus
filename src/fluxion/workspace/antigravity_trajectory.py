@@ -50,7 +50,7 @@ def collect_antigravity_trajectory(
     if not session:
         return AntigravityTrajectoryCapture(max_step_idx=since_idx)
 
-    db_path = _find_conversation_db(session, conversation_dirs)
+    db_path = find_conversation_db(session, conversation_dirs)
     if db_path is None:
         return AntigravityTrajectoryCapture(max_step_idx=since_idx)
 
@@ -82,7 +82,7 @@ def collect_antigravity_trajectory(
                 max_idx = idx_val
             if not isinstance(blob, bytes):
                 continue
-            for payload in _extract_json_payloads(blob):
+            for payload in extract_json_payloads(blob):
                 if not isinstance(payload, dict):
                     continue
                 step = _parse_payload(payload, workspace=workspace)
@@ -195,7 +195,7 @@ class _ParsedPayload:
     structured_change: _StructuredChange | None = None
 
 
-def _find_conversation_db(session_id: str, conversation_dirs: tuple[Path, ...]) -> Path | None:
+def find_conversation_db(session_id: str, conversation_dirs: tuple[Path, ...]) -> Path | None:
     candidates = [root / f"{session_id}.db" for root in conversation_dirs]
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():
@@ -203,7 +203,12 @@ def _find_conversation_db(session_id: str, conversation_dirs: tuple[Path, ...]) 
     return None
 
 
-def _extract_json_payloads(blob: bytes) -> list[dict[str, Any]]:
+def extract_json_payloads(blob: bytes) -> list[dict[str, Any]]:
+    """Pull the JSON objects agy embeds in a protobuf `step_payload` blob.
+
+    Shared with the live narrator, which reads the same rows while the run is
+    still in flight.
+    """
     text = blob.decode("utf-8", errors="ignore")
     if not text:
         return []

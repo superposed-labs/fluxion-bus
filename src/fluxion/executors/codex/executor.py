@@ -6,6 +6,7 @@ import re
 import subprocess
 import threading
 import time
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,10 +16,13 @@ from fluxion.core.models.task import Task
 from fluxion.executors.codex.events import (
     CodexEventCapture,
     extract_codex_json_stream_message,
+    extract_codex_json_stream_text,
+    extract_codex_stream_reasoning,
     parse_codex_json_events,
 )
 from fluxion.executors.codex.prompt_builder import CodexPromptBuilder
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
+from fluxion.executors.prompt_builder import is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history import pricing
 from fluxion.usage.model_identity import identify_model
@@ -41,6 +45,51 @@ def _codex_failure_summary(event_capture: CodexEventCapture) -> str:
     if event_capture.error_message:
         return f"Codex execution failed: {event_capture.error_message}"
     return "Codex execution failed"
+
+
+# Providers the Provider Gateway installs into `~/.codex/config.toml`. A child
+# `codex exec` pointed at one of these would be talking to Fluxion, not to a model.
+_GATEWAY_PROVIDER_PREFIX = "fluxion_"
+_NATIVE_PROVIDER = "openai"
+
+
+def _codex_home() -> Path:
+    # Read per call, not at import: `_build_env` hands the child whatever
+    # CODEX_HOME this process has, so the config inspected here is the one the
+    # child will actually load.
+    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+
+
+def _configured_model_provider(config_path: Path) -> str:
+    """The top-level `model_provider` a child `codex exec` would inherit.
+
+    Profiles are not consulted: one is active only under `--profile`, which this
+    executor never passes.
+    """
+    try:
+        with config_path.open("rb") as handle:
+            parsed = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        # A config Codex itself cannot read is Codex's problem to report.
+        return ""
+    value = parsed.get("model_provider")
+    return value if isinstance(value, str) else ""
+
+
+def _sandbox_mode(configured: str, read_only: bool) -> str:
+    """The sandbox policy to pass to `codex exec`.
+
+    Deliberately never `--full-auto`. That flag is deprecated, and when present
+    Codex forces `workspace-write` and ignores `--sandbox` outright
+    (`exec/src/lib.rs`: `if removed_full_auto { Some(SandboxMode::WorkspaceWrite) }`
+    is checked before the `--sandbox` argument is even read).
+
+    Passing both is what made a "read-only" run edit files in testing, and it had
+    also been quietly discarding `FLUXION_CODEX_SANDBOX_MODE` for every run.
+    """
+    if read_only:
+        return "read-only"
+    return configured or "workspace-write"
 
 
 class CodexExecutor:
@@ -68,6 +117,18 @@ class CodexExecutor:
     def name(self) -> str:
         return "codex"
 
+    def enforces_read_only(self) -> bool:
+        """`codex exec -s read-only` is a documented sandbox policy."""
+        return True
+
+    def supports_native_images(self) -> bool:
+        """Both fresh and resumed `codex exec` turns accept `--image`."""
+        return True
+
+    def native_image_media_types(self) -> frozenset[str]:
+        """Formats passed to Codex's native ``--image`` interface."""
+        return frozenset({"image/gif", "image/jpeg", "image/png", "image/webp"})
+
     def supports(self, task: Task) -> bool:
         return True
 
@@ -76,8 +137,12 @@ class CodexExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
+        stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
-        prompt = self._prompt_builder.build(task)
+        prompt = self._prompt_builder.build(
+            task,
+            native_image_media_types=self.native_image_media_types(),
+        )
         start = time.monotonic()
         command: list[str] | None = None
         live_log_file = self._logs_dir / f"task-{task.id}.codex.log"
@@ -97,12 +162,15 @@ class CodexExecutor:
             )
             out_holder: dict[str, list[str]] = {"stdout": [], "stderr": []}
             comm_error: list[Exception] = []
-            stream_state = {"sent_len": 0}
+            stream_state = {"sent_len": 0, "reasoning_len": 0}
             stream_lock = threading.Lock()
+            raw_prompt = is_raw_prompt(task)
 
             def _emit_stream_delta() -> None:
                 with stream_lock:
-                    current = self._extract_partial_user_answer("".join(out_holder["stdout"]))
+                    current = self._extract_partial_user_answer(
+                        "".join(out_holder["stdout"]), raw=raw_prompt
+                    )
                     if stream_output is None:
                         return
                     if len(current) <= stream_state["sent_len"]:
@@ -111,6 +179,20 @@ class CodexExecutor:
                     stream_state["sent_len"] = len(current)
                 if delta:
                     stream_output(delta)
+
+            def _emit_reasoning_delta() -> None:
+                # Raw mode only: the IM path renders one answer and has
+                # nowhere to put working notes.
+                if stream_reasoning is None or not raw_prompt:
+                    return
+                with stream_lock:
+                    current = extract_codex_stream_reasoning("".join(out_holder["stdout"]))
+                    if len(current) <= stream_state["reasoning_len"]:
+                        return
+                    delta = current[stream_state["reasoning_len"] :]
+                    stream_state["reasoning_len"] = len(current)
+                if delta:
+                    stream_reasoning(delta)
 
             def _read_pipe(name: str, pipe: subprocess.PIPE[str] | None) -> None:
                 if pipe is None:
@@ -122,6 +204,7 @@ class CodexExecutor:
                         out_holder[name].append(chunk)
                         append_live_log(live_log_file, chunk)
                         if name == "stdout":
+                            _emit_reasoning_delta()
                             _emit_stream_delta()
                 except Exception as exc:  # pragma: no cover
                     comm_error.append(exc)
@@ -177,6 +260,7 @@ class CodexExecutor:
                 raise comm_error[0]
             out_stdout = "".join(out_holder["stdout"])
             out_stderr = "".join(out_holder["stderr"])
+            _emit_reasoning_delta()
             _emit_stream_delta()
 
             duration = time.monotonic() - start
@@ -226,7 +310,7 @@ class CodexExecutor:
                 else []
             )
             summary = (
-                self._extract_user_answer(answer_source)
+                self._extract_user_answer(answer_source, raw=raw_prompt)
                 if success
                 else _codex_failure_summary(event_capture)
             )
@@ -329,10 +413,16 @@ class CodexExecutor:
             env["VIRTUAL_ENV"] = str(venv)
         return env
 
-    def _extract_user_answer(self, stdout: str) -> str:
+    def _extract_user_answer(self, stdout: str, *, raw: bool = False) -> str:
         text = (stdout or "").strip()
         if not text:
             return "Task completed."
+        if raw:
+            # The caller owns the prompt, so no FINAL_ANSWER marker will ever
+            # appear and there is no `codex` banner line to scan for. Without
+            # this the scan below falls through and throws the real answer
+            # away, reporting "Task completed." in its place.
+            return self._clip(text, SLACK_TEXT_SOFT_LIMIT)
 
         marker_match = self._find_last_marker(text, "FINAL_ANSWER")
         if marker_match is not None:
@@ -365,7 +455,11 @@ class CodexExecutor:
 
         return "Task completed."
 
-    def _extract_partial_user_answer(self, stdout: str) -> str:
+    def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
+        if raw:
+            # No marker will ever arrive, so there is nothing to strip and
+            # nothing to wait for.
+            return extract_codex_json_stream_text(stdout)
         json_message = extract_codex_json_stream_message(stdout)
         if json_message:
             return self._extract_partial_user_answer(json_message)
@@ -469,7 +563,13 @@ class CodexExecutor:
         resolved_command = self._resolve_command()
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
         model_override = str(task.metadata.get("model") or "").strip()
-        use_bypass = self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        read_only = bool(task.metadata.get("read_only"))
+        # A read-only run must not be handed the bypass flag, whatever the
+        # instance was configured with — that flag turns the sandbox off wholesale
+        # and would quietly void the promise the caller made to the user.
+        use_bypass = not read_only and (
+            self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        )
 
         is_ping = False
         subagent = task.metadata.get("subagent")
@@ -478,22 +578,33 @@ class CodexExecutor:
             if task_name.startswith("ping-") or "ping" in task_name.lower():
                 is_ping = True
 
+        # Kept as one name because it decides two things: whether the ping trims
+        # the user's config, and whether the recursion guard has anything to guard.
+        ignores_user_config = is_ping and not model_override
+        guard = self._recursion_guard(ignores_user_config=ignores_user_config)
+
         if session_id:
             command = [resolved_command, "exec", "resume"]
             command.append("--json")
             if use_bypass:
                 command.append("--dangerously-bypass-approvals-and-sandbox")
             else:
-                command.append("--full-auto")
+                # Resuming does not inherit the original run's sandbox, so the
+                # mode has to be restated or a second turn could write.
+                command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
             if self._skip_git_repo_check:
                 command.append("--skip-git-repo-check")
             if model_override:
                 command.extend(["-m", model_override])
-            elif is_ping:
+            elif ignores_user_config:
                 # Skip ~/.codex/config.toml so the keep-alive ping doesn't load
                 # the user's MCP servers + plugins into context (~21% fewer
                 # tokens, measured). Auth still resolves via CODEX_HOME.
                 self._append_ping_model_args(command)
+            command.extend(guard)
+            for attachment in task.image_attachments:
+                command.extend(["--image", str(attachment.path)])
+            # The session id is positional and `codex exec resume` reads it last.
             command.append(session_id)
             return command
 
@@ -501,16 +612,17 @@ class CodexExecutor:
         if use_bypass:
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
-            command.append("--full-auto")
-            if self._sandbox_mode:
-                command.extend(["--sandbox", self._sandbox_mode])
+            command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
         if self._skip_git_repo_check:
             command.append("--skip-git-repo-check")
         if model_override:
             command.extend(["-m", model_override])
-        elif is_ping:
+        elif ignores_user_config:
             # See resume branch above: trim MCP/plugin context for the ping.
             self._append_ping_model_args(command)
+        command.extend(guard)
+        for attachment in task.image_attachments:
+            command.extend(["--image", str(attachment.path)])
         return command
 
     def _append_ping_model_args(self, command: list[str]) -> None:
@@ -524,6 +636,34 @@ class CodexExecutor:
         command.extend(["-m", model])
         if effort:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
+
+    def _recursion_guard(self, *, ignores_user_config: bool) -> list[str]:
+        """Overrides that keep a child `codex exec` from calling back into Fluxion.
+
+        Someone who wants every Codex session served by their local agents writes
+        `model_provider = "fluxion_auto"` at the top of `~/.codex/config.toml`.
+        The `codex exec` launched here reads that same line, so a gateway route
+        reaching `local_codex` spawns a Codex that calls the gateway — which is
+        holding the workspace lock while it waits for that very process to exit.
+        Neither side can move, and nothing times out. A workspace that happens to
+        differ turns the deadlock into unbounded process spawning instead, which
+        is not an improvement.
+
+        Fluxion picking this executor means "run the Codex CLI", never "be a
+        gateway client", so a provider pointing back at us is replaced. Any other
+        custom provider — someone proxying Codex through their own endpoint — is
+        left alone, which is why this matches on the prefix rather than pinning
+        the provider unconditionally.
+
+        The chosen override lands in the recorded command, so a run that was
+        redirected says so in its own log.
+        """
+        if ignores_user_config:
+            return []
+        provider = _configured_model_provider(_codex_home() / "config.toml")
+        if not provider.startswith(_GATEWAY_PROVIDER_PREFIX):
+            return []
+        return ["-c", f"model_provider={_NATIVE_PROVIDER}"]
 
     def _should_retry_with_fresh_session(self, *, stderr: str, task: Task) -> bool:
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
@@ -539,15 +679,16 @@ class CodexExecutor:
         return any(m in text for m in markers)
 
     def _run_fresh_session(self, *, task: Task, prompt: str, start: float) -> ExecutionResult:
-        use_bypass = self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        read_only = bool(task.metadata.get("read_only"))
+        use_bypass = not read_only and (
+            self._bypass_sandbox or self._sandbox_mode == "danger-full-access"
+        )
         resolved_command = self._resolve_command()
         command = [resolved_command, "exec", "--json"]
         if use_bypass:
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
-            command.append("--full-auto")
-            if self._sandbox_mode:
-                command.extend(["--sandbox", self._sandbox_mode])
+            command.extend(["--sandbox", _sandbox_mode(self._sandbox_mode, read_only)])
         if self._skip_git_repo_check:
             command.append("--skip-git-repo-check")
         env = self._build_env(task.workspace)
@@ -572,7 +713,7 @@ class CodexExecutor:
         )
         return ExecutionResult(
             success=success,
-            summary=self._extract_user_answer(answer_source)
+            summary=self._extract_user_answer(answer_source, raw=is_raw_prompt(task))
             if success
             else _codex_failure_summary(event_capture),
             stdout=proc.stdout,

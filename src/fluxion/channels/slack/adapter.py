@@ -15,6 +15,13 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
 from fluxion.channels.artifacts import upload_channel_artifacts
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    copy_stream_limited,
+    ensure_attachment_count,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import SettingsHotReloader, authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
 from fluxion.channels.inbox import make_inbox_dir
@@ -251,20 +258,27 @@ class SlackChannelAdapter:
                 return
 
             if files:
-                saved = self._download_files(files=files, workspace=workspace, event=event, say=say)
-                if saved:
-                    rel = [str(p.relative_to(workspace)) for p in saved]
-                    note = "Attached file(s) saved in the workspace:\n" + "\n".join(
-                        f"- {r}" for r in rel
-                    )
-                    task_text = (
-                        f"{task_text}\n\n{note}".strip()
-                        if task_text
-                        else (
-                            "The user sent the following file(s) without a text "
-                            "instruction. Inspect them and respond appropriately.\n\n" + note
-                        )
-                    )
+                try:
+                    ensure_attachment_count(len(files))
+                except AttachmentNormalizationError as exc:
+                    say(text=f"Rejected attachment: {exc}", channel=event["channel"])
+                    return
+                downloaded = self._download_files(
+                    files=files, workspace=workspace, event=event, say=say
+                )
+            else:
+                downloaded = []
+            if files and not downloaded and not task_text:
+                return
+            try:
+                task_attachments, task_images = normalize_downloaded_files(downloaded)
+            except AttachmentNormalizationError as exc:
+                say(
+                    text=f"Rejected attachment: {exc}",
+                    channel=event["channel"],
+                    thread_ts=event.get("thread_ts") or event.get("ts"),
+                )
+                return
 
             convo_key = self._build_conversation_key(event)
             executor_to_use = self._resolve_executor_for_event(event)
@@ -285,6 +299,8 @@ class SlackChannelAdapter:
                 text=task_text,
                 workspace=workspace,
                 metadata=metadata,
+                attachments=task_attachments,
+                image_attachments=task_images,
             )
             context = {
                 "channel": event["channel"],
@@ -828,7 +844,7 @@ class SlackChannelAdapter:
 
     def _download_files(
         self, *, files: list[dict[str, Any]], workspace: Path, event: dict, say
-    ) -> list[Path]:
+    ) -> list[DownloadedFile]:
         """Download Slack file uploads into the task workspace.
 
         Slack file URLs are private: they must be fetched with the bot token in
@@ -836,7 +852,7 @@ class SlackChannelAdapter:
         """
         attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
         token = self._settings.slack_bot_token
-        saved: list[Path] = []
+        saved: list[DownloadedFile] = []
         for idx, f in enumerate(files):
             if not isinstance(f, dict):
                 continue
@@ -848,11 +864,20 @@ class SlackChannelAdapter:
             try:
                 req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
                 with urllib.request.urlopen(req, timeout=120) as resp:
-                    data = resp.read()
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
-                saved.append(dest)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with dest.open("wb") as out:
+                        copy_stream_limited(resp, out)
+                saved.append(
+                    DownloadedFile(
+                        path=dest,
+                        media_type=str(f.get("mimetype") or ""),
+                    )
+                )
+            except AttachmentNormalizationError as exc:
+                dest.unlink(missing_ok=True)
+                say(text=f"Rejected attachment: {exc}", channel=event["channel"])
             except Exception:
+                dest.unlink(missing_ok=True)
                 logger.exception("Failed to download Slack file %s", f.get("id"))
                 say(
                     text="Failed to download attachment (check files:read permission).",

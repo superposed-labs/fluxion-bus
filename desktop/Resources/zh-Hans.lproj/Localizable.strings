@@ -94,7 +94,10 @@
 
 "console.title" = "Fluxion Console";
 "console.web_console" = "Web 控制台";
-"console.messaging_gateway" = "消息网关";
+"console.gateways" = "网关服务";
+"console.gateways.messaging" = "消息网关";
+"console.gateways.provider" = "Provider 网关";
+"console.gateways.down" = "未运行：";
 "console.scheduler" = "调度器";
 "console.reload_console" = "重新加载控制台页面";
 "console.open_in_browser" = "在浏览器中打开";
@@ -249,8 +252,10 @@
 "preferences.service.web.desc" = "在端口 8765 启动本地 Web UI。";
 "preferences.service.scheduler.title" = "Scheduler 守护进程";
 "preferences.service.scheduler.desc" = "启动配额和调度轮询后台工作进程。";
-"preferences.service.gateway.title" = "Gateway（所有渠道）";
+"preferences.service.gateway.title" = "消息网关（所有渠道）";
 "preferences.service.gateway.desc" = "为所有已启用渠道启动后台消息网关。";
+"preferences.service.provider.title" = "Provider 网关";
+"preferences.service.provider.desc" = "将 Fluxion 作为 Provider 暴露给外部 Agent 及工具调用。";
 "preferences.section.services" = "伴随服务";
 
 "preferences.quota.watch.desc" = "选择要监听的 %@ 重置窗口，并在重置时发送通知和/或执行自动 Ping (Auto-Ping)。";

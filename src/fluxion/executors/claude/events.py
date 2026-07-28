@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 import shlex
 from collections import OrderedDict
@@ -17,6 +18,8 @@ class ClaudeEventCapture:
     changed_files: list[str] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     operations: list[dict[str, Any]] = field(default_factory=list)
+    # Token totals for the whole run, taken from the terminal `result` event.
+    token_usage: dict[str, int] = field(default_factory=dict)
 
 
 def extract_claude_stream_message(stdout: str) -> str:
@@ -32,6 +35,159 @@ def extract_claude_stream_message(stdout: str) -> str:
     return message
 
 
+def extract_claude_stream_text(stdout: str) -> str:
+    """Return all assistant text so far, with no FINAL_ANSWER gate.
+
+    ``extract_claude_stream_message`` deliberately withholds output until a
+    message carries the marker, because under Fluxion's own prompt contract
+    everything before it is scratch work an IM user should not see.
+
+    A caller running with ``RAW_PROMPT_MODE`` never gets that marker, so the
+    gated reader returns "" for the entire run — the consumer would see silence
+    and then a single blob, or nothing at all. Here the narration is the point:
+    it is what keeps a live window live and a stream from idling out.
+
+    Two event shapes are read, and both are needed:
+
+    - ``assistant`` events, which arrive only once a whole message is finished.
+      On their own they make a live view lurch: nothing for twenty seconds, then
+      the entire answer at once.
+    - ``stream_event`` text deltas from ``--include-partial-messages``, which
+      arrive token by token while the message is still being written.
+
+    The two overlap by design: a partial run is held in ``pending`` and dropped
+    the moment the finished message supersedes it, so text is never counted
+    twice and the returned string only ever grows — which is what the caller's
+    ``current[sent_len:]`` delta arithmetic depends on.
+    """
+    parts: list[str] = []
+    pending = ""
+    for event in _iter_jsonl_events(stdout):
+        blocks = _assistant_text_blocks(event)
+        if blocks:
+            parts.extend(blocks)
+            pending = ""
+            continue
+        pending += _partial_text_delta(event)
+    return "\n\n".join([*parts, pending] if pending else parts)
+
+
+def _partial_text_delta(event: dict[str, Any]) -> str:
+    """Text from one ``--include-partial-messages`` chunk, if it carries any.
+
+    Deliberately narrow: thinking blocks and tool-call arguments stream through
+    the same event type with a different delta type, and neither belongs in the
+    user-visible answer.
+    """
+    if event.get("type") != "stream_event":
+        return ""
+    inner = event.get("event")
+    if not isinstance(inner, dict) or inner.get("type") != "content_block_delta":
+        return ""
+    delta = inner.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return ""
+    return str(delta.get("text") or "")
+
+
+def extract_claude_stream_reasoning(stdout: str) -> str:
+    """The agent's visible working — its thinking, and the tools it reached for.
+
+    Separate from `extract_claude_stream_text` because the consumer renders it
+    somewhere else. Codex shows reasoning in the collapsed disclosure above a
+    sub-agent's answer; sending this as ordinary output text would dump the
+    scratch work into the answer instead.
+
+    Tool calls are rendered as one short line each rather than forwarded as
+    structured calls. The sub-agent thread that displays this executes no tools,
+    so a real `function_call` would be an instruction to run something; a line of
+    prose is a description of something that already ran here.
+
+    Grows monotonically for the same reason as the text reader: an in-flight
+    `thinking_delta` run is held in `pending` and dropped once the finished
+    message supersedes it, so nothing is counted twice.
+    """
+    parts: list[str] = []
+    pending = ""
+    for event in _iter_jsonl_events(stdout):
+        if event.get("type") == "stream_event":
+            pending += _partial_thinking_delta(event)
+            continue
+        thinking = _assistant_thinking_blocks(event)
+        if thinking:
+            parts.extend(thinking)
+            pending = ""
+        for tool in _tool_uses(event):
+            described = describe_tool_use(tool)
+            if described:
+                parts.append(described)
+    return "\n\n".join([*parts, pending] if pending else parts)
+
+
+def _partial_thinking_delta(event: dict[str, Any]) -> str:
+    inner = event.get("event")
+    if not isinstance(inner, dict) or inner.get("type") != "content_block_delta":
+        return ""
+    delta = inner.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "thinking_delta":
+        return ""
+    return str(delta.get("thinking") or "")
+
+
+def _assistant_thinking_blocks(event: dict[str, Any]) -> list[str]:
+    if event.get("type") != "assistant":
+        return []
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    texts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            text = str(block.get("thinking") or "").strip()
+            if text:
+                texts.append(text)
+    return texts
+
+
+# What to show for each tool, chosen so one line says what the agent touched.
+# A tool that is not listed still gets its name, which beats silence.
+_TOOL_SUBJECT = {
+    "read": "file_path",
+    "edit": "file_path",
+    "write": "file_path",
+    "notebookedit": "notebook_path",
+    "grep": "pattern",
+    "glob": "pattern",
+    "bash": "command",
+    "webfetch": "url",
+}
+
+
+def describe_tool_use(tool: dict[str, Any]) -> str:
+    """One readable line for a tool call, e.g. ``Read(README.md)``."""
+    name = str(tool.get("name") or "").strip()
+    if not name:
+        return ""
+    tool_input = tool.get("input")
+    key = _TOOL_SUBJECT.get(name.lower())
+    subject = ""
+    if key and isinstance(tool_input, dict):
+        subject = str(tool_input.get(key) or "").strip().replace("\n", " ")
+    if not subject:
+        return name
+    if key and key.endswith("_path") and subject.startswith("/"):
+        # Absolute paths are mostly workspace prefix, and the line is read at a
+        # glance in a collapsed disclosure. The last two segments locate the file
+        # without pushing the useful part past the truncation limit.
+        subject = "/".join(pathlib.PurePath(subject).parts[-2:])
+    if len(subject) > 80:
+        subject = subject[:77] + "..."
+    return f"{name}({subject})"
+
+
 def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCapture:
     events = _load_jsonl_events(stdout)
     if not events:
@@ -41,6 +197,7 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
     changed_files: OrderedDict[str, None] = OrderedDict()
     final_message = ""
     session_id = ""
+    token_usage: dict[str, int] = {}
     shell_mutation_without_paths = False
     # Edits/creates are recorded as they stream; Write is deferred until its
     # tool_result lands, because only the result text distinguishes a freshly
@@ -58,6 +215,15 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
         result = event.get("result")
         if isinstance(result, str) and result.strip():
             final_message = result.strip()
+
+        # The terminal `result` event carries Claude's own total for the run.
+        # Take it rather than summing per-message usage: Claude re-logs the same
+        # turn 2-4x as a streaming artifact, so hand-summing inflates the figure
+        # two to three times over.
+        if event.get("type") == "result":
+            usage = _token_usage(event.get("usage"))
+            if usage:
+                token_usage = usage
 
         for text in _assistant_text_blocks(event):
             if _has_final_answer_marker(text):
@@ -134,7 +300,30 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
         changed_files=list(changed_files.keys()),
         risk_flags=risk_flags,
         operations=operations,
+        token_usage=token_usage,
     )
+
+
+def _token_usage(raw: Any) -> dict[str, int]:
+    """Normalize Claude's usage block to the names `fluxion.usage` uses.
+
+    Only non-zero values are kept, so an executor that reports nothing is
+    distinguishable from one that genuinely used zero tokens.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    mapping = {
+        "input_tokens": "input_tokens",
+        "output_tokens": "output_tokens",
+        "cache_creation_input_tokens": "cache_creation_tokens",
+        "cache_read_input_tokens": "cache_read_tokens",
+    }
+    usage: dict[str, int] = {}
+    for source, target in mapping.items():
+        value = raw.get(source)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            usage[target] = value
+    return usage
 
 
 def _is_create_result(result_text: str) -> bool:

@@ -94,7 +94,10 @@
 
 "console.title" = "Fluxion Console";
 "console.web_console" = "Web Console";
-"console.messaging_gateway" = "Messaging Gateway";
+"console.gateways" = "Gateways";
+"console.gateways.messaging" = "Messaging gateway";
+"console.gateways.provider" = "Provider gateway";
+"console.gateways.down" = "Not running: ";
 "console.scheduler" = "Scheduler";
 "console.reload_console" = "Reload Console Page";
 "console.open_in_browser" = "Open in Browser";
@@ -252,8 +255,10 @@
 "preferences.service.web.desc" = "Launch local web UI on port 8765.";
 "preferences.service.scheduler.title" = "Scheduler Daemon";
 "preferences.service.scheduler.desc" = "Start quota and schedule polling task worker.";
-"preferences.service.gateway.title" = "Gateway (All Channels)";
+"preferences.service.gateway.title" = "Messaging Gateway (All Channels)";
 "preferences.service.gateway.desc" = "Start the background messaging gateway for all enabled channels.";
+"preferences.service.provider.title" = "Provider Gateway";
+"preferences.service.provider.desc" = "Expose Fluxion as a provider for external agents and tools.";
 "preferences.section.services" = "Companion Services";
 
 "preferences.quota.watch.desc" = "Watch which %@ windows for a reset — then notify and/or auto-ping below.";

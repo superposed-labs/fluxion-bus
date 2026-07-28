@@ -22,6 +22,12 @@ from typing import Any
 
 from fluxion.channels.allowlist_messages import format_allowlist_rejection
 from fluxion.channels.artifacts import upload_channel_artifacts
+from fluxion.channels.attachments import (
+    AttachmentNormalizationError,
+    DownloadedFile,
+    ensure_attachment_count,
+    normalize_downloaded_files,
+)
 from fluxion.channels.base import authorize_inbound
 from fluxion.channels.control_formatter import format_control_response
 from fluxion.channels.wechat.context_store import ContextTokenStore
@@ -186,6 +192,8 @@ class WeChatChannelAdapter:
                     items=items,
                 )
                 return
+            except AttachmentNormalizationError as exc:
+                self._send_text(context=context, text=f"Rejected attachment: {exc}")
             except Exception:
                 logger.exception("WeChat sendMessage failed on attempt %s", attempt)
                 time.sleep(0.5 * attempt)
@@ -354,30 +362,28 @@ class WeChatChannelAdapter:
 
         # Download attachments if present
         if attachments:
-            saved = self._download_attachments(
+            try:
+                ensure_attachment_count(len(attachments))
+            except AttachmentNormalizationError as exc:
+                self._send_text(context=context, text=f"Rejected attachment: {exc}")
+                return
+            downloaded = self._download_attachments(
                 attachments=attachments,
                 workspace=workspace,
                 context=context,
             )
-            if saved:
-                rel = [str(p.relative_to(workspace)) for p in saved]
-                note = "Attached file(s) saved in the workspace:\n" + "\n".join(
-                    f"- {r}" for r in rel
-                )
-                task_text = (
-                    f"{task_text}\n\n{note}".strip()
-                    if task_text
-                    else (
-                        "The user sent the following file(s) without a text "
-                        "instruction. Inspect them and respond appropriately.\n\n" + note
-                    )
-                )
-
-        if not task_text:
+        else:
+            downloaded = []
+        if attachments and not downloaded and not task_text:
             self._send_text(
                 context=context,
                 text="Please send a non-empty task description or attachments.",
             )
+            return
+        try:
+            task_attachments, task_images = normalize_downloaded_files(downloaded)
+        except AttachmentNormalizationError as exc:
+            self._send_text(context=context, text=f"Rejected attachment: {exc}")
             return
 
         # Build conversation key and resolve executor
@@ -398,6 +404,8 @@ class WeChatChannelAdapter:
                 "executor": executor_to_use,
                 "conversation_key": convo_key,
             },
+            attachments=task_attachments,
+            image_attachments=task_images,
         )
 
         submit_context = {**context, "workspace": str(workspace)}
@@ -587,11 +595,11 @@ class WeChatChannelAdapter:
         attachments: list[dict[str, Any]],
         workspace: Path,
         context: dict,
-    ) -> list[Path]:
+    ) -> list[DownloadedFile]:
         from fluxion.channels.inbox import make_inbox_dir
 
         attach_dir = make_inbox_dir(workspace, ttl_hours=self._settings.inbox_ttl_hours)
-        saved: list[Path] = []
+        saved: list[DownloadedFile] = []
         for idx, att in enumerate(attachments):
             param = att.get("encrypt_query_param")
             aes_key = att.get("aes_key")
@@ -608,7 +616,12 @@ class WeChatChannelAdapter:
                     key_is_hex=key_is_hex,
                     full_url=att.get("full_url"),
                 )
-                saved.append(dest)
+                saved.append(
+                    DownloadedFile(
+                        path=dest,
+                        media_type="",
+                    )
+                )
             except Exception:
                 logger.exception("Failed to download WeChat attachment %s", name)
                 self._send_text(

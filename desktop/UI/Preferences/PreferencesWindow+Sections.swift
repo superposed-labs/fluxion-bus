@@ -923,7 +923,23 @@ extension PreferencesWindow {
             isFirst: false
         )
 
-        addSection(title: L10n.tr("preferences.section.services"), rows: [webRow, schedRow, slackRow], into: documentStack)
+        checkProvider = NSSwitch()
+        checkProvider.state =
+            (appDelegate.envVals["FLUXION_PROVIDER_ENABLED"] ?? "false").lowercased() == "true" ? .on : .off
+        checkProvider.target = self
+        checkProvider.action = #selector(autosave)
+        let providerRow = CardRow(
+            title: L10n.tr("preferences.service.provider.title"),
+            desc: L10n.tr("preferences.service.provider.desc"),
+            control: checkProvider,
+            isFirst: false
+        )
+
+        addSection(
+            title: L10n.tr("preferences.section.services"),
+            rows: [webRow, schedRow, slackRow, providerRow],
+            into: documentStack
+        )
     }
 
     // MARK: - Section 6: Quota Reset Automation

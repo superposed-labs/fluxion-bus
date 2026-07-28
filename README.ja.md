@@ -307,6 +307,23 @@ fluxion-gateway
 
 チャネルとワークスペースの細かな設定については、[設定ガイド](docs/configuration.md#messaging-channel-configuration) を参照してください。
 
+## Provider ゲートウェイ
+
+`fluxion-provider` は、Fluxion のローカルエージェント（Claude、Codex、Antigravity）を API Provider エンドポイント（`http://127.0.0.1:8787`）として公開します。外部ツールは従量課金のモデル API ではなくこのエンドポイントを呼び、実際の作業はすでに契約済みの CLI 上で動きます。OpenAI Responses（Codex サブエージェント）と Anthropic Messages（Claude Code）の両プロトコルに対応します。
+
+```bash
+fluxion-provider init
+fluxion-provider serve
+```
+
+Codex クライアントを一括設定する：
+
+```bash
+fluxion-provider install-codex-config
+```
+
+詳細、セキュリティ認証、診断ツールについては [Provider ゲートウェイガイド](docs/provider-gateway.md) を参照してください。
+
 ## ドキュメント
 
 - [システムアーキテクチャ](docs/architecture.md) — 完全なシステム構成図、各コンポーネントのインターフェース、共有状態、およびディレクトリレイアウト
@@ -316,6 +333,7 @@ fluxion-gateway
 - [macOS アプリガイド](desktop/README.md) — 配布用アプリパッケージのビルド、管理バックエンド設定、システムインストール、および開発用オーバーライド
 - [使用率統計](docs/usage-statistics.md) — エージェント履歴の解析対象、Fluxion 委任から独立した用量計測、費用見積もり、および Fast モードの制限
 - [スケジューラーガイド](docs/scheduler.md) — 自動 Ping、クォータリセット検知トリガー、cron ルール設定、およびサービスデプロイ
+- [Provider ゲートウェイ](docs/provider-gateway.md) — ローカル Provider エンドポイント、Auth Token 認証、Codex 設定ガイド
 - [設定ガイド](docs/configuration.md) — タスクエージェントのカスタマイズ、権限管理、各種メッセージチャネル、Web UI、および環境変数
 - [サービスデプロイ](deploy/README.md) — launchd および systemd のサービステンプレートの適用方法
 
