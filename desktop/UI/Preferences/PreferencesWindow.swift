@@ -37,6 +37,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var checkExecutorClaude: NSSwitch!
     var checkExecutorCodex: NSSwitch!
     var checkExecutorAntigravity: NSSwitch!
+    var checkAgyAutoApprove: NSSwitch!
     // Executors the user enabled that are not currently installed. Their toggle
     // is forced off/disabled so the settings page stays honest, but we keep the
     // preference here so autosave does not silently discard it.
@@ -326,8 +327,11 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         if let agentsStack = pageStackViews["agents"] {
             buildUsageSection(into: agentsStack, availability: availability)
             buildExecutorsSection(into: agentsStack, availability: availability)
-            buildApiModelsSection(into: agentsStack)
+            // Folders first, then what agents may do in them: the two halves of
+            // the same authorization question, so they read in order.
             buildSubagentProjectsSection(into: agentsStack)
+            buildAgentPermissionsSection(into: agentsStack, availability: availability)
+            buildApiModelsSection(into: agentsStack)
         }
         if let automationStack = pageStackViews["automation"] {
             buildQuotaResetSection(into: automationStack)
@@ -916,6 +920,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         if defaultExecutorIdx >= 0 && defaultExecutorIdx < PreferencesWindow.executorProviderKeys.count {
             updates["FLUXION_DEFAULT_EXECUTOR"] = PreferencesWindow.executorProviderKeys[defaultExecutorIdx]
         }
+
+        // Antigravity blanket auto-approval
+        updates["FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS"] = checkAgyAutoApprove.state == .on ? "true" : "false"
 
         // Keychain
         updates["FLUXION_CLAUDE_USAGE_KEYCHAIN"] = checkKeychain.state == .on ? "true" : "false"

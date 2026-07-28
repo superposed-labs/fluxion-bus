@@ -247,6 +247,13 @@
 "preferences.claude_refresh.desc" = "刷新过期的 Claude 配额凭据并写回。";
 "preferences.section.api_models" = "API 与模型";
 "preferences.projects.title" = "子 Agent 项目";
+"preferences.section.agent_permissions" = "Agent 权限";
+"preferences.executors.agy_auto_approve.not_installed" = "Antigravity 未安装，此设置当前不起作用。";
+"preferences.executors.agy_auto_approve.not_enabled" = "上方已停用 Antigravity，此设置当前不起作用。";
+"preferences.executors.agy_auto_approve.title" = "Antigravity：自动批准所有工具";
+"preferences.executors.agy_auto_approve.desc" = "通常不需要开启。子 Agent 任务若已申请对授权项目的写入权限，会自动获得仅限该次任务的许可。只有当你想让不申请权限的消息渠道任务也能改文件时才需要开启。";
+"preferences.projects.note.title" = "注册项目即授予文件夹权限";
+"preferences.projects.note.desc" = "添加项目会授权 Agent 读取并写入该文件夹。Agent 只能在这里列出的文件夹中工作。";
 
 "preferences.service.web.title" = "Web 仪表盘守护进程";
 "preferences.service.web.desc" = "在端口 8765 启动本地 Web UI。";

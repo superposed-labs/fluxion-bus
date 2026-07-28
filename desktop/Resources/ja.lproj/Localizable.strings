@@ -247,6 +247,13 @@
 "preferences.claude_refresh.desc" = "期限切れの Claude クォータ認証情報を更新して書き戻します。";
 "preferences.section.api_models" = "API とモデル";
 "preferences.projects.title" = "サブエージェントプロジェクト";
+"preferences.section.agent_permissions" = "エージェントの権限";
+"preferences.executors.agy_auto_approve.not_installed" = "Antigravity が未インストールのため、この設定は現在効果がありません。";
+"preferences.executors.agy_auto_approve.not_enabled" = "上で Antigravity が無効のため、この設定は現在効果がありません。";
+"preferences.executors.agy_auto_approve.title" = "Antigravity: すべてのツールを自動承認";
+"preferences.executors.agy_auto_approve.desc" = "通常は不要です。許可済みプロジェクトへの書き込みを要求したサブエージェントタスクには、そのタスク限りの権限が自動で付与されます。アクセスを要求しないメッセージチャンネルのタスクにファイル編集を許可する場合のみ有効にしてください。";
+"preferences.projects.note.title" = "プロジェクト登録＝フォルダへのアクセス許可";
+"preferences.projects.note.desc" = "プロジェクトを追加すると、そのフォルダの読み取りと書き込みが許可されます。ここに登録されたフォルダ以外では agent は作業できません。";
 
 "preferences.service.web.title" = "Web ダッシュボードデーモン";
 "preferences.service.web.desc" = "ローカル Web UI をポート 8765 で起動します。";

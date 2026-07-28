@@ -19,7 +19,17 @@ from fluxion.executors.claude.events import (
     extract_claude_stream_text,
     parse_claude_stream_events,
 )
+from fluxion.executors.common.actions import (
+    extract_actions_json,
+    find_last_marker,
+    upload_paths,
+)
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
+from fluxion.executors.common.process import (
+    drain_reader_threads,
+    start_process,
+    terminate_process_tree,
+)
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.workspace.artifact_collector import select_uploadable_paths
@@ -111,7 +121,10 @@ class ClaudeExecutor:
         try:
             touch_live_log(live_log_file)
             env = self._build_env(task.workspace)
-            proc = subprocess.Popen(
+            # Own process group: the CLI spawns MCP servers and tool
+            # subprocesses that would otherwise survive termination and keep our
+            # stdout/stderr pipes open forever.
+            proc = start_process(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -206,8 +219,7 @@ class ClaudeExecutor:
                     break
                 time.sleep(0.25)
 
-            stdout_thread.join()
-            stderr_thread.join()
+            drain_reader_threads((stdout_thread, stderr_thread), proc=proc)
             if comm_error:
                 raise comm_error[0]
 
@@ -364,14 +376,7 @@ class ClaudeExecutor:
         )
 
     def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        if proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
-            if proc.poll() is None:
-                proc.kill()
+        terminate_process_tree(proc)
 
     def _build_env(self, workspace: Path) -> dict[str, str]:
         env = os.environ.copy()
@@ -555,60 +560,18 @@ class ClaudeExecutor:
         )
 
     def _extract_action_upload_paths(self, payload: dict | None) -> list[str]:
+        """Declared uploads, from the structured field or the trailing block.
+
+        Claude Code can surface the ACTIONS_JSON object directly as
+        `structured_output`; when it doesn't, it is parsed out of the result text
+        like the other executors do.
+        """
         if not isinstance(payload, dict):
             return []
         actions = payload.get("structured_output")
         if not isinstance(actions, dict):
-            actions = self._extract_actions_from_result(str(payload.get("result", "")))
-        if not isinstance(actions, dict):
-            return []
-        raw = actions.get("upload_files")
-        if not isinstance(raw, list):
-            return []
-        paths: list[str] = []
-        seen: set[str] = set()
-        for item in raw:
-            value = ""
-            if isinstance(item, str):
-                value = item.strip()
-            elif isinstance(item, dict):
-                value = str(item.get("path", "")).strip()
-            if not value:
-                continue
-            key = value.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(value)
-        return paths
-
-    def _extract_actions_from_result(self, result_text: str) -> dict | None:
-        marker_match = self._find_last_marker(result_text, "ACTIONS_JSON")
-        if marker_match is None:
-            return None
-        tail = result_text[marker_match.end() :].strip()
-        if not tail:
-            return None
-        if tail.startswith("```"):
-            lines = tail.splitlines()
-            if lines:
-                lines = lines[1:]
-            content: list[str] = []
-            for line in lines:
-                if line.strip().startswith("```"):
-                    break
-                content.append(line)
-            tail = "\n".join(content).strip()
-            if not tail:
-                return None
-        decoder = json.JSONDecoder()
-        try:
-            obj, _ = decoder.raw_decode(tail)
-        except Exception:
-            return None
-        if isinstance(obj, dict):
-            return obj
-        return None
+            actions = extract_actions_json(str(payload.get("result", "")))
+        return upload_paths(actions)
 
     def _extract_final_answer(self, result_text: str) -> str:
         text = (result_text or "").strip()
@@ -628,8 +591,7 @@ class ClaudeExecutor:
         return "\n".join(lines).strip()
 
     def _find_last_marker(self, text: str, marker: str) -> re.Match[str] | None:
-        matches = list(re.finditer(rf"(?m)^\s*{re.escape(marker)}:?\s*$", text or ""))
-        return matches[-1] if matches else None
+        return find_last_marker(text, marker)
 
     def _clip(self, text: str, limit: int) -> str:
         if len(text) <= limit:

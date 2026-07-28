@@ -135,7 +135,14 @@ def test_aggregator_does_not_treat_workspace_diffstat_as_task_delta(env):
     task = aggregate_tasks(env)[0]
 
     assert task["changed_files"] == []
-    assert task["diff_summary"] == {"files": 0, "additions": 0, "deletions": 0}
+    # lines_counted marks the 471/4 above as not measured for this run, rather
+    # than leaving a bare 0 to be misread as "nothing changed".
+    assert task["diff_summary"] == {
+        "files": 0,
+        "additions": 0,
+        "deletions": 0,
+        "lines_counted": False,
+    }
 
 
 # ── tasks ──────────────────────────────────────────────────────────

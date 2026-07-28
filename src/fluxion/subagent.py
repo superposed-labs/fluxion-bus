@@ -158,9 +158,12 @@ class SubagentRunHandle:
     accepted: bool
     summary: str
     adapter: LocalChannelAdapter
+    requested_model: str = ""
+    effective_model: str = ""
+    resumed_session_model: str = ""
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "run_id": self.run_id,
             "task_id": self.task_id,
             "agent": self.agent,
@@ -175,7 +178,22 @@ class SubagentRunHandle:
             "success": True,
             "status": "QUEUED",
             "summary": self.summary or "Task accepted.",
+            # Which model this run actually goes out with. Without it a caller
+            # could not tell that its run was about to bill a different quota
+            # pool than the one it picked.
+            "requested_model": self.requested_model,
+            "effective_model": self.effective_model or "(executor default)",
         }
+        if self.resumed_session_model and self.effective_model:
+            if self.resumed_session_model != self.effective_model:
+                payload["model_binding_warning"] = (
+                    f"This run resumes an executor conversation created with "
+                    f"{self.resumed_session_model}, but asks for {self.effective_model}. "
+                    "Agent CLIs may keep the conversation's original model, which would "
+                    "bill a different quota pool than requested. Use session_policy='new' "
+                    "(or a fresh thread) to guarantee the requested model."
+                )
+        return payload
 
 
 class LocalChannelAdapter:
@@ -364,6 +382,19 @@ class SubagentRunner:
             raise RuntimeError(reason)
         with self._adapters_lock:
             self._adapters[task.id] = adapter
+        # Read back after submit: the gateway fills in a conversation-level
+        # default when the caller didn't name a model.
+        effective_model = str(task.metadata.get("model") or "")
+        resumed_session_model = (
+            self._gateway._sessions.get_session_model(
+                conversation_key=conversation_key,
+                channel="local",
+                user_id=request.user,
+                session_id=existing_session,
+            )
+            if existing_session
+            else ""
+        )
         return SubagentRunHandle(
             run_id=task.id,
             task_id=task.id,
@@ -378,7 +409,14 @@ class SubagentRunner:
             accepted=True,
             summary="Task accepted.",
             adapter=adapter,
+            requested_model=request.model or "",
+            effective_model=effective_model,
+            resumed_session_model=resumed_session_model,
         )
+
+    @property
+    def gateway(self) -> GatewayCore:
+        return self._gateway
 
     def cancel(self, task_id: str) -> tuple[bool, str]:
         return self._gateway.cancel_task(task_id)
@@ -413,6 +451,7 @@ def build_gateway(settings: Settings) -> GatewayCore:
         change_set_max_total_bytes=settings.change_set_max_total_bytes,
         typing_heartbeat_sec=0,
         running_update_sec=0,
+        workspace_lock_timeout_sec=settings.workspace_lock_timeout_sec,
         settings=settings,
     )
 

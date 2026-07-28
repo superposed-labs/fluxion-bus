@@ -43,6 +43,8 @@
   --st-failed-bg:  oklch(0.71 0.185 25 / 0.14);
   --st-canceled:   oklch(0.50 0.012 250);
   --st-canceled-bg: oklch(0.50 0.012 250 / 0.16);
+  --st-interrupted:   oklch(0.62 0.11 65);
+  --st-interrupted-bg: oklch(0.62 0.11 65 / 0.16);
   --warn:          var(--accent);
   --warn-bg:       var(--accent-faint);
   --warn-ink:      oklch(0.18 0.02 70);

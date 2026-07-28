@@ -6,7 +6,8 @@ export type TaskStatus =
   | "RETRYING"
   | "RETURNED"
   | "FAILED"
-  | "CANCELED";
+  | "CANCELED"
+  | "INTERRUPTED";
 
 export type ExecutorName = "codex" | "claude" | "antigravity";
 

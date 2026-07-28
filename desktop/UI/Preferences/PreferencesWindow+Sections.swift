@@ -872,9 +872,19 @@ extension PreferencesWindow {
             addRowSep.heightAnchor.constraint(equalToConstant: 0.5)
         ])
         
+        // Registering a project is an authorization step, not just a label:
+        // it grants read AND write access to that folder. Say so, because the
+        // section title alone reads like a naming convenience.
+        let projectsNote = CardRow(
+            title: L10n.tr("preferences.projects.note.title"),
+            desc: L10n.tr("preferences.projects.note.desc"),
+            control: NSView(),
+            isFirst: true
+        )
+
         addSection(
             title: L10n.tr("preferences.projects.title"),
-            rows: [projectsContainerStack, addRowView],
+            rows: [projectsNote, projectsContainerStack, addRowView],
             into: documentStack
         )
         
@@ -884,6 +894,56 @@ extension PreferencesWindow {
         }
         
         updateSeparators()
+    }
+
+    // MARK: - Agent Permissions
+    // Deliberately adjacent to Sub-agent Projects: that section says which
+    // folders agents may touch, this one says what they may do there. Kept
+    // apart from the executor toggles, where a security decision would read as
+    // just another capability switch.
+    func buildAgentPermissionsSection(
+        into documentStack: NSStackView,
+        availability: AvailabilitySnapshot?
+    ) {
+        checkAgyAutoApprove = NSSwitch()
+        // Show the stored value even when the switch is inert. The executor
+        // toggles above force an unavailable one to display "off", which is
+        // right for a capability but wrong here: a standing grant that reads as
+        // "off" is a security setting hidden from the person who owns it.
+        checkAgyAutoApprove.state = (appDelegate.envVals["FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS"] ?? "false").lowercased() == "true" ? .on : .off
+        checkAgyAutoApprove.target = self
+        checkAgyAutoApprove.action = #selector(autosave)
+
+        // Off is the right default: a sub-agent run that asked for write access
+        // to an authorized folder already gets permission for that run alone.
+        let isInstalled = availability?.executors["antigravity"]?.status == "available"
+        let isEnabled = (appDelegate.envVals["FLUXION_ENABLED_EXECUTORS"] ?? "claude,codex,antigravity")
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .contains("antigravity")
+
+        var desc = L10n.tr("preferences.executors.agy_auto_approve.desc")
+        if !isInstalled {
+            desc += " " + L10n.tr("preferences.executors.agy_auto_approve.not_installed")
+        } else if !isEnabled {
+            desc += " " + L10n.tr("preferences.executors.agy_auto_approve.not_enabled")
+        }
+        // Inert rather than hidden: hiding it would strand whatever is stored,
+        // and autosave reads this switch on every save.
+        checkAgyAutoApprove.isEnabled = isInstalled && isEnabled
+
+        let agyApproveRow = CardRow(
+            title: L10n.tr("preferences.executors.agy_auto_approve.title"),
+            desc: desc,
+            control: checkAgyAutoApprove,
+            isFirst: true
+        )
+
+        addSection(
+            title: L10n.tr("preferences.section.agent_permissions"),
+            rows: [agyApproveRow],
+            into: documentStack
+        )
     }
 
     // MARK: - Section 5: Companion Services

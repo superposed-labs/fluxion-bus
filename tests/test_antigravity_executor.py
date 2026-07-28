@@ -513,3 +513,52 @@ def test_raw_mode_reports_a_silent_refusal(tmp_path):
 
     assert result.success is False
     assert "Bash" in result.summary
+
+
+# ── permission grant follows the run's declared write intent ──────────
+def _cmd_for(mode: str | None, *, skip_permissions: bool = False) -> list[str]:
+    from pathlib import Path as _Path
+
+    executor = AntiGravityExecutor(
+        timeout_sec=10,
+        command="agy",
+        sandbox=False,
+        dangerously_skip_permissions=skip_permissions,
+        print_timeout_sec=10,
+        logs_dir=_Path("/tmp/fluxion-test-logs"),
+    )
+    metadata: dict = {"executor": "antigravity"}
+    if mode is not None:
+        metadata["subagent"] = {"agent": "antigravity", "mode": mode}
+    task = Task.create(
+        channel="local",
+        user_id="local",
+        text="do it",
+        workspace=_Path("/tmp"),
+        metadata=metadata,
+    )
+    return executor._build_command(
+        task=task, prompt="p", resolved_command="agy", log_file=_Path("/tmp/x.log")
+    )
+
+
+def test_a_workspace_write_run_is_allowed_to_act():
+    # The engine already refused unauthorized workspaces before this point, so
+    # the run carries a write grant; agy's all-or-nothing switch honours it.
+    assert "--dangerously-skip-permissions" in _cmd_for("workspace-write")
+
+
+def test_a_read_only_run_is_not_handed_the_blanket_grant():
+    # Withholding the flag is all Fluxion controls; whether agy then declines to
+    # edit is agy's own call, and it does not always decline. Not a sandbox.
+    assert "--dangerously-skip-permissions" not in _cmd_for("read-only")
+
+
+def test_a_task_without_a_declared_mode_needs_the_global_flag():
+    # IM/gateway tasks express no mode; don't infer an intent for them.
+    assert "--dangerously-skip-permissions" not in _cmd_for(None)
+    assert "--dangerously-skip-permissions" in _cmd_for(None, skip_permissions=True)
+
+
+def test_the_global_flag_still_covers_read_only_runs():
+    assert "--dangerously-skip-permissions" in _cmd_for("read-only", skip_permissions=True)

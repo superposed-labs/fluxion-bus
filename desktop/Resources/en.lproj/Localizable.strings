@@ -250,6 +250,13 @@
 "preferences.claude_refresh.desc" = "Refresh expired Claude quota credentials and write them back.";
 "preferences.section.api_models" = "API & Models";
 "preferences.projects.title" = "Sub-agent Projects";
+"preferences.section.agent_permissions" = "Agent Permissions";
+"preferences.executors.agy_auto_approve.not_installed" = "Antigravity is not installed, so this setting has no effect right now.";
+"preferences.executors.agy_auto_approve.not_enabled" = "Antigravity is turned off above, so this setting has no effect right now.";
+"preferences.executors.agy_auto_approve.title" = "Antigravity: Auto-Approve All Tools";
+"preferences.executors.agy_auto_approve.desc" = "Usually unnecessary. Sub-agent tasks that request write access to an authorized project already get permission for that task alone. Turn this on only to let messaging-channel tasks, which request no access, edit files.";
+"preferences.projects.note.title" = "Projects grant folder access";
+"preferences.projects.note.desc" = "Adding a project authorizes agents to read AND write that folder. Agents can only work in folders listed here.";
 
 "preferences.service.web.title" = "Web Console Daemon";
 "preferences.service.web.desc" = "Launch local web UI on port 8765.";

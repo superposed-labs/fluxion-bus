@@ -100,6 +100,8 @@
 .statusbadge[data-st="FAILED"]    .ind { background: var(--st-failed); }
 .statusbadge[data-st="CANCELED"]  { background: var(--st-canceled-bg); color: var(--st-canceled); }
 .statusbadge[data-st="CANCELED"]  .ind { background: var(--st-canceled); }
+.statusbadge[data-st="INTERRUPTED"] { background: var(--st-interrupted-bg); color: var(--st-interrupted); }
+.statusbadge[data-st="INTERRUPTED"] .ind { background: var(--st-interrupted); }
 
 /* Tabs */
 .tabs {

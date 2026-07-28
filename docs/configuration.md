@@ -125,9 +125,35 @@ with `--conversation <id>` when a prior session exists. Authenticate `agy`
 locally first.
 
 Other Antigravity keys:
-- `FLUXION_ANTIGRAVITY_SANDBOX` — pass `--sandbox`
-- `FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS` — highest risk
+- `FLUXION_ANTIGRAVITY_SANDBOX` — pass `--sandbox`. Restricts terminal access; it is *not* a read-only mode, and the agent can still edit files
+- `FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS` — highest risk; auto-approves every tool in every run and every workspace. Usually unnecessary, see below
 - `FLUXION_ANTIGRAVITY_PRINT_TIMEOUT_SEC` — timeout passed to `agy --print-timeout`
+
+### How Antigravity gets permission to edit
+
+`agy` has one permission control and it is all-or-nothing: without
+`--dangerously-skip-permissions` it auto-approves its read-only tools (Search,
+ReadFile, ListDir) and soft-denies `Bash` and `Edit` — every way it could change
+code. A soft-denied run exits 0 and prints no answer, so Fluxion detects it and
+reports an explicit failure rather than a silent success.
+
+Fluxion passes the flag automatically for a run that was **already authorized to
+write**, which requires two explicit decisions to have been made first:
+
+1. the caller asked for `mode="workspace-write"`, and
+2. the workspace is a registered project or an allow-listed path — otherwise the
+   engine refuses the run before `agy` ever starts.
+
+So sub-agent edit tasks work without setting anything extra. Set the env key
+only to auto-approve runs that made neither decision — messaging-channel tasks,
+which declare no mode.
+
+`read-only` runs do not receive the flag, but **that is not a sandbox**. agy has
+no read-only mode: whether it then declines to edit is its own decision, and
+once it has trusted a workspace it stops asking. A read-only run in a
+previously used workspace was measured editing a file with no soft-deny at all.
+For agy, `mode="read-only"` is a prompt-level instruction — use an executor that
+enforces it (Codex, Claude Code) when the guarantee matters.
 
 Change detection and revert capture:
 - `FLUXION_CHANGE_DETECTION` — `off` by default; `snapshot` and `force` opt into filesystem snapshots, `fsevents` and `auto` are reserved
@@ -640,9 +666,10 @@ minimal. The table below covers the most commonly tuned keys.
 | `FLUXION_PROJECTS` | | Inline project registry, e.g. `app=/path/app\|executor=codex` |
 | `FLUXION_DATA_DIR` | `data` | State directory (relative to `FLUXION_WORKSPACE_ROOT`) |
 | `FLUXION_DEFAULT_EXECUTOR` | `codex` | `codex` / `claude` / `antigravity` |
-| `FLUXION_WORKER_COUNT` | `1` | Background worker count |
-| `FLUXION_MAX_PENDING_PER_USER` | `3` | Max pending tasks per user |
+| `FLUXION_WORKER_COUNT` | `3` | Concurrent runs per Fluxion process. Same-workspace writes stay serialized by the workspace lock regardless |
+| `FLUXION_MAX_PENDING_PER_USER` | `5` | Max in-flight tasks per user (queued + running). Keep above `FLUXION_WORKER_COUNT` |
 | `FLUXION_TASK_TIMEOUT_SEC` | `1800` | Per-task timeout |
+| `FLUXION_WORKSPACE_LOCK_TIMEOUT_SEC` | `FLUXION_TASK_TIMEOUT_SEC` | How long a `workspace-write` run waits for another run to release the same workspace before failing |
 | `FLUXION_MAX_RETRIES` | `1` | Max retries for transient failures |
 | `FLUXION_RETRY_BACKOFF_SEC` | `2` | Retry backoff base seconds |
 | `FLUXION_CHANGE_SET_MAX_FILE_BYTES` | `1000000` | Max per-file UTF-8 text content captured for reversible ChangeSets; `0` disables capture |

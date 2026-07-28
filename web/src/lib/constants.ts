@@ -9,6 +9,7 @@ export const STATUSES: TaskStatus[] = [
   "RETURNED",
   "FAILED",
   "CANCELED",
+  "INTERRUPTED",
 ];
 
 // Steady-state subset surfaced as filter chips.
@@ -18,6 +19,7 @@ export const FILTER_STATUSES: TaskStatus[] = [
   "RETURNED",
   "FAILED",
   "CANCELED",
+  "INTERRUPTED",
 ];
 
 export const EXECUTORS = ["claude", "codex", "antigravity"] as const;
@@ -35,6 +37,8 @@ export const STATUS_LABEL: Record<string, string> = {
   RETURNED: "Returned",
   FAILED: "Failed",
   CANCELED: "Canceled",
+  // Owning process vanished mid-run; no result was ever recorded.
+  INTERRUPTED: "Interrupted",
 };
 
 export const STATUS_VAR: Record<string, string> = {
@@ -46,6 +50,7 @@ export const STATUS_VAR: Record<string, string> = {
   RETURNED: "var(--st-returned)",
   FAILED: "var(--st-failed)",
   CANCELED: "var(--st-canceled)",
+  INTERRUPTED: "var(--st-interrupted)",
 };
 
 // Sort order used by the task list — active states first.
@@ -58,6 +63,7 @@ export const STATUS_PRIORITY: Record<string, number> = {
   FAILED: 5,
   RETURNED: 6,
   CANCELED: 7,
+  INTERRUPTED: 8,
 };
 
 export function statusLabel(status: string): string {
