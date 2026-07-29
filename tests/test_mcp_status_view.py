@@ -206,8 +206,9 @@ def test_get_task_status_defaults_compact_detail_opt_in(tmp_path, monkeypatch):
     mcp_server = server_mod.create_server()
 
     async def call_status(arguments):
-        _content, payload = await mcp_server.call_tool("get_task_status", arguments)
-        return payload
+        # MCP 2.x returns a CallToolResult; the tool payload is structured_content.
+        result = await mcp_server.call_tool("get_task_status", arguments)
+        return result.structured_content
 
     compact = asyncio.run(call_status({"run_id": "t1"}))
     detail = asyncio.run(call_status({"run_id": "t1", "detail": True}))

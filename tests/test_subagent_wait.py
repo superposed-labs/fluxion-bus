@@ -338,7 +338,8 @@ def test_fastmcp_run_subagent_binding_preserves_timeout_sec(monkeypatch):
             },
         )
 
-    _content, payload = asyncio.run(call_tool())
+    # MCP 2.x returns a CallToolResult; the tool payload is structured_content.
+    payload = asyncio.run(call_tool()).structured_content
 
     assert payload["status"] == "QUEUED"
     assert payload["timed_out"] is True
