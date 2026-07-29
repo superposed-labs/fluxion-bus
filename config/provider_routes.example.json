@@ -12,6 +12,10 @@
     "",
     "Validate any edit with: fluxion-provider doctor",
     "",
+    "Model ids rot when a vendor retires one, and nothing catches that at request",
+    "time. `fluxion-provider check-models` compares this file against the CLIs'",
+    "own catalogs and is safe to run on a schedule while the gateway is up.",
+    "",
     "The rationale behind each field lives in the module docstrings under",
     "src/fluxion/provider_gateway/ — start with config.py and local_agent.py."
   ],
@@ -25,7 +29,14 @@
         "renders its output as a model response. No API key, no per-token charge.",
         "`executor` names a Fluxion executor: claude, codex, or antigravity.",
         "Capability flags are granted automatically for local agents, so only",
-        "max_context_tokens is worth declaring."
+        "max_context_tokens is worth declaring.",
+        "",
+        "Model ids are passed through to the CLI verbatim and are never checked",
+        "against what it actually offers, so a vendor retiring one turns every",
+        "turn on that route into a CLI error until this file is edited. Claude",
+        "aliases (opus, sonnet, haiku) survive version bumps; the dated ids the",
+        "other CLIs use do not. List the live ones with `agy models` or",
+        "`codex debug models`, and re-check after a CLI upgrade."
       ],
       "id": "local_claude",
       "protocol": "local_agent",
@@ -48,14 +59,17 @@
       "_comment": [
         "A second local agent on a different CLI. Useful for review: a reviewer",
         "backed by a different vendor than the worker will not repeat the worker's",
-        "blind spots."
+        "blind spots.",
+        "",
+        "The model id below was current when this example was written. Confirm it",
+        "with `codex debug models` before enabling this provider."
       ],
       "id": "local_codex",
       "protocol": "local_agent",
       "executor": "codex",
       "enabled": false,
       "default_workspace": "",
-      "models": [{ "id": "gpt-5-codex", "capabilities": { "max_context_tokens": 272000 } }]
+      "models": [{ "id": "gpt-5.6-sol", "capabilities": { "max_context_tokens": 272000 } }]
     },
 
     {
@@ -83,12 +97,27 @@
     "A policy is a named strategy: an ordered candidate list plus optional",
     "scoring weights. Candidates are `provider_id:model_id`.",
     "",
-    "`fallback` entries are tried after `candidates`, in order. Order is also the",
-    "tie-break, so two equally-scored models always resolve the same way across",
-    "restarts.",
+    "`fallback` entries join `candidates` in one ordered list, and selection",
+    "picks from that list once. Order is also the tie-break, so two",
+    "equally-scored models always resolve the same way across restarts.",
+    "",
+    "`fallback` is NOT a runtime retry. A local agent has side effects in a real",
+    "workspace from its first tool call, so the gateway deliberately makes one",
+    "attempt and no more (see _run_local_agent in provider_gateway/app.py). Once",
+    "a candidate is chosen, a failure during the run — quota exhausted, CLI",
+    "error, retired model id — ends the turn; the next candidate is not tried.",
+    "What `fallback` does cover is selection time: a candidate that no longer",
+    "exists in this file, or whose declared capabilities cannot serve the",
+    "request, is filtered out before the run starts and the next one is used.",
+    "",
+    "One policy must be named by FLUXION_PROVIDER_DEFAULT_POLICY (default:",
+    "`balanced`). It is used for any role that `routes` below does not list, so",
+    "renaming every policy without setting that variable makes unlisted roles",
+    "fail with 'policy not configured'.",
     "",
     "Weight dimensions: quality, cost, latency, quota. An unknown name is a load",
-    "error rather than a silently ignored typo."
+    "error rather than a silently ignored typo. Weights only matter with two or",
+    "more candidates in a policy; with one, order decides and they do nothing."
   ],
 
   "policies": {

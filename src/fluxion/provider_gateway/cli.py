@@ -23,6 +23,10 @@ from fluxion.provider_gateway.config import (
     GatewaySettings,
     RoutingConfig,
 )
+from fluxion.provider_gateway.model_catalog import (
+    describe_missing,
+    verify_configured_models,
+)
 from fluxion.provider_gateway.sticky import StickyStore
 
 _STARTER_CONFIG = {
@@ -140,6 +144,9 @@ def _doctor(args: argparse.Namespace) -> int:
                 continue
             notes.append(f"  {provider_id}: local agent via {spec.executor!r}")
         problems.extend(_read_only_problems(routing, executors, enforces_read_only))
+        model_problems, model_notes = _model_catalog_report(routing)
+        problems.extend(model_problems)
+        notes.extend(model_notes)
     except ConfigError as err:
         problems.append(str(err))
 
@@ -148,6 +155,47 @@ def _doctor(args: argparse.Namespace) -> int:
     for problem in problems:
         print(f"FAIL {problem}", file=sys.stderr)
     return 1 if problems else 0
+
+
+def _check_models(args: argparse.Namespace) -> int:
+    """Verify configured model ids against the CLIs' own catalogs.
+
+    Separate from `doctor` so it can run unattended. `doctor` reports a bound
+    port as a problem — correct when you are about to start a gateway, wrong for
+    a scheduled check, where a gateway already running is the normal case and
+    would make every run exit non-zero.
+    """
+    routing = RoutingConfig.load(GatewaySettings.load().config_file)
+    problems, notes = _model_catalog_report(routing)
+    for note in notes:
+        print(f"ok   {note}")
+    for problem in problems:
+        print(f"FAIL {problem}", file=sys.stderr)
+    if problems:
+        print(
+            "\nA retired model id fails every turn on its route, and a policy's "
+            "`fallback` does not cover it: the gateway makes one attempt per turn "
+            "by design. Edit the routing config and restart the gateway.",
+            file=sys.stderr,
+        )
+    return 1 if problems else 0
+
+
+def _model_catalog_report(routing: RoutingConfig) -> tuple[list[str], list[str]]:
+    """Model-existence findings as `(problems, notes)`.
+
+    Only ids a *readable* catalog fails to list become problems. An unreachable
+    catalog is reported as a note: a CLI that is missing, slow, or newly
+    upgraded must not be able to condemn a working configuration.
+    """
+    verification = verify_configured_models(routing)
+    problems = [describe_missing(routing, candidate) for candidate in verification.missing]
+    notes = list(verification.catalog_notes)
+    if verification.verified:
+        notes.append(f"{len(verification.verified)} configured model(s) confirmed live")
+    for candidate, reason in verification.unverified:
+        notes.append(f"  {candidate}: not verified — {reason}")
+    return problems, notes
 
 
 def _read_only_problems(routing, executors, enforces_read_only) -> list[str]:
@@ -357,6 +405,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     doctor_parser = subparsers.add_parser("doctor", help="Check the local setup.")
     doctor_parser.set_defaults(handler=_doctor)
+
+    check_models_parser = subparsers.add_parser(
+        "check-models",
+        help="Verify configured model ids still exist in the CLIs' catalogs "
+        "(safe to run on a schedule while the gateway is up).",
+    )
+    check_models_parser.set_defaults(handler=_check_models)
 
     print_parser = subparsers.add_parser(
         "print-codex-config", help="Print the Codex-side config without modifying anything."

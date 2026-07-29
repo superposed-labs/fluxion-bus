@@ -36,6 +36,8 @@ This writes the token file and, if you have no routing config yet, a starter `co
 fluxion-provider doctor
 ```
 
+It also verifies that every model id you configured still exists in its CLI's own catalog. Model ids are passed to the CLI verbatim, so a retired one is not caught anywhere else — see [When a model is retired](#when-a-model-is-retired).
+
 ---
 
 ## Routing Configuration
@@ -283,3 +285,21 @@ positive integers.
 **The agent forgot the earlier part of the conversation.** Check `fluxion-provider routes`: a row showing `cold` has no resumable agent session behind it.
 
 **Nothing reaches the gateway.** `fluxion-provider doctor` checks the token, the port, the routing config, and the bind address.
+
+---
+
+## When a model is retired
+
+Model ids in the routing config are passed to the agent CLI verbatim (`--model` / `-m`), and nothing validates them at request time. When a vendor retires one, every turn on the routes that select it fails at the CLI, and a policy's `fallback` does **not** cover it — the gateway makes one attempt per turn by design, because a local agent has side effects in a real workspace from its first tool call. `fallback` only applies at selection time, before anything has run.
+
+Claude Code aliases (`opus`, `sonnet`, `haiku`) survive version bumps. The dated ids the other CLIs use do not, so those are what rot.
+
+Check on demand, or on a schedule:
+
+```bash
+fluxion-provider check-models
+```
+
+It exits non-zero only when a CLI's catalog is readable and does not list a configured id. A catalog it could not read at all — CLI missing, slow, mid-upgrade — is reported as unverified and exits zero, so a scheduled run does not cry wolf. `doctor` runs the same check but also fails on a bound port, which is normal while the gateway is up; `check-models` is the form to automate.
+
+Startup logs a warning for the same condition and never refuses to start: one dead candidate fails only the turns that select it, whereas a gateway that will not boot fails everything.
