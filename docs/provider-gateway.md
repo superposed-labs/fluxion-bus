@@ -300,6 +300,11 @@ Check on demand, or on a schedule:
 fluxion-provider check-models
 ```
 
-It exits non-zero only when a CLI's catalog is readable and does not list a configured id. A catalog it could not read at all — CLI missing, slow, mid-upgrade — is reported as unverified and exits zero, so a scheduled run does not cry wolf. `doctor` runs the same check but also fails on a bound port, which is normal while the gateway is up; `check-models` is the form to automate.
+It exits non-zero only when a CLI's catalog is readable and does not list a configured id. Everything else exits zero, so a scheduled run does not cry wolf:
+
+- a catalog it could not read at all — CLI missing, slow, mid-upgrade — is reported as unverified
+- no routing config means the gateway was never set up, so there is nothing to check
+
+`doctor` runs the same check but also fails on a bound port and on a missing config, both correct when you are about to start a gateway and both wrong for an unattended run. `check-models` is the form to automate.
 
 Startup logs a warning for the same condition and never refuses to start: one dead candidate fails only the turns that select it, whereas a gateway that will not boot fails everything.

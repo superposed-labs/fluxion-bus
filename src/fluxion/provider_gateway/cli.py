@@ -165,7 +165,17 @@ def _check_models(args: argparse.Namespace) -> int:
     a scheduled check, where a gateway already running is the normal case and
     would make every run exit non-zero.
     """
-    routing = RoutingConfig.load(GatewaySettings.load().config_file)
+    settings = GatewaySettings.load()
+    if not settings.config_file.exists():
+        # Nothing is configured, so there is nothing to verify. Exiting zero is
+        # the whole point of this branch: most installs never set up the provider
+        # gateway, and telling them daily that something is wrong trains everyone
+        # to ignore the one run that matters. `doctor` still reports a missing
+        # config as a problem — there you are about to start a gateway.
+        print(f"ok   no routing config at {settings.config_file}; nothing to check")
+        return 0
+
+    routing = RoutingConfig.load(settings.config_file)
     problems, notes = _model_catalog_report(routing)
     for note in notes:
         print(f"ok   {note}")

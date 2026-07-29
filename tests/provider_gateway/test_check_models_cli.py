@@ -80,6 +80,26 @@ def test_a_healthy_config_passes(run_check):
     assert run_check("gemini-live", "gemini-retired") == 0
 
 
+def test_an_unconfigured_install_passes_quietly(tmp_path, monkeypatch, capsys):
+    """Most installs never set up the gateway.
+
+    Failing here would hand them a daily alert about a feature they do not use,
+    and an alert that is always firing is an alert nobody reads.
+    """
+    settings = cli.GatewaySettings.load(
+        env={
+            "FLUXION_PROVIDER_CONFIG_FILE": str(tmp_path / "absent.json"),
+            "FLUXION_PROVIDER_TOKEN_FILE": str(tmp_path / "token"),
+        }
+    )
+    monkeypatch.setattr(cli.GatewaySettings, "load", staticmethod(lambda *a, **k: settings))
+
+    assert cli._check_models(argparse.Namespace()) == 0
+    captured = capsys.readouterr()
+    assert "nothing to check" in captured.out
+    assert captured.err == "", "an unconfigured install is not a finding"
+
+
 def test_an_unreachable_catalog_does_not_fail_the_check(run_check, capsys):
     """A scheduled check that cries wolf when a CLI is slow gets muted, and then
     the real retirement goes unnoticed too."""
