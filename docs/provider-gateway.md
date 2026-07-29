@@ -284,6 +284,8 @@ positive integers.
 
 **The agent forgot the earlier part of the conversation.** Check `fluxion-provider routes`: a row showing `cold` has no resumable agent session behind it.
 
+**The sub-agent says it is a different model than you configured.** Ask a model what it is and you get an unreliable answer — lightweight tiers routinely name another vendor's family, and that says nothing about which CLI actually ran. Do not use it to check routing. `fluxion-provider routes` gives the provider and model each conversation is on; the per-turn history is in `attribution.db` next to the token file, which records the candidate that served every turn.
+
 **Nothing reaches the gateway.** `fluxion-provider doctor` checks the token, the port, the routing config, and the bind address.
 
 ---
