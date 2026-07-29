@@ -959,6 +959,7 @@ class GatewayCore:
                     _stop_heartbeat()
                     self._finalize_canceled(
                         task_id=task.id,
+                        partial=result,
                         before_snapshot=before_snapshot,
                         before_content_snapshot=before_content_snapshot,
                     )
@@ -1120,6 +1121,7 @@ class GatewayCore:
         self,
         *,
         task_id: str,
+        partial: ExecutionResult | None = None,
         before_snapshot: dict[str, FileFingerprint] | None = None,
         before_content_snapshot: ContentSnapshot | None = None,
     ) -> None:
@@ -1135,8 +1137,13 @@ class GatewayCore:
             record.summary = "Task canceled by request."
             record.last_updated_at = datetime.now(UTC)
             record.finished_at = record.last_updated_at
-        result = self._canceled_result(summary=record.summary)
-        if before_snapshot is not None:
+        result = self._canceled_result(summary=record.summary, partial=partial)
+        if partial is not None or before_snapshot is not None:
+            # A canceled run still changed files, and the caller needs to know
+            # which ones before it can review or revert them. The delta is only
+            # meaningful once the executor actually ran: a run canceled while it
+            # queued or waited for the workspace lock touched nothing, and
+            # attributing the workspace's pre-existing state to it would be a lie.
             self._attach_workspace_delta(
                 task=record.task,
                 result=result,
@@ -1150,14 +1157,32 @@ class GatewayCore:
         )
         record.channel_adapter.send_result(record.task.id, result, record.channel_context)
 
-    def _canceled_result(self, *, summary: str) -> ExecutionResult:
-        return ExecutionResult(
-            success=False,
-            summary=summary,
-            stdout="",
-            stderr="",
-            exit_code=130,
-        )
+    def _canceled_result(
+        self, *, summary: str, partial: ExecutionResult | None = None
+    ) -> ExecutionResult:
+        """The result to report for a canceled run.
+
+        When the executor got far enough to return something, that partial
+        result is what carries the run's identity — its session id, log file and
+        file operations. Replacing it with an empty shell used to throw all of
+        that away, which left the caller unable to see what the run had already
+        written, and left nothing for revert_subagent_run to work from.
+        """
+        if partial is None:
+            return ExecutionResult(
+                success=False,
+                summary=summary,
+                stdout="",
+                stderr="",
+                exit_code=130,
+            )
+        partial.success = False
+        partial.summary = summary
+        partial.exit_code = 130
+        # Whatever the executor was still waiting to finalize, it is not coming:
+        # the run ends here.
+        partial.pending_finalization = False
+        return partial
 
     def _attach_workspace_delta(
         self,

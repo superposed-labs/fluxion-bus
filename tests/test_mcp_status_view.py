@@ -310,6 +310,50 @@ def test_status_view_no_output_seen_when_log_is_stale(tmp_path):
     assert view["progress_signal"] == "no_output_seen"
 
 
+def test_status_view_ignores_the_partial_line_a_long_log_starts_on(tmp_path):
+    """A log read past its first 64KB starts mid-line, and that fragment used to
+    pass for agent output.
+
+    Truncation strips the timestamped prefix the glog filter matches on, so the
+    orphan fragment survived it and became the entire `recent_output_tail` —
+    turning a run whose log is 100% transport plumbing into `output_seen`."""
+
+    class _S:
+        data_dir = tmp_path
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    noise = (
+        "I0613 11:46:53.143622 11683 http_helpers.go:186] "
+        "URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent\n"
+    )
+    # Comfortably past the 64KB the tail reader seeks back over.
+    (logs / "task-t1.agy.log").write_text(noise * 1200, encoding="utf-8")
+
+    view = _status_view(_task("RUNNING", "prompt"), settings=_S(), runner=_NoLiveRunner())
+
+    assert view["recent_output_tail"] == ""
+    # The log is fresh, so the run is still credibly working — but on the
+    # strength of the file being written, not of a fake line of "output".
+    assert view["progress_signal"] == "working"
+
+
+def test_result_view_flags_whether_a_run_can_be_reverted():
+    reversible = _result_view(
+        {
+            "task_id": "r1",
+            "status": "CANCELED",
+            "changed_files": [{"path": "foo.txt"}],
+            "change_set_file": "/data/change_sets/r1.json",
+        }
+    )
+    assert reversible["revert_available"] is True
+
+    # Read-only runs (and any run whose changes could not be captured) record no
+    # ChangeSet, so revert_subagent_run has nothing to undo.
+    assert _result_view({"task_id": "r2", "status": "RETURNED"})["revert_available"] is False
+
+
 def test_result_view_compacts_paths_for_model_consumers():
     view = _result_view(
         {

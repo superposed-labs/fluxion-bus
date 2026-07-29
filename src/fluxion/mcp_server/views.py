@@ -274,6 +274,12 @@ def _result_view(task: dict[str, Any]) -> dict[str, Any]:
         "changed_files": changed_files,
         "risk_flags": task.get("risk_flags", []),
         "change_set_file": task.get("change_set_file", ""),
+        # revert_subagent_run works off the recorded ChangeSet, so its presence
+        # is the answer to "can this run be undone?" — one the caller would
+        # otherwise have to infer from a file path it cannot check. Cancel makes
+        # this worth stating: Fluxion never rolls a canceled run back, so its
+        # changes are still on disk and are the caller's to review or revert.
+        "revert_available": bool(task.get("change_set_file")),
         "artifacts": artifacts,
         "diff_summary": task.get("diff_summary", {}),
         "needs_review": _needs_review(task),

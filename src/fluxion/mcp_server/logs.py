@@ -46,10 +46,20 @@ def _log_progress(*, task_id: str, data_dir: Path) -> dict[str, Any]:
 def _read_text_tail(path: Path, *, max_bytes: int) -> str:
     size = path.stat().st_size
     with path.open("rb") as fh:
-        if size > max_bytes:
+        seeked = size > max_bytes
+        if seeked:
             fh.seek(size - max_bytes)
         data = fh.read(max_bytes)
-    return data.decode("utf-8", errors="replace")
+    text = data.decode("utf-8", errors="replace")
+    if seeked:
+        # Seeking lands mid-line, and that fragment has lost the prefix every
+        # filter downstream matches on: a truncated glog line stops looking like
+        # glog, so it survives the noise filter and becomes the whole "recent
+        # output" of a run whose log is 100% plumbing — which then reads as
+        # progress. Drop the partial line; the next one starts clean.
+        newline = text.find("\n")
+        text = text[newline + 1 :] if newline != -1 else ""
+    return text
 
 
 # Antigravity (agy) runs a Go language server that emits glog chatter into the
