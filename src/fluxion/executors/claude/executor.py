@@ -26,6 +26,7 @@ from fluxion.executors.common.actions import (
 )
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
 from fluxion.executors.common.process import (
+    CleanupReport,
     drain_reader_threads,
     start_process,
     terminate_process_tree,
@@ -202,6 +203,7 @@ class ClaudeExecutor:
 
             cancelled = False
             timed_out = False
+            cleanup = CleanupReport()
             next_live_touch = time.monotonic() + 30
             while proc.poll() is None:
                 elapsed = time.monotonic() - start
@@ -211,11 +213,11 @@ class ClaudeExecutor:
                     next_live_touch = now + 30
                 if cancel_requested and cancel_requested():
                     cancelled = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 if elapsed >= self._timeout_sec:
                     timed_out = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 time.sleep(0.25)
 
@@ -245,6 +247,7 @@ class ClaudeExecutor:
                     summary="Task canceled by user request.",
                     stdout=out_stdout,
                     stderr=out_stderr,
+                    process_cleanup=cleanup,
                     exit_code=130,
                     duration_sec=duration,
                     payload=payload,
@@ -258,6 +261,7 @@ class ClaudeExecutor:
                     summary=f"Claude Code timed out after {self._timeout_sec}s",
                     stdout=out_stdout,
                     stderr=out_stderr,
+                    process_cleanup=cleanup,
                     exit_code=124,
                     duration_sec=duration,
                     payload=payload,
@@ -326,6 +330,7 @@ class ClaudeExecutor:
         exit_code: int,
         duration_sec: float,
         payload: dict | None,
+        process_cleanup: CleanupReport | None = None,
         event_capture: ClaudeEventCapture | None = None,
     ) -> ExecutionResult:
         action_uploads = (
@@ -339,6 +344,7 @@ class ClaudeExecutor:
             stdout=stdout,
             stderr=stderr,
             exit_code=exit_code,
+            process_cleanup=process_cleanup.to_payload() if process_cleanup else {},
             artifacts=action_uploads,
             changed_files=event_capture.changed_files if success and event_capture else [],
             risk_flags=event_capture.risk_flags if event_capture else [],
@@ -375,8 +381,8 @@ class ClaudeExecutor:
             stderr=stderr or "",
         )
 
-    def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        terminate_process_tree(proc)
+    def _terminate_process(self, proc: subprocess.Popen[str]) -> CleanupReport:
+        return terminate_process_tree(proc)
 
     def _build_env(self, workspace: Path) -> dict[str, str]:
         env = os.environ.copy()

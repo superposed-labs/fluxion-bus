@@ -20,6 +20,7 @@ from fluxion.executors.antigravity.trajectory_stream import (
 from fluxion.executors.common.actions import resolve_uploads_from_text
 from fluxion.executors.common.log_writer import write_jsonl_log
 from fluxion.executors.common.process import (
+    CleanupReport,
     drain_reader_threads,
     start_process,
     terminate_process_tree,
@@ -27,7 +28,10 @@ from fluxion.executors.common.process import (
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
-from fluxion.workspace.antigravity_trajectory import find_conversation_db
+from fluxion.workspace.antigravity_trajectory import (
+    extract_agy_session_id,
+    find_conversation_db,
+)
 
 # After the answer is printed, agy lingers for post-answer housekeeping while
 # holding the process open. The reaper waits this out in the background; if the
@@ -221,15 +225,16 @@ class AntiGravityExecutor:
             cancelled = False
             timed_out = False
             answered_early = False
+            cleanup = CleanupReport()
             while proc.poll() is None:
                 elapsed = time.monotonic() - start
                 if cancel_requested and cancel_requested():
                     cancelled = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 if elapsed >= self._timeout_sec:
                     timed_out = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 if answer_done.is_set():
                     # The user-visible answer is fully printed. agy now lingers for
@@ -269,6 +274,7 @@ class AntiGravityExecutor:
                     ),
                     executor_session_id=self._extract_session_id(agy_log_file, stderr),
                     duration_sec=duration,
+                    process_cleanup=cleanup.to_payload(),
                 )
 
             if answered_early:
@@ -548,8 +554,8 @@ class AntiGravityExecutor:
             max_files=self._max_structured_uploads,
         )
 
-    def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        terminate_process_tree(proc)
+    def _terminate_process(self, proc: subprocess.Popen[str]) -> CleanupReport:
+        return terminate_process_tree(proc)
 
     def _reap_in_background(
         self,
@@ -701,16 +707,7 @@ class AntiGravityExecutor:
                 text += "\n" + log_file.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-        patterns = [
-            r"Print mode:\s*conversation=([0-9a-fA-F-]{36})",
-            r"Created conversation\s+([0-9a-fA-F-]{36})",
-            r"conversationID=\"([0-9a-fA-F-]{36})\"",
-        ]
-        for pattern in patterns:
-            matches = re.findall(pattern, text, flags=re.IGNORECASE)
-            if matches:
-                return matches[-1]
-        return ""
+        return extract_agy_session_id(text)
 
     def _extract_execution_error(self, log_file: Path, stderr: str) -> str:
         """Detect executor failures that agy reports while still exiting zero.
