@@ -38,3 +38,10 @@ class ExecutionResult:
     # an incomplete trajectory / half-written tree. Antigravity-only; claude/codex
     # run to completion before returning and finalize synchronously.
     pending_finalization: bool = False
+    # What terminating the run left behind, when the run had to be terminated:
+    # {"verified": bool, "remaining": [{"pid", "command"}], "swept": [...]}.
+    # Agent CLIs that run terminal commands in a pty put each one in its own
+    # session, out of reach of the process-group kill, so "we sent the signal"
+    # is not the same as "nothing is still running". Empty for runs that ended
+    # on their own — nothing was terminated, so there is nothing to attest.
+    process_cleanup: dict = field(default_factory=dict)

@@ -29,6 +29,7 @@ from fluxion.executors.common.actions import (
 )
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
 from fluxion.executors.common.process import (
+    CleanupReport,
     drain_reader_threads,
     start_process,
     terminate_process_tree,
@@ -246,6 +247,7 @@ class CodexExecutor:
 
             cancelled = False
             timed_out = False
+            cleanup = CleanupReport()
             next_live_touch = time.monotonic() + 30
             while proc.poll() is None:
                 elapsed = time.monotonic() - start
@@ -255,11 +257,11 @@ class CodexExecutor:
                     next_live_touch = now + 30
                 if cancel_requested and cancel_requested():
                     cancelled = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 if elapsed >= self._timeout_sec:
                     timed_out = True
-                    self._terminate_process(proc)
+                    cleanup = self._terminate_process(proc)
                     break
                 time.sleep(0.25)
 
@@ -294,6 +296,7 @@ class CodexExecutor:
                     ),
                     executor_session_id=self._extract_session_id(out_stderr),
                     duration_sec=duration,
+                    process_cleanup=cleanup.to_payload(),
                 )
             if timed_out:
                 return ExecutionResult(
@@ -312,6 +315,7 @@ class CodexExecutor:
                     ),
                     executor_session_id=self._extract_session_id(out_stderr),
                     duration_sec=duration,
+                    process_cleanup=cleanup.to_payload(),
                 )
             success = returncode == 0
             event_capture = parse_codex_json_events(out_stdout, workspace=task.workspace)
@@ -405,8 +409,8 @@ class CodexExecutor:
             stderr=stderr or "",
         )
 
-    def _terminate_process(self, proc: subprocess.Popen[str]) -> None:
-        terminate_process_tree(proc)
+    def _terminate_process(self, proc: subprocess.Popen[str]) -> CleanupReport:
+        return terminate_process_tree(proc)
 
     def _build_env(self, workspace: Path) -> dict[str, str]:
         env = os.environ.copy()

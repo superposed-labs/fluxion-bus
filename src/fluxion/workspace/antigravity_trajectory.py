@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 import sqlite3
 from collections import OrderedDict
@@ -193,6 +194,28 @@ class _ParsedPayload:
     command_line: str = ""
     cwd: Path | None = None
     structured_change: _StructuredChange | None = None
+
+
+# How agy names the conversation in its own log. The last match wins: a resumed
+# run mentions the conversation more than once.
+_SESSION_ID_PATTERNS = (
+    r"Print mode:\s*conversation=([0-9a-fA-F-]{36})",
+    r"Created conversation\s+([0-9a-fA-F-]{36})",
+    r"conversationID=\"([0-9a-fA-F-]{36})\"",
+)
+
+
+def extract_agy_session_id(text: str) -> str:
+    """The conversation id agy logged, or "" before it has named one.
+
+    The id is the key to the trajectory DB, which is where both the change
+    report and any live view of the run's progress come from.
+    """
+    for pattern in _SESSION_ID_PATTERNS:
+        matches = re.findall(pattern, text or "", flags=re.IGNORECASE)
+        if matches:
+            return matches[-1]
+    return ""
 
 
 def find_conversation_db(session_id: str, conversation_dirs: tuple[Path, ...]) -> Path | None:

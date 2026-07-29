@@ -338,6 +338,93 @@ def test_status_view_ignores_the_partial_line_a_long_log_starts_on(tmp_path):
     assert view["progress_signal"] == "working"
 
 
+def _agy_run(
+    tmp_path,
+    *,
+    steps_written_ago_sec: float,
+    # agy names conversations with a UUID, and that shape is what the log is
+    # scanned for — a placeholder id would silently never match.
+    session="ec2e52d2-40b8-4b45-a2fb-3352acd168ea",
+):
+    """A live agy run: a glog-only executor log naming a conversation, plus that
+    conversation's trajectory DB."""
+    import os
+    import sqlite3
+    import time
+
+    logs = tmp_path / "logs"
+    logs.mkdir(exist_ok=True)
+    (logs / "task-t1.agy.log").write_text(
+        f"I0613 11:46:53.143622 11683 printmode.go:12] Print mode: conversation={session}\n"
+        "I0613 11:46:54.000000 11683 http_helpers.go:186] URL: https://x\n",
+        encoding="utf-8",
+    )
+    conversations = tmp_path / "conversations"
+    conversations.mkdir(exist_ok=True)
+    db = conversations / f"{session}.db"
+    connection = sqlite3.connect(db)
+    connection.execute("CREATE TABLE steps (idx INTEGER, step_payload BLOB)")
+    connection.execute("INSERT INTO steps VALUES (7, NULL)")
+    connection.commit()
+    connection.close()
+    written = time.time() - steps_written_ago_sec
+    os.utime(db, (written, written))
+    return conversations
+
+
+def test_status_view_calls_a_stalled_agy_run_what_it_is(tmp_path, monkeypatch):
+    """agy's log keeps growing on transport chatter alone, so log freshness said
+    "working" for a run whose agent had stopped moving. Its trajectory is where
+    real steps land, and that is what the signal now follows."""
+    conversations = _agy_run(tmp_path, steps_written_ago_sec=600)
+    monkeypatch.setattr("fluxion.mcp_server.views.ANTIGRAVITY_CONVERSATIONS_DIRS", (conversations,))
+
+    class _S:
+        data_dir = tmp_path
+
+    task = {**_task("RUNNING", "prompt"), "executor": "antigravity"}
+    view = _status_view(task, settings=_S(), runner=_NoLiveRunner())
+
+    assert view["progress_signal"] == "possibly_stalled"
+    assert view["agent_steps"] == 7
+    assert view["last_agent_activity_at"]
+
+
+def test_status_view_leaves_a_moving_agy_run_alone(tmp_path, monkeypatch):
+    conversations = _agy_run(tmp_path, steps_written_ago_sec=5)
+    monkeypatch.setattr("fluxion.mcp_server.views.ANTIGRAVITY_CONVERSATIONS_DIRS", (conversations,))
+
+    class _S:
+        data_dir = tmp_path
+
+    task = {**_task("RUNNING", "prompt"), "executor": "antigravity"}
+    view = _status_view(task, settings=_S(), runner=_NoLiveRunner())
+
+    assert view["progress_signal"] == "working"
+
+
+def test_result_view_reports_what_a_terminated_run_left_running():
+    view = _result_view(
+        {
+            "task_id": "r1",
+            "status": "CANCELED",
+            "process_cleanup": {
+                "verified": False,
+                "remaining": [{"pid": 4242, "command": "flutter_tester"}],
+                "swept": [],
+            },
+        }
+    )
+
+    assert view["process_cleanup_verified"] is False
+    assert view["remaining_processes"] == [{"pid": 4242, "command": "flutter_tester"}]
+
+    # A run that ended on its own was never terminated, so it makes no claim.
+    clean = _result_view({"task_id": "r2", "status": "RETURNED"})
+    assert "process_cleanup_verified" not in clean
+    assert "remaining_processes" not in clean
+
+
 def test_result_view_flags_whether_a_run_can_be_reverted():
     reversible = _result_view(
         {

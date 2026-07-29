@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fluxion.config.settings import Settings
 from fluxion.core.runtime_registry import TERMINAL_STATUSES, owner_is_alive
+from fluxion.executors.antigravity.trajectory_stream import read_max_step_idx
 from fluxion.mcp_server.logs import _log_progress
 from fluxion.subagent import SubagentRunner, compact_tail
+from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
 from fluxion.web.services.aggregator import aggregate_tasks_cached
+from fluxion.workspace.antigravity_trajectory import (
+    extract_agy_session_id,
+    find_conversation_db,
+)
 
 _POLL_TAIL_MAX_LINES = 8
 _POLL_TAIL_MAX_CHARS = 1000
@@ -34,6 +41,13 @@ _ACTIVE_STATUSES = {"RECEIVED", "VALIDATED", "QUEUED", "RUNNING", "RETRYING"}
 # working phase is almost entirely filtered glog plumbing). Lets a caller tell a
 # live run from a hung one instead of a misleading no_output_seen.
 _LOG_ACTIVE_WINDOW_SEC = 90
+# How long an Antigravity run can go without a new trajectory step before its
+# status stops claiming progress. The log file is no help here: agy's glog keeps
+# writing transport and quota chatter whether or not the agent is doing
+# anything, so a wedged run looked exactly like a working one. Steps land every
+# two or three seconds during real work, so a gap this long is not a slow tool
+# call — but it is still a suspicion, not a verdict, hence "possibly".
+_AGENT_STALL_WINDOW_SEC = 120
 
 
 def _status_view(
@@ -118,6 +132,14 @@ def _status_poll_view(
         "blocked_by_task_id": detail.get("blocked_by_task_id", ""),
         "progress_signal": detail.get("progress_signal", ""),
         "progress_source": detail.get("progress_source", ""),
+        # Only present for executors that can report the agent's own activity
+        # rather than its runtime's log noise (Antigravity's trajectory).
+        **(
+            {"last_agent_activity_at": detail["last_agent_activity_at"]}
+            if detail.get("last_agent_activity_at")
+            else {}
+        ),
+        **({"agent_steps": detail["agent_steps"]} if detail.get("agent_steps") else {}),
         "recent_output_tail": tail,
         "recent_output_tail_truncated": bool(
             detail.get("recent_output_tail_truncated", False) or tail_truncated
@@ -239,9 +261,20 @@ def _progress_view(
         else:
             source = ""
             progress_signal = "no_output_seen"
+    agent = _agent_activity_view(task, task_id=task_id, settings=settings, terminal=terminal)
+    if (
+        not terminal
+        and not live_tail
+        and agent.get("last_agent_activity_at")
+        and _is_stale(agent["last_agent_activity_at"], _AGENT_STALL_WINDOW_SEC)
+    ):
+        # The agent itself has stopped moving. Whatever the log file is doing,
+        # saying "working" here is what let a wedged run poll green for an hour.
+        progress_signal = "possibly_stalled"
     return {
         "progress_signal": progress_signal,
         "progress_source": source,
+        **agent,
         "recent_output_tail": tail,
         "recent_output_tail_truncated": truncated,
         "live_output_chars": live.get("live_output_chars", 0),
@@ -250,6 +283,67 @@ def _progress_view(
         "log_size": log.get("log_size", 0),
         "log_updated_at": log.get("log_updated_at"),
     }
+
+
+def _agent_activity_view(
+    task: dict[str, Any],
+    *,
+    task_id: str,
+    settings: Settings,
+    terminal: bool,
+) -> dict[str, Any]:
+    """When the agent last actually did something, for executors that can say.
+
+    Antigravity is the one that can: its trajectory DB gets a row per tool step
+    as the run proceeds, which is the same source changed_files and the live
+    narration are read from. stdout says nothing until the very end and the glog
+    log says nothing about the agent at all, so this is the only honest answer
+    to "is it still working?". Other executors stream their work to stdout,
+    where the output tail already answers it.
+    """
+    if terminal or str(task.get("executor") or "") != "antigravity":
+        return {}
+    db_path = _trajectory_db_path(task_id=task_id, data_dir=settings.data_dir)
+    if db_path is None:
+        return {}
+    try:
+        updated = datetime.fromtimestamp(db_path.stat().st_mtime, UTC)
+    except OSError:
+        return {}
+    steps = read_max_step_idx(db_path)
+    return {
+        "last_agent_activity_at": updated.isoformat(),
+        "agent_steps": steps if steps >= 0 else 0,
+    }
+
+
+# agy names the conversation within the first seconds of a run — measured at
+# ~7KB into a log that grows to hundreds of KB — so the head is all this has to
+# read. Status is polled repeatedly; re-reading a whole run's log each time is
+# not worth it for a line that is always near the top.
+_SESSION_ID_SCAN_BYTES = 128_000
+
+
+def _trajectory_db_path(*, task_id: str, data_dir: Path) -> Path | None:
+    log_file = data_dir / "logs" / f"task-{task_id}.agy.log"
+    try:
+        with log_file.open("rb") as handle:
+            text = handle.read(_SESSION_ID_SCAN_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    session_id = extract_agy_session_id(text)
+    if not session_id:
+        # agy names the conversation a few seconds into the run; until then
+        # there is nothing to read and no claim to make.
+        return None
+    return find_conversation_db(session_id, ANTIGRAVITY_CONVERSATIONS_DIRS)
+
+
+def _is_stale(timestamp: str, window_sec: int) -> bool:
+    moment = _parse_time(timestamp)
+    if moment is None:
+        return False
+    return (datetime.now(UTC) - moment).total_seconds() > window_sec
 
 
 def _result_view(task: dict[str, Any]) -> dict[str, Any]:
@@ -283,9 +377,26 @@ def _result_view(task: dict[str, Any]) -> dict[str, Any]:
         "artifacts": artifacts,
         "diff_summary": task.get("diff_summary", {}),
         "needs_review": _needs_review(task),
+        # For a run that had to be terminated: whether anything it started is
+        # still running. A cancel that reports no leftovers is a different fact
+        # from a cancel that sent the signals and hoped.
+        **_process_cleanup_view(task),
         "log_file": task.get("log_file", ""),
         "elapsed_sec": _elapsed_sec(task),
         "next_action": "review_result" if _is_terminal_status(status) else _next_action(status),
+    }
+
+
+def _process_cleanup_view(task: dict[str, Any]) -> dict[str, Any]:
+    cleanup = task.get("process_cleanup")
+    if not isinstance(cleanup, dict) or not cleanup:
+        # Nothing was terminated (the run ended on its own), so there is no
+        # claim to make either way — saying "verified" would overstate it.
+        return {}
+    remaining = cleanup.get("remaining")
+    return {
+        "process_cleanup_verified": bool(cleanup.get("verified")),
+        "remaining_processes": remaining if isinstance(remaining, list) else [],
     }
 
 
