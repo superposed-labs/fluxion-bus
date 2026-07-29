@@ -9,6 +9,42 @@ milestones.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-29
+
+### Added
+
+- **Multimodal Provider Gateway** — the Provider Gateway now supports raw
+  prompt mode, live token-level streaming, and read-only enforcement,
+  letting a caller host an agent and render its own output instead of
+  going through Fluxion's FINAL_ANSWER framing.
+- **Update notification entrypoints** — the desktop app surfaces available
+  updates through additional entry points instead of only the automatic
+  Sparkle prompt.
+- **Claude Opus 5 pricing** — added Claude Opus 5 rates and updated the
+  Opus family note to cover 4.6–4.8 alongside Opus 5.
+
+### Changed
+
+- **MCP Python SDK 2.x** — migrated off the deprecated 1.x SDK; CI now runs
+  on the Node 24 runtime.
+
+### Fixed
+
+- **Sub-agent process cleanup** — sub-agent processes that escape their
+  process group are now swept up instead of leaking.
+- **Canceled runs** — canceling a run now keeps its change report instead
+  of discarding it.
+- **Wedged runs** — a leaked grandchild process could wedge a run forever;
+  it's now caught and cleaned up.
+- **Notch countdown** — the collapsed Notch's countdown now keeps updating
+  instead of freezing.
+- **Auto-Ping model selection** — price-aware auto-ping model selection is
+  now unified and consistent.
+- **Localized layout overflow** — long localized strings on the web
+  console no longer overflow their containers.
+- **ChatGPT app Codex CLI detection** — Fluxion now detects the Codex CLI
+  bundled with the ChatGPT app.
+
 ## [1.0.11] - 2026-07-22
 
 ### Added
