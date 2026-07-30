@@ -554,6 +554,7 @@ class LocalAgentUpstream:
         # item arrives can drop that item. Losing a chunk of the agent's answer
         # to a heartbeat tick is not a trade worth making.
         getter = asyncio.ensure_future(queue.get())
+        beats = 0
         try:
             while True:
                 done, _pending = await asyncio.wait({getter}, timeout=HEARTBEAT_INTERVAL_SEC)
@@ -563,10 +564,18 @@ class LocalAgentUpstream:
                     # a build, a test run) reports "started" and then nothing
                     # until it finishes. Say something so the client can tell
                     # this connection from a dead one.
-                    log.debug(
-                        "local agent %s quiet for %.0fs; sending heartbeat",
+                    beats += 1
+                    # The first beat of a run at INFO, the rest at DEBUG. This
+                    # is the only record of how often turns actually go quiet
+                    # long enough to need this, and a run silent for an hour
+                    # would otherwise either say nothing at the default level
+                    # or file sixty identical lines.
+                    log.log(
+                        logging.INFO if beats == 1 else logging.DEBUG,
+                        "local agent %s quiet for %.0fs; sending heartbeat #%d",
                         self.provider_id,
-                        HEARTBEAT_INTERVAL_SEC,
+                        HEARTBEAT_INTERVAL_SEC * beats,
+                        beats,
                     )
                     yield _HEARTBEAT, None, None
                     continue

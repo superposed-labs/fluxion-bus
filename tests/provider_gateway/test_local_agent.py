@@ -1142,3 +1142,18 @@ def test_the_heartbeat_is_a_real_event_not_an_sse_comment():
     assert not frame.startswith(b":")
     payload = json.loads(frame.removeprefix(b"data: ").decode())
     assert payload["type"] == EV_HEARTBEAT
+
+
+def test_the_first_quiet_stretch_of_a_run_is_logged(caplog, fast_heartbeat):
+    """The only record of how often turns really go quiet long enough to need this.
+
+    At DEBUG it would say nothing at the gateway's default level, which is how
+    a mechanism ends up running for months with nobody able to tell whether it
+    ever fires.
+    """
+    with caplog.at_level(logging.INFO, logger="fluxion.provider_gateway.upstream.local_agent"):
+        run_stream(build(SilentExecutor()))
+
+    beats = [line for line in caplog.text.splitlines() if "sending heartbeat" in line]
+    assert len(beats) == 1
+    assert "heartbeat #1" in beats[0]
