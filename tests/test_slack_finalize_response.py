@@ -10,6 +10,7 @@ from PIL import Image
 
 from fluxion.channels.slack.adapter import SlackChannelAdapter, _SlackStreamState
 from fluxion.core.models.result import ExecutionResult
+from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 
 
 def _adapter() -> SlackChannelAdapter:
@@ -155,3 +156,22 @@ def test_slack_download_preserves_reported_media_type(monkeypatch, tmp_path):
     assert len(downloaded) == 1
     assert downloaded[0].media_type == "image/png"
     assert downloaded[0].path.read_bytes() == payload.getvalue()
+
+
+def test_a_failure_summary_is_clipped_to_slack_size():
+    """The only result text that skips the renderer, so it clips itself.
+
+    Executors no longer cut their answer to a chat channel's limit — the answer
+    also has to survive the trip to the provider gateway — so a long failure
+    summary reaches this chunk whole.
+    """
+    adapter = _adapter()
+    _seed(adapter, "t1")
+    failure = ExecutionResult(success=False, summary="x" * 9000, stdout="", stderr="", exit_code=1)
+
+    adapter.finalize_response("t1", failure, _ctx())
+
+    chunks = adapter._app.client.chat_stopStream.call_args.kwargs["chunks"]
+    output = next(chunk["output"] for chunk in chunks if chunk.get("output"))
+    assert len(output) == SLACK_TEXT_SOFT_LIMIT
+    assert output.endswith("...(truncated)")

@@ -31,7 +31,7 @@ from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
 from fluxion.i18n import resolve_locale, t
 from fluxion.renderers.markdown_renderer import MarkdownRenderer
-from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
+from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT, clip_text
 from fluxion.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -662,7 +662,11 @@ class SlackChannelAdapter:
                         state=state,
                         completed_at=time.time(),
                     ),
-                    output=result.summary if not result.success else None,
+                    # The only result text that skips the renderer, so it is the
+                    # only one that has to clip itself. Executors hand back the
+                    # whole summary now — a channel's limit is the channel's to
+                    # apply.
+                    output=clip_text(result.summary) if not result.success else None,
                 )
             )
         if result.success and not state.streamed_answer:
