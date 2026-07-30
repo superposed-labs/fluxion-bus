@@ -40,6 +40,13 @@ PROTOCOL_FIELD = "multi_agent_version"
 
 CONFIG_KEY = "model_catalog_json"
 
+# Deliberately free of the key's own name: `plan_config_line` must be able to
+# count occurrences of the key to know it replaced rather than duplicated one.
+CONFIG_NOTE = (
+    "fluxion: pins sub-agent protocol v1; replaces Codex's model list — "
+    "re-derive with `fluxion-provider refresh-codex-catalog`"
+)
+
 
 class CatalogError(Exception):
     """A catalog file that exists but cannot be used."""
@@ -251,8 +258,13 @@ def plan_config_line(config_text: str, catalog_path: Path) -> str:
     follows a `[table]` header to that table. Appending it — the obvious thing —
     would silently make it `[projects."…"].model_catalog_json`, which Codex would
     ignore while the file still looked correct.
+
+    The note goes *on* the line rather than above it. A key this surprising should
+    say why it is there — it silently becomes the whole model list — but a comment
+    block above it would survive `plan_config_removal`, leaving an explanation of
+    a setting that no longer exists. Inline, it is removed with the key.
     """
-    line = f'model_catalog_json = "{catalog_path}"'
+    line = f'model_catalog_json = "{catalog_path}"  # {CONFIG_NOTE}'
     return "\n".join([line, *_without_config_line(config_text)]).rstrip("\n") + "\n"
 
 

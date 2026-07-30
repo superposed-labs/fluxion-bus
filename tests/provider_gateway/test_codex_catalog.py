@@ -222,7 +222,7 @@ def test_the_config_key_goes_above_every_table():
     make this `[projects."…"].model_catalog_json` — ignored, and still look right."""
     before = 'model = "x"\n\n[projects."/tmp/p"]\ntrust_level = "trusted"\n'
     after = codex_catalog.plan_config_line(before, Path("/c.json"))
-    assert after.splitlines()[0] == 'model_catalog_json = "/c.json"'
+    assert after.splitlines()[0].startswith('model_catalog_json = "/c.json"')
     assert 'trust_level = "trusted"' in after
 
 
@@ -240,6 +240,13 @@ def test_removal_drops_only_the_key():
 
 def test_removal_reports_when_there_is_nothing_to_remove():
     assert codex_catalog.plan_config_removal('model = "x"\n') is None
+
+
+def test_the_key_carries_its_own_explanation_inline():
+    """Above the line it would outlive the key; on the line it goes with it."""
+    after = codex_catalog.plan_config_line('model = "x"\n', Path("/c.json"))
+    assert codex_catalog.CONFIG_NOTE in after.splitlines()[0]
+    assert codex_catalog.plan_config_removal(after) == 'model = "x"\n'
 
 
 def test_reinstalling_replaces_the_key_instead_of_duplicating_it():

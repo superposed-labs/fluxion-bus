@@ -136,11 +136,11 @@ fluxion-provider install-codex-catalog
 It pins every model declaring v2 (narrow it with `--model`), writes the snapshot to `~/.codex/model-catalogs/multiagent-v1.json`, and adds one root-level key to `config.toml` — shown as a diff you confirm, with a backup kept:
 
 ```toml
-# ~/.codex/config.toml — a top-level key, above every [table]
-model_catalog_json = "/Users/you/.codex/model-catalogs/multiagent-v1.json"
+# ~/.codex/config.toml — written at the top, above every [table]
+model_catalog_json = "/Users/you/.codex/model-catalogs/multiagent-v1.json"  # fluxion: pins sub-agent protocol v1; …
 ```
 
-The key has to sit above every `[table]` header: TOML assigns a key that follows one to that table, so appending it would quietly make it `[projects."…"].model_catalog_json` — ignored by Codex, while the file still reads correctly.
+The key has to sit above every `[table]` header: TOML assigns a key that follows one to that table, so appending it would quietly make it `[projects."…"].model_catalog_json` — ignored by Codex, while the file still reads correctly. The note is inline rather than on its own line above, so that removing the key removes its explanation too instead of leaving one for a setting that no longer exists.
 
 Then start a **new** session. The protocol version is fixed when a thread starts, so an existing conversation stays on v2 no matter what you change.
 
