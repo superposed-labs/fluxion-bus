@@ -52,7 +52,7 @@
 "notch.credits_ready" = "クレジット利用可 · %@";
 "notch.credits_balance" = "利用クレジット · %@";
 "notch.credits_title" = "利用クレジット";
-"notch.tokens_today.upper" = "今日の TOKENS";
+"notch.tokens_today.upper" = "今日のトークン";
 "notch.cache_hit" = "%d%% キャッシュヒット";
 "notch.in_plan" = "プラン内";
 "notch.no_consumption" = "消費なし";
@@ -213,9 +213,9 @@
 "notch.card.resets_at" = "%@ にリセット";
 "notch.card.today" = "今日";
 "notch.card.cache" = "キャッシュ";
-"notch.card.cache_hit" = "キャッシュヒット";
+"notch.card.cache_hit" = "キャッシュ率";
 "notch.card.input" = "入力";
-"notch.card.fresh_input" = "未キャッシュ入力";
+"notch.card.fresh_input" = "新規入力";
 "notch.card.output" = "出力";
 "notch.card.api_value" = "API 価値";
 "notch.card.value_short" = "価値";
@@ -225,7 +225,7 @@
 "notch.card.avg_day" = "日平均";
 "notch.card.daily_avg" = "日平均";
 "notch.card.peak_day" = "ピーク日";
-"notch.card.peak_hour" = "ピーク時間";
+"notch.card.peak_hour" = "ピーク時間帯";
 "notch.card.value" = "今日の価値";
 "preferences.hide_fullscreen" = "フルスクリーン時に隠す";
 "preferences.hide_fullscreen.desc" = "アプリがフルスクリーン（ボーダレスの動画・ゲームを含む）の間は Notch をフェードアウトし、終了後に自動で戻します。";

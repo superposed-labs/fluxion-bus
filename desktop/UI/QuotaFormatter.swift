@@ -108,7 +108,6 @@ enum SharedDateFormatters {
         return formatter
     }
 
-    private static var shortTimeRangeCache: [String: DateIntervalFormatter] = [:]
     private static var currencyCache: [String: NumberFormatter] = [:]
 
     static func currency(code: String, language: String) -> NumberFormatter {
@@ -126,17 +125,23 @@ enum SharedDateFormatters {
         return formatter
     }
 
-    /// Time-only range formatter ("2 – 3 PM"), used for peak-hour labels.
-    static func shortTimeRange(language: String) -> DateIntervalFormatter {
-        lock.lock()
-        defer { lock.unlock() }
-        if let cached = shortTimeRangeCache[language] { return cached }
-        let formatter = DateIntervalFormatter()
-        formatter.locale = Locale(identifier: language)
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        shortTimeRangeCache[language] = formatter
-        return formatter
+    /// A whole-hour range for the peak-hour tile.
+    ///
+    /// Both ends are rendered separately rather than through DateIntervalFormatter.
+    /// The tile's hours are built on a sentinel date, and the 23:00 bucket ends
+    /// on the following day — which is enough for the interval formatter to
+    /// decide the range needs disambiguating and print the sentinel outright
+    /// ("1/1/2001, 11 PM – 1/2/2001, 12 AM").
+    ///
+    /// The bucket is always a full hour, so the minutes are only worth printing
+    /// where they read as part of the notation: 24-hour locales look bare
+    /// without them ("19 – 20"), while 12-hour locales already carry the day
+    /// period and would just repeat it ("7:00 PM–8:00 PM").
+    static func hourRangeText(from start: Date, to end: Date, language: String) -> String {
+        let locale = Locale(identifier: language)
+        let hourPattern = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? ""
+        let formatter = templated(hourPattern.contains("a") ? "j" : "jmm", language: language)
+        return "\(formatter.string(from: start))–\(formatter.string(from: end))"
     }
 }
 
