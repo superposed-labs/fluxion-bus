@@ -37,6 +37,17 @@ STOP_END_TURN = "end_turn"
 # restarts. The Responses side gets this from its own `fluxion` block.
 FLUXION_RESULT = "fluxion.result"
 
+# Anthropic's own keepalive. Unlike the Responses side — where the heartbeat has
+# to be an invented type because the protocol has none — `ping` is part of this
+# protocol and every Messages client already knows to ignore it, so there is no
+# reason to invent anything here.
+EV_PING = "ping"
+
+
+def ping_event() -> dict[str, Any]:
+    """A keepalive carrying no content."""
+    return {"type": EV_PING}
+
 
 def encode_messages_sse(payload: Mapping[str, Any]) -> bytes:
     """Frame one event the way an Anthropic client parses it."""

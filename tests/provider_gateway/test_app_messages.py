@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import io
 import json
+import time
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -408,3 +410,38 @@ def test_the_api_key_header_authenticates_too(tmp_path):
         headers={"x-api-key": TOKEN},
     )
     assert response.status_code == 200
+
+
+# ── keepalive ────────────────────────────────────────────────────────
+class SlowExecutor(RecordingExecutor):
+    """Silent for a stretch, the way one long tool call is."""
+
+    def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+        time.sleep(0.3)
+        return super().execute(task, cancel_requested, stream_output, stream_reasoning)
+
+
+@pytest.fixture
+def fast_heartbeat(monkeypatch):
+    from fluxion.provider_gateway.upstream import local_agent
+
+    monkeypatch.setattr(local_agent, "HEARTBEAT_INTERVAL_SEC", 0.05)
+
+
+def test_a_quiet_turn_sends_anthropic_pings(tmp_path, fast_heartbeat):
+    """`ping` is this protocol's own keepalive, so nothing has to be invented here."""
+    client = TestClient(create_app(build_ctx(tmp_path, SlowExecutor())))
+    events = events_of(post(client))
+
+    kinds = [kind for kind, _payload in events]
+    assert "ping" in kinds
+    assert kinds[-1] == "message_stop"
+
+
+def test_pings_cannot_corrupt_a_non_streaming_answer(tmp_path, fast_heartbeat):
+    """A caller waiting for one object never sees the keepalives that kept it alive."""
+    client = TestClient(create_app(build_ctx(tmp_path, SlowExecutor())))
+    body = post(client, stream=False).json()
+
+    assert body["content"][0]["text"].endswith("the answer")
+    assert body["stop_reason"] == "end_turn"
