@@ -311,6 +311,7 @@ transport details do not leak into the user-facing answer.
 | `FLUXION_INBOX_TTL_HOURS` | — | Legacy alias for `FLUXION_PROVIDER_IMAGE_TTL_HOURS` |
 | `FLUXION_PROVIDER_LOG_BODIES` | `false` | Dump every request body to `data/logs/provider-requests/` |
 | `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` | `warn` | What an unattended check does about a stale `model_catalog_json` snapshot: `warn`, `refresh`, or `off` |
+| `FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC` | `600` | How often to re-read each CLI's model catalog so retired models are skipped at selection; `0` disables the check |
 
 > Set these in the environment or in `.env` — every `fluxion-provider` subcommand reads the same file the rest of Fluxion does. An unrecognised value for `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` fails at load rather than falling back to the default, so a typo cannot leave you believing auto-refresh is on.
 
@@ -345,11 +346,27 @@ positive integers.
 
 ## When a model is retired
 
-Model ids in the routing config are passed to the agent CLI verbatim (`--model` / `-m`), and nothing validates them at request time. When a vendor retires one, every turn on the routes that select it fails at the CLI, and a policy's `fallback` does **not** cover it — the gateway makes one attempt per turn by design, because a local agent has side effects in a real workspace from its first tool call. `fallback` only applies at selection time, before anything has run.
+Model ids in the routing config are passed to the agent CLI verbatim (`--model` / `-m`). When a vendor retires one, the id is still perfectly valid configuration and only the CLI knows otherwise. The gateway makes one attempt per turn by design — a local agent has side effects in a real workspace from its first tool call — so a failure at the CLI is final for that turn. The only place this can be handled is *before* a turn is routed, which is where both halves of this feature live: the check you run, and the filter that runs itself.
 
 Claude Code aliases (`opus`, `sonnet`, `haiku`) survive version bumps. The dated ids the other CLIs use do not, so those are what rot.
 
-Check on demand, or on a schedule:
+### The gateway skips retired models while it runs
+
+A background thread re-reads each CLI's own catalog every 10 minutes (`FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC`) and drops any configured model the catalog does not list. Selection then skips it, which is what makes a policy's `fallback` genuinely cover the case: the fallback is consulted at selection time, so it only helps if the dead candidate is out of the running before scoring.
+
+Three properties are worth knowing, because each was a deliberate choice:
+
+- **A catalog that could not be read ejects nothing.** CLI missing, slow, or mid-upgrade means *unknown*, not *dead* — treating the two alike would let one timed-out subprocess disable a whole provider. A model ejected earlier comes back if its catalog later becomes unreadable; ejection reflects what we can currently observe, not a verdict on file.
+- **No routing decision waits on a CLI.** The catalogs are read in the background; a request only ever reads the last conclusion. Nothing is ejected until the first refresh completes, so a freshly started gateway routes exactly as configured for the first few seconds.
+- **A substitution is never silent.** Each turn that lands on a fallback because its preferred model is gone logs a warning naming both, and the decision's `routing_reason` carries `retired=<candidate>` and `fallback-for=<candidate>` (visible in `attribution.db` and the per-turn log line). This matters most where it is least visible: a reviewer role quietly downgraded to a cheap fallback still returns reviews you would weigh as the expensive model's.
+
+Sticky routes pointing at an ejected model are dropped so those conversations re-route on their next turn; **pinned** routes are left alone, since a pin is an explicit decision and this process is automatic.
+
+Set `FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC=0` to switch the whole mechanism off and have retired ids fail at the CLI instead.
+
+### Checking on demand
+
+Runtime filtering keeps turns running; it does not fix the config. A policy with no other candidate still fails to route, and one that does fall back is answering with a model you did not choose. So the check is still what tells you there is an edit to make:
 
 ```bash
 fluxion-provider check-models
@@ -379,4 +396,4 @@ Settings come from the environment or `.env`, both read by every `fluxion-provid
 FLUXION_PROVIDER_CODEX_CATALOG_DRIFT=refresh
 ```
 
-Startup logs a warning for the same condition and never refuses to start: one dead candidate fails only the turns that select it, whereas a gateway that will not boot fails everything.
+Startup logs a warning for the same condition and never refuses to start: one dead candidate fails only the turns whose policy has nothing else to offer, whereas a gateway that will not boot fails everything.

@@ -73,6 +73,13 @@ _LOCAL_AGENT_IMPLIED_CAPABILITIES = {
 # the built-in provider rather than adding ours.
 RESERVED_PROVIDER_IDS = frozenset({"openai", "ollama", "lmstudio"})
 
+# How often the gateway re-reads each CLI's model catalog in the background, to
+# decide which configured models still exist. Well under the catalog loaders' 1h
+# success TTL, so most cycles are a cache hit rather than a subprocess; what the
+# short interval buys is the failure case, which caches for 30s — a CLI that was
+# mid-upgrade during one cycle is re-checked minutes later, not next hour.
+DEFAULT_MODEL_HEALTH_REFRESH_SECONDS = 600.0
+
 
 class ConfigError(ValueError):
     """Configuration is unusable. Raised at load time, never mid-request."""
@@ -105,6 +112,11 @@ class GatewaySettings:
     # skips the check. `warn` is the default because refreshing rewrites a file
     # under the user's `~/.codex` — see codex_catalog.report.
     codex_catalog_drift: str = "warn"
+    # How often to re-read the CLIs' model catalogs so retired models can be
+    # skipped at selection. `0` turns the whole runtime check off, leaving the
+    # routing table exactly as configured — the switch for anyone who would
+    # rather a retired model fail loudly at the CLI than be substituted.
+    model_health_refresh_seconds: float = DEFAULT_MODEL_HEALTH_REFRESH_SECONDS
 
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> GatewaySettings:
@@ -144,6 +156,11 @@ class GatewaySettings:
             log_bodies=_bool(env.get("FLUXION_PROVIDER_LOG_BODIES"), False),
             codex_catalog_drift=_catalog_drift_mode(
                 env.get("FLUXION_PROVIDER_CODEX_CATALOG_DRIFT")
+            ),
+            model_health_refresh_seconds=_non_negative_float(
+                env.get("FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC"),
+                DEFAULT_MODEL_HEALTH_REFRESH_SECONDS,
+                "FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC",
             ),
         )
 
@@ -399,6 +416,24 @@ def _port(value: str | None, default: int) -> int:
     if not 1 <= port <= 65535:
         raise ConfigError(f"FLUXION_PROVIDER_PORT must be between 1 and 65535, got {port}")
     return port
+
+
+def _non_negative_float(value: str | None, default: float, name: str) -> float:
+    """Parse a seconds knob where 0 is a meaningful value, not an error.
+
+    Junk still raises rather than falling back to the default: a typo in an
+    interval that silently keeps the default is how someone ends up believing
+    they disabled a background check that is still running.
+    """
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = float(value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number of seconds, got {value!r}") from exc
+    if parsed < 0:
+        raise ConfigError(f"{name} must not be negative, got {parsed}")
+    return parsed
 
 
 def _positive_int(value: str | None, default: int, name: str) -> int:

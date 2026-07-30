@@ -507,6 +507,70 @@ def test_build_context_wires_a_registered_executor(tmp_path):
     context.sticky.close()
 
 
+def test_build_context_gives_the_router_a_live_health_source(tmp_path):
+    """Without this wiring the whole runtime check is dead code: `is_healthy` was a no-op."""
+    settings = GatewaySettings.load(env={"FLUXION_PROVIDER_TOKEN_FILE": str(tmp_path / "t")})
+    context = build_context(
+        settings, RoutingConfig.parse(_routing()), executors={"claude": RecordingExecutor()}
+    )
+    try:
+        assert context.model_health is not None
+        assert context.router.health_check == context.model_health.health_check
+    finally:
+        context.sticky.close()
+
+
+def test_model_health_can_be_switched_off(tmp_path):
+    """The escape hatch: route exactly as configured and let a dead id fail at the CLI."""
+    settings = GatewaySettings.load(
+        env={
+            "FLUXION_PROVIDER_TOKEN_FILE": str(tmp_path / "t"),
+            "FLUXION_PROVIDER_MODEL_HEALTH_REFRESH_SEC": "0",
+        }
+    )
+    context = build_context(
+        settings, RoutingConfig.parse(_routing()), executors={"claude": RecordingExecutor()}
+    )
+    try:
+        assert context.model_health is None
+        assert context.router.health_check("local_claude:opus") == ""
+    finally:
+        context.sticky.close()
+
+
+def test_ejecting_a_model_drains_its_sticky_routes_from_the_real_store(tmp_path):
+    """Rows outliving their model are re-read and re-rejected on every later turn."""
+    from fluxion.provider_gateway.app import _build_model_health
+    from fluxion.provider_gateway.model_catalog import ExecutorCatalog
+
+    settings = GatewaySettings.load(env={"FLUXION_PROVIDER_TOKEN_FILE": str(tmp_path / "t")})
+    store = StickyStore(tmp_path / "sticky.db")
+    # Claude has no catalog command of its own, so stub a readable one: what is
+    # under test is the drain, not catalog reading.
+    health = _build_model_health(
+        settings,
+        RoutingConfig.parse(_routing()),
+        store,
+        load=lambda executor: ExecutorCatalog(
+            executor=executor, model_ids=frozenset({"some-other-model"})
+        ),
+    )
+
+    store.remember(_identity(), "local_claude", "opus", "balanced")
+    health.refresh()
+
+    assert store.lookup("rk-1") is None
+    store.close()
+
+
+def _identity():
+    from fluxion.provider_gateway.identity import IdentityConfidence, RequestIdentity
+
+    return RequestIdentity(
+        ingress="codex", route_key="rk-1", confidence=IdentityConfidence.EXPLICIT
+    )
+
+
 def test_unregistered_executor_is_skipped_loudly(tmp_path):
     settings = GatewaySettings.load(env={"FLUXION_PROVIDER_TOKEN_FILE": str(tmp_path / "t")})
     with pytest.raises(Exception, match="would serve nothing"):

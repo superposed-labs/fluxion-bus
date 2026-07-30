@@ -128,6 +128,28 @@ def test_drain_provider_spares_pinned_routes(store):
     assert store.lookup("c") is not None
 
 
+def test_drain_model_leaves_the_provider_s_other_models_alone(store):
+    """One retired model must not evict conversations on its provider's live ones."""
+    store.remember(identity("a"), "local_agy", "gemini-retired", "balanced")
+    store.remember(identity("b"), "local_agy", "gemini-live", "balanced")
+    store.remember(identity("c"), "local_claude", "gemini-retired", "balanced")
+
+    assert store.drain_model("local_agy", "gemini-retired") == 1
+    assert store.lookup("a") is None
+    assert store.lookup("b") is not None
+    assert store.lookup("c") is not None
+
+
+def test_drain_model_spares_pinned_routes(store):
+    """A pin is an operator decision; ejecting a model is an automatic one."""
+    store.remember(identity("a"), "local_agy", "gemini-retired", "balanced")
+    store.remember(identity("b"), "local_agy", "gemini-retired", "balanced")
+    store.set_pinned("b", True)
+
+    assert store.drain_model("local_agy", "gemini-retired") == 1
+    assert store.lookup("b") is not None
+
+
 def test_forget_reports_whether_the_route_existed(store):
     store.remember(identity(), "p", "m", "balanced")
     assert store.forget("rk-1")

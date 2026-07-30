@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -71,8 +71,15 @@ from fluxion.provider_gateway.messages_stream import (
     fresh_message_id,
     non_streaming_message,
 )
+from fluxion.provider_gateway.model_catalog import ExecutorCatalog, load_catalog
+from fluxion.provider_gateway.model_health import CatalogHealth
 from fluxion.provider_gateway.request import RawRequest
-from fluxion.provider_gateway.routing import NoRouteAvailableError, RouteDecision, Router
+from fluxion.provider_gateway.routing import (
+    NoRouteAvailableError,
+    RouteDecision,
+    Router,
+    split_candidate,
+)
 from fluxion.provider_gateway.sticky import StickyRoute, StickyStore
 from fluxion.provider_gateway.stream import (
     EV_COMPLETED,
@@ -94,6 +101,9 @@ class GatewayContext:
     local_agents: Mapping[str, LocalAgentUpstream] = field(default_factory=dict)
     workspaces: Mapping[str, Path] = field(default_factory=dict)
     attribution: AttributionStore | None = None
+    # Feeds `router.health_check`. None means no runtime catalog checking, which
+    # is the pre-existing behaviour: every configured model is assumed to exist.
+    model_health: CatalogHealth | None = None
     ingress: CodexResponsesIngress = field(default_factory=CodexResponsesIngress)
     messages_ingress: AnthropicMessagesIngress = field(default_factory=AnthropicMessagesIngress)
     # Where FLUXION_PROVIDER_LOG_BODIES writes captured requests. Off unless set:
@@ -260,9 +270,13 @@ def create_app(context: GatewayContext) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Owned by the app rather than by `main()` so tests exercise the same
         # startup and shutdown path the service uses.
+        if context.model_health is not None:
+            context.model_health.start()
         try:
             yield
         finally:
+            if context.model_health is not None:
+                context.model_health.stop()
             context.sticky.close()
             if context.attribution is not None:
                 context.attribution.close()
@@ -796,16 +810,29 @@ def build_context(
     if not local_agents:
         raise ConfigError("no usable providers after filtering; the gateway would serve nothing")
 
+    # Built before the router and the health source: ejecting a model has to
+    # drop the sticky routes pointing at it, or those conversations spend every
+    # subsequent turn looking up a row that selection will only reject again.
+    sticky = StickyStore(
+        settings.token_file.parent / "sticky.db", ttl_seconds=settings.sticky_ttl_seconds
+    )
+    model_health = _build_model_health(settings, routing, sticky)
+    router = Router(
+        policies=routing.policies,
+        routes=routing.routes,
+        capabilities=routing.capability_index(),
+        default_policy_id=settings.default_policy,
+    )
+    if model_health is not None:
+        # Assigned rather than passed at construction so that a gateway with the
+        # check switched off keeps the router's own default instead of this
+        # function restating what "no health source" means.
+        router.health_check = model_health.health_check
+
     return GatewayContext(
-        router=Router(
-            policies=routing.policies,
-            routes=routing.routes,
-            capabilities=routing.capability_index(),
-            default_policy_id=settings.default_policy,
-        ),
-        sticky=StickyStore(
-            settings.token_file.parent / "sticky.db", ttl_seconds=settings.sticky_ttl_seconds
-        ),
+        router=router,
+        sticky=sticky,
+        model_health=model_health,
         attribution=AttributionStore(settings.token_file.parent / "attribution.db"),
         authenticator=TokenAuthenticator(load_or_create_token(settings.token_file)),
         local_agents=local_agents,
@@ -816,6 +843,42 @@ def build_context(
         inbox_ttl_hours=settings.inbox_ttl_hours,
         max_request_bytes=settings.max_request_bytes,
         max_concurrency=settings.max_concurrency,
+    )
+
+
+def _build_model_health(
+    settings: GatewaySettings,
+    routing: RoutingConfig,
+    sticky: StickyStore,
+    *,
+    load: Callable[[str], ExecutorCatalog] = load_catalog,
+) -> CatalogHealth | None:
+    """Wire the runtime catalog check, unless the operator turned it off.
+
+    The eject hook drains that model's sticky routes. It deliberately does not
+    touch pinned ones: a pin is a standing operator decision, and this is the
+    one path here that acts without anybody asking.
+    """
+    if settings.model_health_refresh_seconds <= 0:
+        log.info("runtime model health checking is off; configured models are used as declared")
+        return None
+
+    def drop_sticky_routes(candidate: str) -> None:
+        provider_id, model = split_candidate(candidate)
+        dropped = sticky.drain_model(provider_id, model)
+        if dropped:
+            log.warning(
+                "dropped %d sticky route(s) bound to the retired model %s; "
+                "those conversations will be re-routed on their next turn",
+                dropped,
+                candidate,
+            )
+
+    return CatalogHealth(
+        routing,
+        load=load,
+        on_eject=drop_sticky_routes,
+        interval=settings.model_health_refresh_seconds,
     )
 
 
