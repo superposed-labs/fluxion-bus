@@ -100,6 +100,11 @@ class GatewaySettings:
     # Off by default and deliberately hard to turn on: request bodies contain
     # the user's source code and the model's output.
     log_bodies: bool = False
+    # What the unattended check does when a local Codex model catalog override
+    # has gone stale: `warn` reports it, `refresh` re-derives the snapshot, `off`
+    # skips the check. `warn` is the default because refreshing rewrites a file
+    # under the user's `~/.codex` — see codex_catalog.report.
+    codex_catalog_drift: str = "warn"
 
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> GatewaySettings:
@@ -137,6 +142,9 @@ class GatewaySettings:
                 ),
             ),
             log_bodies=_bool(env.get("FLUXION_PROVIDER_LOG_BODIES"), False),
+            codex_catalog_drift=_catalog_drift_mode(
+                env.get("FLUXION_PROVIDER_CODEX_CATALOG_DRIFT")
+            ),
         )
 
 
@@ -366,6 +374,24 @@ def _int(value: str | None, default: int) -> int:
         return int(value.strip())
     except ValueError:
         return default
+
+
+def _catalog_drift_mode(value: str | None) -> str:
+    """Validate at load time: a typo here must not read as "do nothing".
+
+    Silently falling back to the default would make `refersh` look like a working
+    opt-in — the user would believe the daily check maintains their catalog while
+    it only reports on it.
+    """
+    if value is None or not value.strip():
+        return "warn"
+    mode = value.strip().lower()
+    if mode not in ("off", "warn", "refresh"):
+        raise ConfigError(
+            "FLUXION_PROVIDER_CODEX_CATALOG_DRIFT must be one of off, warn, refresh; "
+            f"got {value.strip()!r}"
+        )
+    return mode
 
 
 def _port(value: str | None, default: int) -> int:

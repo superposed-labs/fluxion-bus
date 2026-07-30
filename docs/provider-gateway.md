@@ -117,13 +117,53 @@ Which protocol is used is decided by the **parent's model**, not by config, and 
 | `gpt-5.6-luna` | **v1 — works** |
 | `codex-auto-review` | v1 |
 
-`~/.codex/models_cache.json` is the source of truth and refreshes itself every 5 minutes, so this table can move. Run the parent session with a v1 model:
+`~/.codex/models_cache.json` is the source of truth and refreshes itself every 5 minutes, so this table can move. The simplest fix is to run the parent session with a v1 model:
 
 ```bash
 codex -m gpt-5.6-luna
 ```
 
-`install-codex-config` refuses to write if your config sets `features.multi_agent_v2 = true`, or turns `features.multi_agent` off (which removes `spawn_agent` entirely). It does not write any feature flags of its own — v1 is already the default.
+`install-codex-config` refuses to write if your config sets `features.multi_agent_v2 = true`, or turns `features.multi_agent` off (which removes `spawn_agent` entirely). It does not write any feature flags of its own — v1 is already the default. Note that `features.multi_agent_v2 = false` does **not** buy you v1 on a v2 model: `model_info.multi_agent_version` wins, and the chosen version is pinned to the thread, so switching models mid-conversation does not recover v1 either. Start a new session.
+
+#### Keeping a v2 model on v1
+
+If you would rather not give up the model, Codex's `model_catalog_json` can pin the declaration locally. Verified end-to-end on codex-cli 0.145.0 with `gpt-5.6-sol` as the parent: the delegated task arrived as plaintext and the sub-agent ran on a local agent.
+
+```bash
+fluxion-provider install-codex-catalog
+```
+
+It pins every model declaring v2 (narrow it with `--model`), writes the snapshot to `~/.codex/model-catalogs/multiagent-v1.json`, and adds one root-level key to `config.toml` — shown as a diff you confirm, with a backup kept:
+
+```toml
+# ~/.codex/config.toml — a top-level key, above every [table]
+model_catalog_json = "/Users/you/.codex/model-catalogs/multiagent-v1.json"
+```
+
+The key has to sit above every `[table]` header: TOML assigns a key that follows one to that table, so appending it would quietly make it `[projects."…"].model_catalog_json` — ignored by Codex, while the file still reads correctly.
+
+Then start a **new** session. The protocol version is fixed when a thread starts, so an existing conversation stays on v2 no matter what you change.
+
+Know what you are taking on before you do this. The override **replaces** the model list rather than merging per entry — a file listing one model leaves Codex with one model — and it **rejects entries missing any field**, so it has to be a full snapshot. A snapshot freezes upstream in both directions: models added later never appear, models retired later linger, and nothing announces either.
+
+Fluxion therefore treats the snapshot as something to maintain rather than something to install and forget:
+
+```bash
+fluxion-provider refresh-codex-catalog --check   # report drift, change nothing
+fluxion-provider refresh-codex-catalog           # re-derive from Codex's fresh cache, keep the pins
+```
+
+`refresh` rebuilds the file from `~/.codex/models_cache.json`, which keeps refreshing from the server whatever your override says, and re-applies your pins on top. Which entries are pinned is read off the snapshot itself — a `multi_agent_version` differing from the cache *is* a pin — so there is no second list to keep in sync. Any other field follows upstream, and the old snapshot is kept as `.bak` since it is the only record of what was pinned.
+
+`check-models` runs the same detection, so an existing scheduled check reports drift with no extra plumbing. What happens next is yours to choose:
+
+| `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` | Behaviour |
+| :--- | :--- |
+| `warn` (default) | Report a stale model list as a finding; change nothing. |
+| `refresh` | Re-derive the snapshot, then report what was added, retired, and re-pinned. |
+| `off` | Skip the check. |
+
+A model added or retired upstream is a finding. A field like `base_instructions` moving upstream is only a note in the log — worth re-deriving for, but it breaks no route, and a daily notification for it would train you to dismiss the one that matters. Installs with no `model_catalog_json` never see any of this.
 
 ### Serving the whole session, not just sub-agents
 
@@ -262,6 +302,9 @@ transport details do not leak into the user-facing answer.
 | `FLUXION_PROVIDER_IMAGE_TTL_HOURS` | `2160` (90 days) | Conversation image retention; defaults to the sticky-route lifetime |
 | `FLUXION_INBOX_TTL_HOURS` | — | Legacy alias for `FLUXION_PROVIDER_IMAGE_TTL_HOURS` |
 | `FLUXION_PROVIDER_LOG_BODIES` | `false` | Dump every request body to `data/logs/provider-requests/` |
+| `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` | `warn` | What an unattended check does about a stale `model_catalog_json` snapshot: `warn`, `refresh`, or `off` |
+
+> Set these in the environment or in `.env` — every `fluxion-provider` subcommand reads the same file the rest of Fluxion does. An unrecognised value for `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` fails at load rather than falling back to the default, so a typo cannot leave you believing auto-refresh is on.
 
 > `FLUXION_PROVIDER_LOG_BODIES` is a debugging aid for questions like "did the sub-agent actually receive its task?". Captured bodies contain the full task text and any source code in the conversation. Leave it off unless you are actively debugging, and delete the directory afterwards.
 
@@ -276,9 +319,11 @@ positive integers.
 
 ## Troubleshooting
 
-**`Agent errored: … the delegated task arrived encrypted`.** The parent is running a v2 model. See [The parent model must use multi-agent v1](#the-parent-model-must-use-multi-agent-v1).
+**`Agent errored: … the delegated task arrived encrypted`.** The parent is running a v2 model. Start a new session on a v1 model, or keep the model and run `fluxion-provider install-codex-catalog`. Changing models inside the same conversation does not help — the version is fixed when the thread starts. See [The parent model must use multi-agent v1](#the-parent-model-must-use-multi-agent-v1).
 
 **The sub-agent never ran at all, and nothing errored.** The plain-language role name selected Codex's built-in role. Name `fluxion_worker` explicitly.
+
+**A model vanished from Codex, or a new one never showed up.** If you set `model_catalog_json`, that file *is* your model list — it replaces the server's rather than extending it. `fluxion-provider refresh-codex-catalog --check` compares it against `~/.codex/models_cache.json` and names what is missing.
 
 **`503 no_route_available` mentioning a workspace.** No workspace could be resolved. Set `default_workspace` on the provider, or run the parent session inside a git repository.
 
@@ -308,5 +353,22 @@ It exits non-zero only when a CLI's catalog is readable and does not list a conf
 - no routing config means the gateway was never set up, so there is nothing to check
 
 `doctor` runs the same check but also fails on a bound port and on a missing config, both correct when you are about to start a gateway and both wrong for an unattended run. `check-models` is the form to automate.
+
+### Automating it
+
+```bash
+fluxion-provider check-models --notify
+```
+
+`--notify` hands findings to the Fluxion desktop app, which delivers them through Notification Center like every other Fluxion notification. A scheduled job should not call `osascript` itself: that arrives styled as a generic script alert, attributed to whatever ran it.
+
+An unchanged finding notifies **once a day** however often the job runs, so the interval controls detection latency, not noise — a finding stays true until someone fixes it, and re-sending it every cycle is how a notification channel gets muted. A changed finding notifies immediately; a check that comes back clean rearms, so the same finding recurring later is reported again rather than swallowed as a repeat. Each run logs which file the record went to: only the desktop app's own data directory is watched, and a CLI run from a second checkout resolves a different one.
+
+Settings come from the environment or `.env`, both read by every `fluxion-provider` subcommand — so a switch set in `.env` applies to unattended runs too:
+
+```bash
+# .env
+FLUXION_PROVIDER_CODEX_CATALOG_DRIFT=refresh
+```
 
 Startup logs a warning for the same condition and never refuses to start: one dead candidate fails only the turns that select it, whereas a gateway that will not boot fails everything.

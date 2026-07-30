@@ -12,6 +12,7 @@ from fluxion.config.settings.core import Settings
 from fluxion.config.settings.env import (
     env_file_path,
     env_file_write_path,
+    load_dotenv,
     update_env_values,
 )
 from fluxion.config.settings.models import (
@@ -27,5 +28,6 @@ __all__ = [
     "WorkspaceAuthorization",
     "env_file_path",
     "env_file_write_path",
+    "load_dotenv",
     "update_env_values",
 ]

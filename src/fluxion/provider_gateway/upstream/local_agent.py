@@ -534,8 +534,10 @@ ENCRYPTED_TASK_MESSAGE = (
     "the delegated task arrived encrypted, so this sub-agent cannot read it. "
     "That is Codex's multi-agent v2 protocol, which the parent's model selects: "
     "the payload is sealed for OpenAI and a local agent only sees ciphertext. "
-    "Run the parent Codex session with a v1 model — `codex -m gpt-5.6-luna` — "
-    "or see docs/provider-gateway.md."
+    "Start a new session on a v1 model — `codex -m gpt-5.6-luna` — or, to keep "
+    "the model you are on, pin its protocol locally with `fluxion-provider "
+    "install-codex-catalog`. Switching models inside this session will not help: "
+    "the version is fixed when the thread starts. See docs/provider-gateway.md."
 )
 
 # A Fernet token: base64url of a 0x80 version byte, timestamp, IV, ciphertext,

@@ -43,6 +43,18 @@ def _load_dotenv() -> None:
         _load_dotenv_file(candidate)
 
 
+def load_dotenv() -> None:
+    """Populate the environment from the `.env` file, without a full settings load.
+
+    `Settings.load()` does this on the way to building the whole settings object.
+    Components with their own environment-backed settings — the provider gateway —
+    need the file read but not the object built, and a user who put a key in
+    `.env` expects every entry point to see it, not only the ones that happen to
+    construct `Settings`.
+    """
+    _load_dotenv()
+
+
 def env_file_path() -> Path | None:
     """Resolve the .env file settings are loaded from, or None if absent.
     Mirrors the precedence in _load_dotenv (explicit FLUXION_ENV_FILE first).
