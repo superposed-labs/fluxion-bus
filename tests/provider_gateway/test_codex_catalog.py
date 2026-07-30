@@ -226,6 +226,22 @@ def test_the_config_key_goes_above_every_table():
     assert 'trust_level = "trusted"' in after
 
 
+def test_removal_drops_only_the_key():
+    """Comments around it are the user's, including notes about their own config."""
+    before = (
+        '# why this is here\nmodel_catalog_json = "/c.json"\nmodel = "x"\n\n'
+        '[projects."/tmp/p"]\ntrust_level = "trusted"\n'
+    )
+    after = codex_catalog.plan_config_removal(before)
+    assert "model_catalog_json" not in after
+    assert "# why this is here" in after
+    assert 'trust_level = "trusted"' in after
+
+
+def test_removal_reports_when_there_is_nothing_to_remove():
+    assert codex_catalog.plan_config_removal('model = "x"\n') is None
+
+
 def test_reinstalling_replaces_the_key_instead_of_duplicating_it():
     before = 'model_catalog_json = "/old.json"\nmodel = "x"\n'
     after = codex_catalog.plan_config_line(before, Path("/new.json"))

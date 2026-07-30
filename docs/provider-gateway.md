@@ -155,6 +155,14 @@ fluxion-provider refresh-codex-catalog           # re-derive from Codex's fresh 
 
 `refresh` rebuilds the file from `~/.codex/models_cache.json`, which keeps refreshing from the server whatever your override says, and re-applies your pins on top. Which entries are pinned is read off the snapshot itself — a `multi_agent_version` differing from the cache *is* a pin — so there is no second list to keep in sync. Any other field follows upstream, and the old snapshot is kept as `.bak` since it is the only record of what was pinned.
 
+To hand the model list back to Codex:
+
+```bash
+fluxion-provider uninstall-codex-catalog   # --delete-catalog also removes the snapshot
+```
+
+It drops only the key — comments you wrote around it stay, since guessing which lines are ours would delete your own notes — keeps a `config.toml` backup, and leaves the snapshot file unless asked, because the key's removal already makes it inert and it may be a catalog you wrote yourself. Start a new session afterwards, for the same reason as above.
+
 `check-models` runs the same detection, so an existing scheduled check reports drift with no extra plumbing. What happens next is yours to choose:
 
 | `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT` | Behaviour |

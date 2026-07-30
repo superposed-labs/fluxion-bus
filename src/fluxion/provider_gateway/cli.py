@@ -337,6 +337,52 @@ def _install_codex_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def _uninstall_codex_catalog(args: argparse.Namespace) -> int:
+    """Drop the catalog override, handing the model list back to Codex.
+
+    The snapshot file is left in place unless asked: removing the key already
+    makes it inert, and a user may have pointed the key at a catalog they wrote
+    themselves — deleting that because they ran an uninstall would be a poor
+    trade for saving them one `rm`.
+    """
+    home = codex_catalog.codex_home()
+    config_path = home / "config.toml"
+    catalog_path = codex_catalog.find_override(home)
+    before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    after = codex_catalog.plan_config_removal(before)
+    if after is None:
+        print(f"no `{codex_catalog.CONFIG_KEY}` in {config_path}; nothing to do")
+        return 0
+
+    print(codex_config.diff_preview(before, after, label="after uninstall"))
+    if catalog_path is not None:
+        print(
+            f"Snapshot: {catalog_path}"
+            + (" (will be deleted)" if args.delete_catalog else " (left in place)")
+        )
+    print("\nCodex goes back to its own model list, and any pinned protocol goes with it.")
+    if not args.yes and not _confirm("\nApply these changes?"):
+        print("aborted; nothing was written")
+        return 1
+
+    backup_path = config_path.with_name(f"{config_path.name}.fluxion-backup-{int(time.time())}")
+    shutil.copy2(config_path, backup_path)
+    config_path.write_text(after, encoding="utf-8")
+    print(f"backup: {backup_path}")
+    if args.delete_catalog and catalog_path is not None:
+        try:
+            catalog_path.unlink()
+            print(f"deleted {catalog_path}")
+        except OSError as err:
+            print(f"could not delete {catalog_path}: {err}", file=sys.stderr)
+    print(f"removed `{codex_catalog.CONFIG_KEY}` from {config_path}")
+    print(
+        "Start a NEW Codex session: the protocol version is fixed when a thread "
+        "starts, so an existing one keeps whatever it already had."
+    )
+    return 0
+
+
 def _refresh_codex_catalog(args: argparse.Namespace) -> int:
     """Re-derive the local Codex catalog snapshot on demand.
 
@@ -636,6 +682,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     install_catalog_parser.add_argument("--yes", action="store_true")
     install_catalog_parser.set_defaults(handler=_install_codex_catalog)
+
+    uninstall_catalog_parser = subparsers.add_parser(
+        "uninstall-codex-catalog",
+        help="Remove the local model catalog override, handing the model list back to Codex.",
+    )
+    uninstall_catalog_parser.add_argument(
+        "--delete-catalog",
+        action="store_true",
+        help="Also delete the snapshot file (left in place by default).",
+    )
+    uninstall_catalog_parser.add_argument("--yes", action="store_true")
+    uninstall_catalog_parser.set_defaults(handler=_uninstall_codex_catalog)
 
     refresh_catalog_parser = subparsers.add_parser(
         "refresh-codex-catalog",

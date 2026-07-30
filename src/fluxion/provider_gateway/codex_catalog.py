@@ -253,14 +253,29 @@ def plan_config_line(config_text: str, catalog_path: Path) -> str:
     ignore while the file still looked correct.
     """
     line = f'model_catalog_json = "{catalog_path}"'
-    lines = config_text.splitlines()
-    kept = [
-        existing
-        for existing in lines
-        if not existing.strip().startswith(f"{CONFIG_KEY} ")
-        and not existing.strip().startswith(f"{CONFIG_KEY}=")
+    return "\n".join([line, *_without_config_line(config_text)]).rstrip("\n") + "\n"
+
+
+def plan_config_removal(config_text: str) -> str | None:
+    """`config.toml` with the `model_catalog_json` key dropped, or None if absent.
+
+    Only the key: any comment the user wrote around it is theirs, and guessing at
+    which lines belong to us would delete someone's note about their own config.
+    The caller shows the diff, which is where an orphaned comment becomes visible.
+    """
+    kept = _without_config_line(config_text)
+    if len(kept) == len(config_text.splitlines()):
+        return None
+    return "\n".join(kept).rstrip("\n") + "\n"
+
+
+def _without_config_line(config_text: str) -> list[str]:
+    return [
+        line
+        for line in config_text.splitlines()
+        if not line.strip().startswith(f"{CONFIG_KEY} ")
+        and not line.strip().startswith(f"{CONFIG_KEY}=")
     ]
-    return "\n".join([line, *kept]).rstrip("\n") + "\n"
 
 
 def report(mode: str, home: Path | None = None) -> tuple[list[str], list[str]]:
