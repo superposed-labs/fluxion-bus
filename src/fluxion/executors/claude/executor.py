@@ -24,6 +24,7 @@ from fluxion.executors.common.actions import (
     find_last_marker,
     upload_paths,
 )
+from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT, clip_text
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
 from fluxion.executors.common.process import (
     CleanupReport,
@@ -32,7 +33,6 @@ from fluxion.executors.common.process import (
     terminate_process_tree,
 )
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
-from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.workspace.artifact_collector import select_uploadable_paths
 
 # Quota keep-alive pings run on the cheapest tier at the lowest effort — they
@@ -525,8 +525,8 @@ class ClaudeExecutor:
         if payload:
             result = self._extract_final_answer(str(payload.get("result", "")))
             if result:
-                return self._clip(result, SLACK_TEXT_SOFT_LIMIT)
-        return self._clip((stdout or "").strip() or "Task completed.", SLACK_TEXT_SOFT_LIMIT)
+                return self._clip(result, EXECUTOR_TEXT_HARD_LIMIT)
+        return self._clip((stdout or "").strip() or "Task completed.", EXECUTOR_TEXT_HARD_LIMIT)
 
     def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
         if raw:
@@ -543,10 +543,10 @@ class ClaudeExecutor:
             for key in ("error", "message", "result"):
                 value = str(payload.get(key, "")).strip()
                 if value:
-                    return self._clip(value, SLACK_TEXT_SOFT_LIMIT)
+                    return self._clip(value, EXECUTOR_TEXT_HARD_LIMIT)
         message = (stderr or "").strip()
         if message:
-            return self._clip(message, SLACK_TEXT_SOFT_LIMIT)
+            return self._clip(message, EXECUTOR_TEXT_HARD_LIMIT)
         return "Claude Code execution failed"
 
     def _extract_session_id(self, payload: dict | None) -> str:
@@ -600,6 +600,4 @@ class ClaudeExecutor:
         return find_last_marker(text, marker)
 
     def _clip(self, text: str, limit: int) -> str:
-        if len(text) <= limit:
-            return text
-        return text[: limit - 16] + "\n...(truncated)"
+        return clip_text(text, limit)

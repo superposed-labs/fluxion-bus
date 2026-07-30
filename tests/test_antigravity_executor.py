@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from fluxion.core.models.task import Task
 from fluxion.executors.antigravity.executor import AntiGravityExecutor
+from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT
 from tests.test_antigravity_trajectory_stream import (
     RUN_WC,
     VIEW_A,
@@ -562,3 +563,25 @@ def test_a_task_without_a_declared_mode_needs_the_global_flag():
 
 def test_the_global_flag_still_covers_read_only_runs():
     assert "--dangerously-skip-permissions" in _cmd_for("read-only", skip_permissions=True)
+
+
+# ── answer length ────────────────────────────────────────────────────
+# An answer does not only become an IM message. It is also what the provider
+# gateway streams back as a Codex sub-agent's report to its parent, where a
+# channel-sized cap cut reports mid-sentence — and often mid-path in a list of
+# changed files, so the parent could not tell a file was missing.
+def test_a_long_answer_is_not_cut_to_a_channel_sized_limit(tmp_path):
+    executor = _executor(tmp_path)
+    answer = "x" * 8000
+
+    assert executor._extract_user_answer(f"FINAL_ANSWER:\n{answer}\nACTIONS_JSON:\n{{}}") == answer
+
+
+def test_a_runaway_answer_still_hits_the_defensive_bound(tmp_path):
+    executor = _executor(tmp_path)
+    stdout = "FINAL_ANSWER:\n" + "x" * (EXECUTOR_TEXT_HARD_LIMIT + 500) + "\nACTIONS_JSON:\n{}"
+
+    clipped = executor._extract_user_answer(stdout)
+
+    assert len(clipped) == EXECUTOR_TEXT_HARD_LIMIT
+    assert clipped.endswith("...(truncated)")

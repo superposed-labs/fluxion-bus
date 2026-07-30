@@ -27,6 +27,7 @@ from fluxion.executors.common.actions import (
     resolve_uploads_from_text,
     upload_paths,
 )
+from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT, clip_text
 from fluxion.executors.common.log_writer import append_live_log, touch_live_log, write_jsonl_log
 from fluxion.executors.common.process import (
     CleanupReport,
@@ -35,7 +36,6 @@ from fluxion.executors.common.process import (
     terminate_process_tree,
 )
 from fluxion.executors.prompt_builder import is_raw_prompt
-from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history import pricing
 from fluxion.usage.model_identity import identify_model
 from fluxion.usage.model_rates import short_request_price_rank
@@ -431,7 +431,7 @@ class CodexExecutor:
             # appear and there is no `codex` banner line to scan for. Without
             # this the scan below falls through and throws the real answer
             # away, reporting "Task completed." in its place.
-            return self._clip(text, SLACK_TEXT_SOFT_LIMIT)
+            return self._clip(text, EXECUTOR_TEXT_HARD_LIMIT)
 
         marker_match = self._find_last_marker(text, "FINAL_ANSWER")
         if marker_match is not None:
@@ -446,7 +446,7 @@ class CodexExecutor:
                     lines.append(line)
                 cleaned = "\n".join(lines).strip()
                 if cleaned:
-                    return self._clip(cleaned, SLACK_TEXT_SOFT_LIMIT)
+                    return self._clip(cleaned, EXECUTOR_TEXT_HARD_LIMIT)
 
         lines = text.splitlines()
         for i, line in enumerate(lines):
@@ -460,7 +460,7 @@ class CodexExecutor:
                     tail.append(next_line)
                 candidate = "\n".join(tail).strip()
                 if candidate:
-                    return self._clip(candidate, SLACK_TEXT_SOFT_LIMIT)
+                    return self._clip(candidate, EXECUTOR_TEXT_HARD_LIMIT)
 
         return "Task completed."
 
@@ -505,9 +505,7 @@ class CodexExecutor:
         return find_last_marker(text, marker)
 
     def _clip(self, text: str, limit: int) -> str:
-        if len(text) <= limit:
-            return text
-        return text[: limit - 16] + "\n...(truncated)"
+        return clip_text(text, limit)
 
     def _extract_session_id(self, stderr: str) -> str:
         match = re.search(r"session id:\s*([0-9a-fA-F-]{36})", stderr or "", flags=re.IGNORECASE)

@@ -18,6 +18,7 @@ from fluxion.executors.antigravity.trajectory_stream import (
     read_max_step_idx,
 )
 from fluxion.executors.common.actions import resolve_uploads_from_text
+from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT, clip_text
 from fluxion.executors.common.log_writer import write_jsonl_log
 from fluxion.executors.common.process import (
     CleanupReport,
@@ -26,7 +27,6 @@ from fluxion.executors.common.process import (
     terminate_process_tree,
 )
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
-from fluxion.slack_limits import SLACK_TEXT_SOFT_LIMIT
 from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
 from fluxion.workspace.antigravity_trajectory import (
     extract_agy_session_id,
@@ -647,8 +647,8 @@ class AntiGravityExecutor:
                     lines.append(line)
                 cleaned = "\n".join(lines).strip()
                 if cleaned:
-                    return self._clip(cleaned, SLACK_TEXT_SOFT_LIMIT)
-        return self._clip(text, SLACK_TEXT_SOFT_LIMIT)
+                    return self._clip(cleaned, EXECUTOR_TEXT_HARD_LIMIT)
+        return self._clip(text, EXECUTOR_TEXT_HARD_LIMIT)
 
     def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
         text = stdout or ""
@@ -727,7 +727,7 @@ class AntiGravityExecutor:
         if not matches:
             return ""
         detail = matches[-1].strip()
-        return self._clip(f"AntiGravity execution failed: {detail}", SLACK_TEXT_SOFT_LIMIT)
+        return self._clip(f"AntiGravity execution failed: {detail}", EXECUTOR_TEXT_HARD_LIMIT)
 
     def _blocked_tool_error(self, log_file: Path, stdout: str, *, raw: bool) -> str:
         """Detect a run that a permission refusal ended before it could answer.
@@ -767,7 +767,7 @@ class AntiGravityExecutor:
             "Rerun with a task that needs no shell or file edits, or set "
             "FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS=true to let it act "
             "on the workspace unattended.",
-            SLACK_TEXT_SOFT_LIMIT,
+            EXECUTOR_TEXT_HARD_LIMIT,
         )
 
     def _read_log(self, log_file: Path) -> str:
@@ -779,6 +779,4 @@ class AntiGravityExecutor:
             return ""
 
     def _clip(self, text: str, limit: int) -> str:
-        if len(text) <= limit:
-            return text
-        return text[: limit - 16] + "\n...(truncated)"
+        return clip_text(text, limit)

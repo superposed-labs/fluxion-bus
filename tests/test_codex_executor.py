@@ -694,3 +694,11 @@ def test_raw_mode_keeps_the_agent_answer(tmp_path):
 
 def test_raw_mode_answer_survives_an_empty_run(tmp_path):
     assert _ro_executor(tmp_path)._extract_user_answer("", raw=True) == "Task completed."
+
+
+def test_a_long_answer_is_not_cut_to_a_channel_sized_limit(tmp_path):
+    # Also travels to the provider gateway and the MCP server, neither of which
+    # has a message cap. See the antigravity executor tests for the full story.
+    answer = "x" * 8000
+
+    assert _ro_executor(tmp_path)._extract_user_answer(answer, raw=True) == answer
