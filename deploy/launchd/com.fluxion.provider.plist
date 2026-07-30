@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fluxion provider gateway — macOS launchd user agent (OPTIONAL).
+
+  Only for a gateway you want supervised. The macOS app already starts one when
+  Preferences → Services → Provider Gateway is on, but it starts it once and
+  never looks again: a crash leaves every Codex sub-agent failing until someone
+  notices. This unit restarts it.
+
+  Turn that toggle OFF before loading this (FLUXION_PROVIDER_ENABLED=false in
+  .env). Two supervisors mean two processes racing for port 8787: whichever
+  loses the bind exits, and under KeepAlive it retries forever.
+
+  Install (replace __FLUXION_REPO__ with the absolute path to your checkout):
+    sed 's#__FLUXION_REPO__#'"$PWD"'#g' deploy/launchd/com.fluxion.provider.plist \
+      > ~/Library/LaunchAgents/com.fluxion.provider.plist
+    launchctl load -w ~/Library/LaunchAgents/com.fluxion.provider.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fluxion.provider</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__FLUXION_REPO__/.venv/bin/fluxion-provider</string>
+    <string>serve</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FLUXION_ENV_FILE</key>
+    <string>__FLUXION_REPO__/.env</string>
+    <!-- A launchd job inherits a nearly empty PATH. This gateway serves a turn
+         by running a local agent CLI (agy, claude, codex), and none of them are
+         on that PATH — the run fails at exec time, not at startup. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__FLUXION_REPO__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- launchd's own floor for a restart. Naming it makes the retry rate a
+       decision rather than an accident, and it is the rate you will see if
+       something else is holding the port. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- The gateway's own logger writes here too, so a failure to bind and the
+       routing decisions that preceded it read in one file. -->
+  <key>StandardOutPath</key>
+  <string>__FLUXION_REPO__/data/logs/fluxion-provider.log</string>
+  <key>StandardErrorPath</key>
+  <string>__FLUXION_REPO__/data/logs/fluxion-provider.log</string>
+</dict>
+</plist>

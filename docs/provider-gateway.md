@@ -22,6 +22,12 @@ In the Fluxion macOS app, open **Preferences** → **Services** and toggle on **
 * **Default port**: `8787` (`http://127.0.0.1:8787`)
 * **Security**: binds to loopback only (`127.0.0.1`), with an auto-generated bearer token at `data/provider.token` (mode `0600`).
 
+The app starts the gateway once per launch and does not watch it afterwards, so
+a crash is silent until a sub-agent fails. To have it restarted, use
+[`deploy/launchd/com.fluxion.provider.plist`](../deploy/launchd/com.fluxion.provider.plist)
+instead — and turn the Preferences toggle back off first, since two supervisors
+race for the port.
+
 ### 2. Create the token and routing config
 
 ```bash
