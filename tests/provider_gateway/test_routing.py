@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from fluxion.provider_gateway.capabilities import (
@@ -13,6 +15,7 @@ from fluxion.provider_gateway.identity import (
     RequestIdentity,
 )
 from fluxion.provider_gateway.routing import (
+    HEALTH_RETIRED,
     CandidateStats,
     NoRouteAvailableError,
     PolicySpec,
@@ -115,7 +118,7 @@ def test_sticky_route_is_dropped_when_it_can_no_longer_serve():
 
 
 def test_sticky_route_is_dropped_when_unhealthy():
-    router = build_router(is_healthy=lambda candidate: candidate != FAST)
+    router = build_router(health_check=lambda candidate: "" if candidate != FAST else "unhealthy")
     decision = router.select(identity("auto"), RequestRequirements(), sticky_candidate=FAST)
     assert not decision.from_sticky
     assert decision.candidate_id == GOOD
@@ -160,10 +163,85 @@ def test_incapable_candidates_never_win_on_price():
 
 
 def test_unhealthy_candidates_are_excluded_and_reported():
-    router = build_router(is_healthy=lambda candidate: candidate != GOOD)
+    router = build_router(health_check=lambda candidate: "" if candidate != GOOD else "unhealthy")
     decision = router.select(identity("auto"), RequestRequirements())
     assert decision.candidate_id == FAST
     assert f"filtered={GOOD}" in decision.routing_reason
+
+
+def retired(*candidates):
+    """A health source that reports exactly these candidates as retired."""
+    return lambda candidate: HEALTH_RETIRED if candidate in candidates else ""
+
+
+def test_a_retired_candidate_is_skipped_and_named_as_retired():
+    """Without this the router keeps selecting an id the CLI will reject."""
+    router = build_router(health_check=retired(GOOD))
+    decision = router.select(identity("auto"), RequestRequirements())
+
+    assert decision.candidate_id == FAST
+    assert f"retired={GOOD}" in decision.routing_reason
+    # Not also under `filtered=`: a reason list that says both makes the
+    # permanent case indistinguishable from an ordinary one at a glance.
+    assert f"filtered={GOOD}" not in decision.routing_reason
+
+
+def test_a_retired_primary_makes_the_policy_fallback_actually_fire():
+    """The whole point: `fallback` covers a retired model only if selection skips it."""
+    router = build_router(health_check=retired(FAST))
+    decision = router.select(identity("explorer"), RequestRequirements())
+
+    # `economy` lists FAST as its only candidate and GOOD as its fallback.
+    assert decision.candidate_id == GOOD
+    assert f"fallback-for={FAST}" in decision.routing_reason
+
+
+def test_a_substitution_is_logged_loudly(caplog):
+    """Silent downgrades produce answers the operator still trusts at full weight."""
+    router = build_router(health_check=retired(FAST))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.routing"):
+        router.select(identity("explorer"), RequestRequirements())
+
+    assert FAST in caplog.text
+    assert GOOD in caplog.text
+    assert "no longer offered by its CLI" in caplog.text
+
+
+def test_a_retired_candidate_below_the_winner_is_not_called_a_fallback(caplog):
+    """`balanced` prefers GOOD, so FAST retiring changes nothing worth warning about."""
+    router = build_router(health_check=retired(FAST))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.routing"):
+        decision = router.select(identity("auto"), RequestRequirements())
+
+    assert decision.candidate_id == GOOD
+    assert not [name for name in decision.routing_reason if name.startswith("fallback-for=")]
+    assert caplog.text == ""
+
+
+def test_a_sticky_route_on_a_retired_model_is_dropped_and_reported(caplog):
+    """A stored route is the strongest preference there is; overriding it must be visible."""
+    router = build_router(health_check=retired(FAST))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.routing"):
+        decision = router.select(identity("reviewer"), RequestRequirements(), sticky_candidate=FAST)
+
+    assert decision.candidate_id == GOOD
+    assert not decision.from_sticky
+    assert f"sticky-dropped={FAST}" in decision.routing_reason
+    # FAST is not a candidate of `quality-first`, so the verdict has to survive
+    # the trip from the sticky check into the scoring path to be reported here.
+    assert f"retired={FAST}" in decision.routing_reason
+    assert f"fallback-for={FAST}" in decision.routing_reason
+    assert caplog.text != ""
+
+
+def test_a_policy_whose_every_candidate_retired_says_so():
+    """`no route available` has to name the cause an operator can act on."""
+    router = build_router(health_check=retired(GOOD))
+    with pytest.raises(NoRouteAvailableError) as excinfo:
+        router.select(identity("reviewer"), RequestRequirements())
+
+    assert excinfo.value.rejected[GOOD] == (HEALTH_RETIRED,)
+    assert "retired" in str(excinfo.value)
 
 
 def test_fallback_is_used_when_primary_is_filtered_out():

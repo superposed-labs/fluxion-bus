@@ -355,6 +355,30 @@ class StickyStore:
             conn.commit()
         return dropped
 
+    def drain_model(self, provider_id: str, upstream_model: str) -> int:
+        """Forget every unpinned route on one model; returns how many were dropped.
+
+        The per-model counterpart to `drain_provider`, for when one model of a
+        healthy provider is ejected rather than the whole provider. Without it
+        those rows survive their model: every turn on those conversations looks
+        one up, has it rejected by the health filter, and adds another
+        `sticky-dropped=` line to a reason list that is supposed to explain
+        unusual decisions. Dropping the row makes the next turn an ordinary
+        selection instead.
+
+        Pinned routes survive, on the same grounds as a provider drain: a pin is
+        an explicit operator decision, and this is an automatic process.
+        """
+        with self._lock:
+            conn = self._db()
+            dropped = conn.execute(
+                "DELETE FROM sticky_routes "
+                "WHERE provider_id = ? AND upstream_model = ? AND pinned = 0",
+                (provider_id, upstream_model),
+            ).rowcount
+            conn.commit()
+        return dropped
+
     def purge_expired(self, *, now: float | None = None) -> int:
         """Delete expired, unpinned routes; returns how many were removed."""
         now = time.time() if now is None else now
