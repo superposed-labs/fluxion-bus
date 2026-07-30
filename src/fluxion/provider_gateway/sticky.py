@@ -21,7 +21,7 @@ from fluxion.provider_gateway.identity import RequestIdentity
 
 log = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 # 90 days, matching FLUXION_PROVIDER_STICKY_TTL_HOURS' default.
 #
@@ -61,6 +61,12 @@ class StickyRoute:
     # without this the second turn has nowhere to run. Empty for API-backed
     # routes and for ingresses that never report one.
     workspace: str = ""
+    # Whether a turn on this route has actually completed. A row is also written
+    # *before* a turn runs, to capture the workspace while the request still
+    # reports one; until that turn finishes, the provider/model on it record an
+    # attempt rather than a working choice, and must not be reused as a sticky
+    # candidate.
+    route_confirmed: bool = True
     thread_id: str | None = None
     parent_thread_id: str | None = None
     routing_reason: tuple[str, ...] = ()
@@ -160,7 +166,8 @@ class StickyStore:
                 expires_at REAL,
                 pinned INTEGER NOT NULL DEFAULT 0,
                 executor_session_id TEXT NOT NULL DEFAULT '',
-                workspace TEXT NOT NULL DEFAULT ''
+                workspace TEXT NOT NULL DEFAULT '',
+                route_confirmed INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS ix_sticky_expires ON sticky_routes(expires_at);
             CREATE INDEX IF NOT EXISTS ix_sticky_parent ON sticky_routes(ingress, parent_thread_id);
@@ -184,6 +191,13 @@ class StickyStore:
                     conn.execute(
                         f"ALTER TABLE sticky_routes ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
                     )
+            # Every pre-existing row was written by the old code path, which only
+            # wrote after a turn completed — so all of them are confirmed.
+            if "route_confirmed" not in columns:
+                conn.execute(
+                    "ALTER TABLE sticky_routes "
+                    "ADD COLUMN route_confirmed INTEGER NOT NULL DEFAULT 1"
+                )
         conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.commit()
 
@@ -253,8 +267,8 @@ class StickyStore:
                     route_key, ingress, provider_id, upstream_model, policy_id,
                     route_hint, identity_confidence, thread_id, parent_thread_id,
                     routing_reason, created_at, last_used_at, expires_at, pinned,
-                    executor_session_id, workspace
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    executor_session_id, workspace, route_confirmed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)
                 ON CONFLICT(route_key) DO UPDATE SET
                     provider_id = excluded.provider_id,
                     upstream_model = excluded.upstream_model,
@@ -276,7 +290,10 @@ class StickyStore:
                     workspace = CASE
                         WHEN excluded.workspace <> '' THEN excluded.workspace
                         ELSE sticky_routes.workspace
-                    END
+                    END,
+                    -- This is only reached from a completed turn, which is the
+                    -- evidence an attempted route was waiting for.
+                    route_confirmed = 1
                 """,
                 (
                     identity.route_key,
@@ -301,6 +318,71 @@ class StickyStore:
                 "SELECT * FROM sticky_routes WHERE route_key = ?", (identity.route_key,)
             ).fetchone()
         return _row_to_route(row)
+
+    def remember_workspace(
+        self,
+        identity: RequestIdentity,
+        workspace: str,
+        *,
+        attempted_provider_id: str = "",
+        attempted_upstream_model: str = "",
+        attempted_policy_id: str = "",
+        now: float | None = None,
+    ) -> None:
+        """Record where a conversation works, before its turn is known to succeed.
+
+        Where a conversation runs is a fact about the conversation, not evidence
+        that a route serves it, and the two need remembering at different
+        moments. Codex reports `workspaces` only on the turn that spawns a
+        sub-agent; if that first turn is interrupted or fails, `remember` never
+        runs, and every later turn arrives with no workspace and nothing
+        remembered — a sub-agent that can never be spoken to again. Observed
+        exactly that way: a spawn interrupted mid-turn left a sub-thread whose
+        every following message 503'd.
+
+        The attempted route is stored alongside so the row's NOT NULL columns say
+        something true, but it is written unconfirmed: `lookup` callers must not
+        reuse it as a sticky candidate until a turn completes. An existing row is
+        never overwritten here — a confirmed route outranks an attempt.
+        """
+        if not identity.is_persistable or not workspace:
+            return
+
+        now = time.time() if now is None else now
+        expires_at = None if self._ttl_seconds is None else now + self._ttl_seconds
+
+        with self._lock:
+            conn = self._db()
+            conn.execute(
+                """
+                INSERT INTO sticky_routes (
+                    route_key, ingress, provider_id, upstream_model, policy_id,
+                    route_hint, identity_confidence, thread_id, parent_thread_id,
+                    routing_reason, created_at, last_used_at, expires_at, pinned,
+                    executor_session_id, workspace, route_confirmed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, 0, '', ?, 0)
+                ON CONFLICT(route_key) DO UPDATE SET
+                    workspace = excluded.workspace,
+                    last_used_at = excluded.last_used_at,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    identity.route_key,
+                    identity.ingress,
+                    attempted_provider_id,
+                    attempted_upstream_model,
+                    attempted_policy_id,
+                    identity.route_hint,
+                    identity.confidence.value,
+                    identity.thread_id,
+                    identity.parent_thread_id,
+                    now,
+                    now,
+                    expires_at,
+                    workspace,
+                ),
+            )
+            conn.commit()
 
     def touch(self, route_key: str, *, now: float | None = None) -> None:
         """Extend a route's life because it was just used.
@@ -414,6 +496,7 @@ def _row_to_route(row: sqlite3.Row) -> StickyRoute:
         policy_id=row["policy_id"],
         route_hint=row["route_hint"],
         identity_confidence=row["identity_confidence"],
+        route_confirmed=bool(row["route_confirmed"]),
         created_at=row["created_at"],
         last_used_at=row["last_used_at"],
         expires_at=row["expires_at"],

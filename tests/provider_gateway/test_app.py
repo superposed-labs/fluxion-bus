@@ -17,6 +17,7 @@ from fluxion.core.models.result import ExecutionResult
 from fluxion.provider_gateway.app import (
     GatewayContext,
     _ProviderLimitsMiddleware,
+    _sticky_candidate,
     create_app,
 )
 from fluxion.provider_gateway.auth import TokenAuthenticator
@@ -252,13 +253,20 @@ def test_successful_turn_is_remembered(tmp_path):
     assert context.sticky.list_routes(), "an explicit identity should persist its route"
 
 
-def test_failed_turn_is_not_remembered(tmp_path):
-    """A route that just failed is not evidence it works."""
+def test_a_failed_turn_leaves_its_route_unconfirmed(tmp_path):
+    """A route that just failed is not evidence it works.
+
+    The row itself does get written — it is where the conversation's workspace
+    is kept, and a turn can fail after being the only one to report it — but the
+    route on it stays unconfirmed so nothing reuses it.
+    """
     context = build_context(tmp_path, ScriptedExecutor(success=False, summary="boom"))
     client = client_for(context)
     post(client, headers={"x-codex-turn-metadata": turn_metadata(thread_id="thread-1")})
 
-    assert context.sticky.list_routes() == []
+    routes = context.sticky.list_routes()
+    assert [route.route_confirmed for route in routes] == [False]
+    assert _sticky_candidate(routes[0]) is None
 
 
 def test_ephemeral_identity_is_not_remembered(tmp_path):

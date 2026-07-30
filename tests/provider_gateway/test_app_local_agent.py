@@ -68,6 +68,16 @@ class RecordingExecutor:
         )
 
 
+class FailingExecutor(RecordingExecutor):
+    """A turn that never reaches a completed event — an interrupt, or a crash."""
+
+    def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+        self.tasks.append(task)
+        return ExecutionResult(
+            success=False, summary="interrupted", stdout="", stderr="", exit_code=1
+        )
+
+
 class NativeImageExecutor(RecordingExecutor):
     def supports_native_images(self):
         return True
@@ -355,6 +365,45 @@ def test_a_follow_up_turn_reuses_the_spawn_turn_workspace(tmp_path):
 
     assert post(client, spawn).status_code == 200
     assert post(client, follow_up).status_code == 200
+    assert executor.tasks[1].workspace == repo
+
+
+def test_a_spawn_that_fails_still_leaves_the_sub_agent_reachable(tmp_path):
+    """The spawn turn is the only one that reports a workspace.
+
+    Codex sends `workspaces` when it spawns a sub-agent and never again. When
+    that first turn was interrupted, the workspace used to go unrecorded — every
+    later message to that sub-agent 503'd with nowhere to run, so an interrupted
+    spawn bricked the sub-thread rather than merely failing it.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    executor = FailingExecutor()
+    context = build_ctx(tmp_path, executor)
+    client = TestClient(create_app(context))
+    spawn = {
+        "model": "opus",
+        "input": [{"role": "user", "content": "go"}],
+        "client_metadata": {
+            "x-codex-turn-metadata": turn_metadata(
+                thread_id="t1", workspaces={str(repo): {"has_changes": False}}
+            )
+        },
+    }
+
+    post(client, spawn)
+    follow_up = post(
+        client,
+        {
+            "model": "opus",
+            "input": [{"role": "user", "content": "and now this"}],
+            "client_metadata": {"x-codex-turn-metadata": turn_metadata(thread_id="t1")},
+        },
+    )
+
+    assert follow_up.status_code == 200
+    # The default workspace configured for this provider is tmp_path, so landing
+    # on `repo` can only have come from what the spawn turn reported.
     assert executor.tasks[1].workspace == repo
 
 
