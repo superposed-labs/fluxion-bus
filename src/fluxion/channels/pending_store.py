@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fluxion.i18n import t
+from fluxion.utils import macos_notify
 from fluxion.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,27 +74,15 @@ class PendingUserStore:
         return is_new
 
     def _queue_macos_notification(self, user_id: str, preview: str, locale: str) -> None:
-        """Append to the JSONL signal file the desktop app polls and delivers
-        through Notification Center (the same channel the scheduler uses).
-        No-op off macOS so the file never accumulates without a consumer."""
-        if sys.platform != "darwin":
-            return
-        signal_path = self._path.parent / "macos_notifications.jsonl"
         body_key = "pending.notify.body" if preview else "pending.notify.body_no_preview"
-        record = json.dumps(
-            {
-                "title": t(locale, "pending.notify.title", channel=self._LABEL),
-                "body": t(locale, body_key, user_id=user_id, preview=preview),
-                "channel": self._CHANNEL_KEY,
-                "user_id": user_id,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            ensure_ascii=False,
+        queued = macos_notify.queue(
+            self._path.parent,
+            t(locale, "pending.notify.title", channel=self._LABEL),
+            t(locale, body_key, user_id=user_id, preview=preview),
+            channel=self._CHANNEL_KEY,
+            user_id=user_id,
         )
-        try:
-            with open(signal_path, "a", encoding="utf-8") as fp:
-                fp.write(record + "\n")
-        except OSError:
+        if not queued and sys.platform == "darwin":
             logger.warning(
                 "Failed to queue macOS notification for pending %s user %s",
                 self._LABEL,

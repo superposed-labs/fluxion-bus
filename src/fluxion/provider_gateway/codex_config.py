@@ -426,8 +426,12 @@ def _next_backup_path(config_path: Path) -> Path:
     return config_path.with_name(f"{config_path.name}.fluxion-backup-{int(time.time())}")
 
 
-def diff_preview(before: str, after: str) -> str:
-    """Unified diff of the config change, for confirmation before writing."""
+def diff_preview(before: str, after: str, *, label: str = "after install") -> str:
+    """Unified diff of the config change, for confirmation before writing.
+
+    `label` names what the change is, since an uninstall shown as "after install"
+    reads as the opposite of what is about to happen.
+    """
     import difflib
 
     return "".join(
@@ -435,6 +439,6 @@ def diff_preview(before: str, after: str) -> str:
             before.splitlines(keepends=True),
             after.splitlines(keepends=True),
             fromfile="config.toml (current)",
-            tofile="config.toml (after install)",
+            tofile=f"config.toml ({label})",
         )
     )

@@ -819,6 +819,33 @@ def build_context(
     )
 
 
+def _warn_about_retired_models(routing) -> None:
+    """Log configured models their own CLI no longer lists.
+
+    A warning, never a refusal to start. The check runs a subprocess per CLI, so
+    making it fatal would let a slow, upgrading, or missing CLI keep the gateway
+    down — a worse outcome than one bad candidate in the routing table, which
+    fails only the turns that actually select it. `fluxion-provider check-models`
+    is the form of this check that exits non-zero.
+    """
+    try:
+        from fluxion.provider_gateway.model_catalog import (
+            describe_missing,
+            verify_configured_models,
+        )
+
+        verification = verify_configured_models(routing)
+    except Exception as err:  # noqa: BLE001 - a diagnostic must not break startup
+        log.debug("model catalog check skipped: %s", err)
+        return
+    for candidate in verification.missing:
+        log.warning(
+            "%s — every turn routed there will fail; `fluxion-provider check-models` "
+            "lists the full picture",
+            describe_missing(routing, candidate),
+        )
+
+
 def main() -> int:
     """Entry point for `fluxion-provider`."""
     import uvicorn
@@ -840,6 +867,8 @@ def main() -> int:
     except (ConfigError, InsecureBindError) as err:
         log.error("provider gateway cannot start: %s", err)
         return 1
+
+    _warn_about_retired_models(routing)
 
     app = create_app(context)
     # Both maps, always. This line is how an operator confirms what actually

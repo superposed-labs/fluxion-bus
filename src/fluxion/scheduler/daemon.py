@@ -27,6 +27,7 @@ from fluxion.subagent import SubagentRunner, SubagentRunRequest
 from fluxion.usage.collector import SharedUsageClient
 from fluxion.usage.models import STATUS_OK, ProviderUsage
 from fluxion.usage.service import UsageService
+from fluxion.utils import macos_notify
 
 log = logging.getLogger("fluxion.scheduler")
 
@@ -982,28 +983,10 @@ class SchedulerDaemon:
         )
 
     def _notify_macos(self, title: str, body: str) -> None:
-        """Append a notification record to the JSONL signal file that the macOS
-        desktop app watches.  The desktop app picks these up via its cache
-        watcher, delivers them through UNUserNotificationCenter, and truncates
-        the file.  No-op on non-macOS platforms so the signal file never
-        accumulates when no desktop app is running to consume it."""
-        if sys.platform != "darwin":
-            return
-        signal_path = self._settings.data_dir / "macos_notifications.jsonl"
-        record = json.dumps(
-            {
-                "title": title,
-                "body": body,
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-            ensure_ascii=False,
-        )
-        try:
-            with open(signal_path, "a", encoding="utf-8") as fp:
-                fp.write(record + "\n")
+        if macos_notify.queue(self._settings.data_dir, title, body):
             log.info("Queued macOS notification: %s — %s", title, body)
-        except Exception as exc:  # noqa: BLE001
-            log.error("Failed to write macOS notification signal: %s", exc)
+        elif sys.platform == "darwin":
+            log.error("Failed to write macOS notification signal")
 
     def _should_notify_macos(self) -> bool:
         return sys.platform == "darwin" and getattr(

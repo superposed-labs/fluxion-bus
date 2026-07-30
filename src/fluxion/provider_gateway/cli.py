@@ -8,14 +8,17 @@ Codex install, not just Fluxion's feature.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import socket
 import sys
+import time
 from pathlib import Path
 
-from fluxion.provider_gateway import codex_config
+from fluxion.config.settings import load_dotenv
+from fluxion.provider_gateway import codex_catalog, codex_config
 from fluxion.provider_gateway.auth import check_bind, load_or_create_token
 from fluxion.provider_gateway.codex_config import CodexConfigError
 from fluxion.provider_gateway.config import (
@@ -23,7 +26,12 @@ from fluxion.provider_gateway.config import (
     GatewaySettings,
     RoutingConfig,
 )
+from fluxion.provider_gateway.model_catalog import (
+    describe_missing,
+    verify_configured_models,
+)
 from fluxion.provider_gateway.sticky import StickyStore
+from fluxion.utils import macos_notify
 
 _STARTER_CONFIG = {
     "version": 1,
@@ -59,6 +67,12 @@ _STARTER_CONFIG = {
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Every FLUXION_PROVIDER_* setting is documented as an environment variable,
+    # and users put those in `.env` alongside the rest of Fluxion's config. Read
+    # it here rather than only where `Settings` happens to be constructed: an
+    # unattended `check-models` that ignores `.env` silently uses defaults, so a
+    # setting the user believes is on is simply not.
+    load_dotenv()
     try:
         return args.handler(args)
     except (ConfigError, CodexConfigError) as err:
@@ -140,6 +154,9 @@ def _doctor(args: argparse.Namespace) -> int:
                 continue
             notes.append(f"  {provider_id}: local agent via {spec.executor!r}")
         problems.extend(_read_only_problems(routing, executors, enforces_read_only))
+        model_problems, model_notes = _model_catalog_report(routing)
+        problems.extend(model_problems)
+        notes.extend(model_notes)
     except ConfigError as err:
         problems.append(str(err))
 
@@ -148,6 +165,282 @@ def _doctor(args: argparse.Namespace) -> int:
     for problem in problems:
         print(f"FAIL {problem}", file=sys.stderr)
     return 1 if problems else 0
+
+
+def _check_models(args: argparse.Namespace) -> int:
+    """Verify configured model ids against the CLIs' own catalogs.
+
+    Separate from `doctor` so it can run unattended. `doctor` reports a bound
+    port as a problem — correct when you are about to start a gateway, wrong for
+    a scheduled check, where a gateway already running is the normal case and
+    would make every run exit non-zero.
+    """
+    settings = GatewaySettings.load()
+    if not settings.config_file.exists():
+        # Nothing is configured, so there is nothing to verify. Exiting zero is
+        # the whole point of this branch: most installs never set up the provider
+        # gateway, and telling them daily that something is wrong trains everyone
+        # to ignore the one run that matters. `doctor` still reports a missing
+        # config as a problem — there you are about to start a gateway.
+        print(f"ok   no routing config at {settings.config_file}; nothing to check")
+        return 0
+
+    routing = RoutingConfig.load(settings.config_file)
+    # The user's own Codex catalog override is a separate subject, but it has to
+    # be settled first: a `model_catalog_json` *is* the model list Codex serves,
+    # so a stale one makes the id verification below report configured models as
+    # missing. In `refresh` mode that would mean a spurious routing finding on
+    # every run that repaired a snapshot.
+    catalog_problems, notes = codex_catalog.report(settings.codex_catalog_drift)
+    routing_problems, routing_notes = _model_catalog_report(routing)
+    notes.extend(routing_notes)
+    problems = routing_problems + catalog_problems
+    for note in notes:
+        print(f"ok   {note}")
+    for problem in problems:
+        print(f"FAIL {problem}", file=sys.stderr)
+    # Tied to the routing findings specifically: printing it for a stale catalog
+    # would send the user to edit the wrong file.
+    if routing_problems:
+        print(
+            "\nA retired model id fails every turn on its route, and a policy's "
+            "`fallback` does not cover it: the gateway makes one attempt per turn "
+            "by design. Edit the routing config and restart the gateway.",
+            file=sys.stderr,
+        )
+    if getattr(args, "notify", False):
+        _notify_findings(problems, bool(routing_problems))
+    return 1 if problems else 0
+
+
+_NOTIFY_KEY = "check-models"
+
+
+def _notify_findings(problems: list[str], has_routing_problem: bool) -> None:
+    """Hand the findings to the desktop app, at most once per finding per day.
+
+    Naming which of the two subjects fired matters more than listing every line:
+    a retired model id and a stale catalog snapshot are fixed in different files,
+    and a notification that sends the user to the wrong one wastes the trip.
+    """
+    data_dir = _data_dir()
+    if not problems:
+        macos_notify.clear_throttle(data_dir, _NOTIFY_KEY)
+        return
+    title = (
+        "Fluxion: model id retired"
+        if has_routing_problem
+        else "Fluxion: Codex model catalog is stale"
+    )
+    body = "\n".join(problems[:3])
+    fingerprint = hashlib.sha256("\n".join(sorted(problems)).encode()).hexdigest()[:16]
+    result = macos_notify.queue_throttled(
+        data_dir, _NOTIFY_KEY, title, body, fingerprint=fingerprint
+    )
+    # Name the file. Only the desktop app's own data directory is watched, and a
+    # CLI run from a second checkout resolves a different one — the notification
+    # would then sit in a file nothing consumes, with the check itself looking
+    # entirely healthy. Printing the path puts that in the log of every run.
+    print(f"ok   notification {result}: {data_dir / macos_notify.FILENAME}")
+
+
+def _data_dir() -> Path:
+    """Where the notification signal file lives.
+
+    Falls back to the environment alone: a broken or half-written settings file
+    must not stop a check from reporting, and this needs one path, not the whole
+    settings object.
+    """
+    try:
+        from fluxion.config.settings import Settings
+
+        return Settings.load().data_dir
+    except Exception:  # noqa: BLE001
+        return Path(os.environ.get("FLUXION_DATA_DIR", "data")).expanduser()
+
+
+def _install_codex_catalog(args: argparse.Namespace) -> int:
+    """Create the local catalog override that keeps a v2 model on protocol v1.
+
+    The counterpart to `refresh-codex-catalog`, which maintains an override but
+    cannot create one. Without this the only route was to hand-build a snapshot
+    from Codex's cache, which is a lot of file surgery to ask of someone whose
+    actual problem is that their sub-agent came back with the wrong answer.
+    """
+    home = codex_catalog.codex_home()
+    config_path = home / "config.toml"
+    catalog_path = (
+        Path(args.catalog).expanduser()
+        if args.catalog
+        else (home / "model-catalogs" / "multiagent-v1.json")
+    )
+
+    cache_path = home / "models_cache.json"
+    if not cache_path.exists():
+        # Not the same as "nothing needs pinning": with no catalog to copy there
+        # is nothing to decide from, and saying otherwise would tell a user whose
+        # sub-agents cannot work that they already can.
+        return _error(
+            f"{cache_path} does not exist, so there is no catalog to derive from. "
+            "Codex writes it on its own — start a Codex session, then run this again."
+        )
+
+    slugs = tuple(args.model) if args.model else codex_catalog.models_needing_pin(home)
+    if not slugs:
+        print(
+            f"no model in {cache_path} declares multi-agent v2, so nothing needs "
+            "pinning: sub-agent tasks already reach a local agent as readable text. "
+            "If one did not, the cause is elsewhere — check the role name first "
+            "(`fluxion_worker`, not `worker`).",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        snapshot = codex_catalog.build_snapshot(home, slugs)
+    except codex_catalog.CatalogError as err:
+        return _error(str(err))
+
+    before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    after = codex_catalog.plan_config_line(before, catalog_path)
+    print(f"Pinning to multi-agent v1: {', '.join(slugs)}")
+    print(f"Catalog snapshot: {catalog_path} ({len(json.loads(snapshot)['models'])} models)")
+    print()
+    print(codex_config.diff_preview(before, after) or "(no change to config.toml)")
+    print(
+        "\nThis file becomes your whole model list — it replaces the server's rather\n"
+        "than extending it, so it needs re-deriving when models change upstream.\n"
+        "`fluxion-provider check-models` reports when that happens."
+    )
+
+    if not args.yes and not _confirm("\nApply these changes?"):
+        print("aborted; nothing was written")
+        return 1
+
+    backup = ""
+    if before:
+        backup_path = config_path.with_name(f"{config_path.name}.fluxion-backup-{int(time.time())}")
+        shutil.copy2(config_path, backup_path)
+        backup = str(backup_path)
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(snapshot, encoding="utf-8")
+    config_path.write_text(after, encoding="utf-8")
+
+    if backup:
+        print(f"backup: {backup}")
+    print(f"installed: {catalog_path}")
+    print(
+        "Start a NEW Codex session to pick this up — the protocol version is fixed "
+        "when a thread starts, so switching inside an existing one changes nothing."
+    )
+    print("verify with: codex debug models")
+    return 0
+
+
+def _uninstall_codex_catalog(args: argparse.Namespace) -> int:
+    """Drop the catalog override, handing the model list back to Codex.
+
+    The snapshot file is left in place unless asked: removing the key already
+    makes it inert, and a user may have pointed the key at a catalog they wrote
+    themselves — deleting that because they ran an uninstall would be a poor
+    trade for saving them one `rm`.
+    """
+    home = codex_catalog.codex_home()
+    config_path = home / "config.toml"
+    catalog_path = codex_catalog.find_override(home)
+    before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    after = codex_catalog.plan_config_removal(before)
+    if after is None:
+        print(f"no `{codex_catalog.CONFIG_KEY}` in {config_path}; nothing to do")
+        return 0
+
+    print(codex_config.diff_preview(before, after, label="after uninstall"))
+    if catalog_path is not None:
+        print(
+            f"Snapshot: {catalog_path}"
+            + (" (will be deleted)" if args.delete_catalog else " (left in place)")
+        )
+    print("\nCodex goes back to its own model list, and any pinned protocol goes with it.")
+    if not args.yes and not _confirm("\nApply these changes?"):
+        print("aborted; nothing was written")
+        return 1
+
+    backup_path = config_path.with_name(f"{config_path.name}.fluxion-backup-{int(time.time())}")
+    shutil.copy2(config_path, backup_path)
+    config_path.write_text(after, encoding="utf-8")
+    print(f"backup: {backup_path}")
+    if args.delete_catalog and catalog_path is not None:
+        try:
+            catalog_path.unlink()
+            print(f"deleted {catalog_path}")
+        except OSError as err:
+            print(f"could not delete {catalog_path}: {err}", file=sys.stderr)
+    print(f"removed `{codex_catalog.CONFIG_KEY}` from {config_path}")
+    print(
+        "Start a NEW Codex session: the protocol version is fixed when a thread "
+        "starts, so an existing one keeps whatever it already had."
+    )
+    return 0
+
+
+def _refresh_codex_catalog(args: argparse.Namespace) -> int:
+    """Re-derive the local Codex catalog snapshot on demand.
+
+    The manual half of the daily check: same detection, but it writes regardless
+    of `FLUXION_PROVIDER_CODEX_CATALOG_DRIFT`, because running this command *is*
+    the decision that setting otherwise defers.
+    """
+    home = codex_catalog.codex_home()
+    catalog_path = codex_catalog.find_override(home)
+    if catalog_path is None:
+        print(
+            f"no `{codex_catalog.CONFIG_KEY}` in {home / 'config.toml'}; nothing to refresh",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        drift = codex_catalog.inspect(home)
+    except codex_catalog.CatalogError as err:
+        print(f"FAIL {err}", file=sys.stderr)
+        return 1
+    if drift is None:
+        print(f"FAIL {catalog_path} or {home / 'models_cache.json'} is missing", file=sys.stderr)
+        return 1
+
+    if args.check:
+        problems, notes = codex_catalog.report("warn", home)
+        for note in notes:
+            print(f"ok   {note}")
+        for problem in problems:
+            print(f"FAIL {problem}", file=sys.stderr)
+        return 1 if problems else 0
+
+    try:
+        messages = codex_catalog.refresh(drift)
+    except (codex_catalog.CatalogError, OSError) as err:
+        print(f"FAIL {err}", file=sys.stderr)
+        return 1
+    for message in messages:
+        print(f"ok   {message}")
+    print("verify with: codex debug models")
+    return 0
+
+
+def _model_catalog_report(routing: RoutingConfig) -> tuple[list[str], list[str]]:
+    """Model-existence findings as `(problems, notes)`.
+
+    Only ids a *readable* catalog fails to list become problems. An unreachable
+    catalog is reported as a note: a CLI that is missing, slow, or newly
+    upgraded must not be able to condemn a working configuration.
+    """
+    verification = verify_configured_models(routing)
+    problems = [describe_missing(routing, candidate) for candidate in verification.missing]
+    notes = list(verification.catalog_notes)
+    if verification.verified:
+        notes.append(f"{len(verification.verified)} configured model(s) confirmed live")
+    for candidate, reason in verification.unverified:
+        notes.append(f"  {candidate}: not verified — {reason}")
+    return problems, notes
 
 
 def _read_only_problems(routing, executors, enforces_read_only) -> list[str]:
@@ -357,6 +650,62 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     doctor_parser = subparsers.add_parser("doctor", help="Check the local setup.")
     doctor_parser.set_defaults(handler=_doctor)
+
+    check_models_parser = subparsers.add_parser(
+        "check-models",
+        help="Verify configured model ids still exist in the CLIs' catalogs "
+        "(safe to run on a schedule while the gateway is up).",
+    )
+    check_models_parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Deliver findings as a macOS notification through the Fluxion "
+        "desktop app, at most once a day per unchanged finding.",
+    )
+    check_models_parser.set_defaults(handler=_check_models)
+
+    install_catalog_parser = subparsers.add_parser(
+        "install-codex-catalog",
+        help="Pin a v2 model's sub-agent protocol to v1 with a local Codex model "
+        "catalog, so delegated tasks reach a local agent as readable text.",
+    )
+    install_catalog_parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="Model to pin (repeatable). Defaults to every model declaring v2.",
+    )
+    install_catalog_parser.add_argument(
+        "--catalog",
+        default="",
+        help="Where to write the snapshot (default: ~/.codex/model-catalogs/multiagent-v1.json).",
+    )
+    install_catalog_parser.add_argument("--yes", action="store_true")
+    install_catalog_parser.set_defaults(handler=_install_codex_catalog)
+
+    uninstall_catalog_parser = subparsers.add_parser(
+        "uninstall-codex-catalog",
+        help="Remove the local model catalog override, handing the model list back to Codex.",
+    )
+    uninstall_catalog_parser.add_argument(
+        "--delete-catalog",
+        action="store_true",
+        help="Also delete the snapshot file (left in place by default).",
+    )
+    uninstall_catalog_parser.add_argument("--yes", action="store_true")
+    uninstall_catalog_parser.set_defaults(handler=_uninstall_codex_catalog)
+
+    refresh_catalog_parser = subparsers.add_parser(
+        "refresh-codex-catalog",
+        help="Re-derive a local Codex model catalog override from Codex's own "
+        "fresh cache, keeping the multi-agent protocol pins.",
+    )
+    refresh_catalog_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Report drift and exit non-zero instead of writing.",
+    )
+    refresh_catalog_parser.set_defaults(handler=_refresh_codex_catalog)
 
     print_parser = subparsers.add_parser(
         "print-codex-config", help="Print the Codex-side config without modifying anything."
