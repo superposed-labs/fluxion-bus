@@ -127,7 +127,7 @@ codex -m gpt-5.6-luna
 
 #### Keeping a v2 model on v1
 
-If you would rather not give up the model, Codex's `model_catalog_json` can pin the declaration locally. Verified end-to-end on codex-cli 0.145.0 with `gpt-5.6-sol` as the parent: the delegated task arrived as plaintext and the sub-agent ran on a local agent.
+If you would rather not give up the model, Codex's `model_catalog_json` can pin the declaration locally. Verified end-to-end with `gpt-5.6-sol` as the parent, on codex-cli 0.145.0 and on Codex Desktop 0.146.0-alpha.3.1: the delegated task arrived as plaintext and the sub-agent ran on a local agent. Desktop honours the key from the **global** `~/.codex/config.toml`; [#26308](https://github.com/openai/codex/issues/26308) reports it ignoring a project-local one, so keep it global.
 
 ```bash
 fluxion-provider install-codex-catalog
