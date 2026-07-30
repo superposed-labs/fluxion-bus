@@ -19,6 +19,7 @@ from fluxion.provider_gateway.stream import (
     EV_COMPLETED,
     EV_CREATED,
     EV_FAILED,
+    EV_HEARTBEAT,
     EV_OUTPUT_ITEM_ADDED,
     EV_OUTPUT_ITEM_DONE,
     EV_OUTPUT_TEXT_DELTA,
@@ -1042,3 +1043,102 @@ def test_the_resume_key_is_the_one_executors_read():
     for module in (claude_executor, codex_executor, antigravity_executor):
         source = Path(module.__file__).read_text()
         assert 'metadata.get("executor_session_id"' in source, module.__name__
+
+
+# ── keepalive while a tool call runs ─────────────────────────────────
+class SilentExecutor(FakeExecutor):
+    """An agent in the middle of one long tool call: nothing to say until it ends.
+
+    This is the ordinary case, not a pathological one — installing dependencies,
+    a build, a test run. All three executor protocols report a tool's start and
+    its result and emit nothing in between.
+    """
+
+    def __init__(self, quiet_for=0.3):
+        super().__init__(chunks=())
+        self.quiet_for = quiet_for
+
+    def execute(self, task, cancel_requested=None, stream_output=None, stream_reasoning=None):
+        time.sleep(self.quiet_for)
+        return ExecutionResult(
+            success=True,
+            summary="the answer",
+            stdout="",
+            stderr="",
+            exit_code=0,
+            executor_session_id="sess-quiet",
+        )
+
+
+@pytest.fixture
+def fast_heartbeat(monkeypatch):
+    from fluxion.provider_gateway.upstream import local_agent
+
+    monkeypatch.setattr(local_agent, "HEARTBEAT_INTERVAL_SEC", 0.05)
+
+
+def test_a_long_silent_tool_call_still_produces_traffic(fast_heartbeat):
+    """Without this the turn dies at `stream_idle_timeout_ms` and cannot be recovered.
+
+    There is no run id on this path — unlike the MCP surface, where a caller can
+    ask again — so a killed turn is simply lost work.
+    """
+    events = run_stream(build(SilentExecutor()))
+    kinds = [event["type"] for event in events]
+
+    assert EV_HEARTBEAT in kinds
+
+
+def test_a_heartbeat_does_not_end_the_turn(fast_heartbeat):
+    """A heartbeat carries no chunk, and so does the end of the run.
+
+    Confusing the two would close the stream on the first quiet minute, turning
+    the fix into a worse bug than the one it addresses.
+    """
+    events = run_stream(build(SilentExecutor()))
+    kinds = [event["type"] for event in events]
+
+    assert kinds[-1] == EV_COMPLETED
+    assert kinds.index(EV_HEARTBEAT) < kinds.index(EV_COMPLETED)
+    answer = "".join(
+        event.get("delta", "") for event in events if event["type"] == EV_OUTPUT_TEXT_DELTA
+    )
+    assert "the answer" in answer
+
+
+def test_output_either_side_of_a_quiet_stretch_survives_it(fast_heartbeat):
+    """The heartbeat wait must not consume or reorder the executor's own output.
+
+    Holding one getter across ticks is what guarantees this; `wait_for` would
+    cancel the pending `Queue.get()` on every tick and can drop an item that
+    arrives in the same instant.
+    """
+    executor = FakeExecutor(chunks=("before", "after"), delay=0.2)
+    events = run_stream(build(executor))
+    kinds = [event["type"] for event in events]
+    text = "".join(
+        event.get("delta", "") for event in events if event["type"] == EV_OUTPUT_TEXT_DELTA
+    )
+
+    assert EV_HEARTBEAT in kinds
+    assert text.index("before") < text.index("after")
+
+
+def test_the_heartbeat_is_a_real_event_not_an_sse_comment():
+    """The mistake this whole feature was one commit away from shipping.
+
+    Codex times the stream with `timeout(idle_timeout, stream.next())` over an
+    `.eventsource()`-parsed stream, and that parser drops `:` comment lines and
+    refuses to dispatch an event whose data buffer is empty. A comment-frame
+    keepalive would therefore never reset the timer — and would fail silently,
+    since heartbeats would appear to be going out while the turn was killed
+    anyway. The frame has to carry a non-empty `data:` payload.
+    """
+    from fluxion.provider_gateway.stream import encode_sse, heartbeat_event
+
+    frame = encode_sse(heartbeat_event("resp_1"))
+
+    assert frame.startswith(b"data: {")
+    assert not frame.startswith(b":")
+    payload = json.loads(frame.removeprefix(b"data: ").decode())
+    assert payload["type"] == EV_HEARTBEAT

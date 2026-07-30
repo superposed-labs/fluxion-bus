@@ -60,6 +60,7 @@ from fluxion.provider_gateway.messages_stream import (
     message_delta,
     message_start,
     message_stop,
+    ping_event,
 )
 from fluxion.provider_gateway.stream import (
     EV_COMPLETED,
@@ -69,6 +70,7 @@ from fluxion.provider_gateway.stream import (
     EV_OUTPUT_ITEM_DONE,
     EV_OUTPUT_TEXT_DELTA,
     EV_REASONING_SUMMARY_TEXT_DELTA,
+    heartbeat_event,
 )
 
 log = logging.getLogger(__name__)
@@ -76,8 +78,27 @@ log = logging.getLogger(__name__)
 # Sentinels distinguishing what a queued chunk is. Reasoning and answer text
 # land in different Codex items, so the bridge has to keep them apart.
 _DONE = object()
+# Yielded by the bridge when the executor has said nothing for a while. Distinct
+# from `_DONE` because both carry no chunk, and a renderer that confused the two
+# would end the turn on the first quiet minute.
+_HEARTBEAT = object()
 _ANSWER = "answer"
 _REASONING = "reasoning"
+
+# How long the bridge waits for executor output before emitting a keepalive.
+#
+# Sized against the 300000ms `stream_idle_timeout_ms` the generated Codex
+# provider entries carry (`codex_config.py`): five intervals fit inside one
+# timeout, so the connection survives four consecutive lost or delayed
+# heartbeats before a client gives up on it.
+#
+# Deliberately not "raise the timeout instead". A larger timeout is a guess at
+# the longest legitimate silence — a guess that has to be revisited every time
+# someone runs a slower build — and it buys that headroom by making a genuinely
+# dead connection take proportionally longer to notice. Keeping the timeout
+# short and answering it with a heartbeat separates the two questions: how long
+# a tool may take, and whether anyone is still on the other end.
+HEARTBEAT_INTERVAL_SEC = 60.0
 
 # Workspace locks are module-level, not per-adapter. Two providers (say a Claude
 # one and an Antigravity one) can be pointed at the same repository; if each held
@@ -243,6 +264,13 @@ class LocalAgentUpstream:
                 read_only,
                 image_attachments,
             ):
+                if channel is _HEARTBEAT:
+                    # Checked before the `chunk is None` branch below, which
+                    # means "the run is over": a heartbeat also carries no
+                    # chunk, and reading it as terminal would end the turn on
+                    # the first long-running tool call.
+                    yield heartbeat_event(response_id)
+                    continue
                 if chunk is not None:
                     if channel != open_channel:
                         if open_channel is not None:
@@ -322,7 +350,7 @@ class LocalAgentUpstream:
 
             streamed: list[str] = []
             opened = True
-            async for _channel, chunk, run in self._run(
+            async for channel, chunk, run in self._run(
                 prompt,
                 model,
                 workspace,
@@ -331,6 +359,12 @@ class LocalAgentUpstream:
                 read_only,
                 image_attachments,
             ):
+                if channel is _HEARTBEAT:
+                    # Same ordering rule as the Responses renderer: a heartbeat
+                    # carries no chunk, and the branch below treats that as the
+                    # end of the run.
+                    yield ping_event()
+                    continue
                 if chunk is not None:
                     streamed.append(chunk)
                     yield content_block_delta(chunk)
@@ -514,12 +548,34 @@ class LocalAgentUpstream:
         )
         thread.start()
 
+        # Held across iterations rather than created per wait. `asyncio.wait`
+        # leaves an unfinished getter pending, where `wait_for` would cancel it
+        # on every timeout — and a `Queue.get()` cancelled in the same moment an
+        # item arrives can drop that item. Losing a chunk of the agent's answer
+        # to a heartbeat tick is not a trade worth making.
+        getter = asyncio.ensure_future(queue.get())
         try:
             while True:
-                channel, payload = await queue.get()
+                done, _pending = await asyncio.wait({getter}, timeout=HEARTBEAT_INTERVAL_SEC)
+                if not done:
+                    # Nothing from the executor for a whole interval. That is
+                    # normal — a single tool call (installing dependencies,
+                    # a build, a test run) reports "started" and then nothing
+                    # until it finishes. Say something so the client can tell
+                    # this connection from a dead one.
+                    log.debug(
+                        "local agent %s quiet for %.0fs; sending heartbeat",
+                        self.provider_id,
+                        HEARTBEAT_INTERVAL_SEC,
+                    )
+                    yield _HEARTBEAT, None, None
+                    continue
+
+                channel, payload = getter.result()
                 if channel is _DONE:
                     yield None, None, payload
                     return
+                getter = asyncio.ensure_future(queue.get())
                 if is_cancelled is not None and is_cancelled():
                     cancelled.set()
                 yield channel, str(payload), None
@@ -528,6 +584,8 @@ class LocalAgentUpstream:
             # keep burning the user's subscription on output nobody will read.
             cancelled.set()
             raise
+        finally:
+            getter.cancel()
 
 
 ENCRYPTED_TASK_MESSAGE = (

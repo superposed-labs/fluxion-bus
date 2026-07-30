@@ -37,6 +37,23 @@ EV_FAILED = "response.failed"
 EV_INCOMPLETE = "response.incomplete"
 EV_ERROR = "error"
 
+# Keepalive. Not part of the Responses protocol — deliberately a name no client
+# implements, so it can only ever be ignored.
+#
+# It has to be a real event with a non-empty `data:` payload rather than an SSE
+# comment (`: ping`). Codex times the stream with
+# `timeout(idle_timeout, stream.next())` over an `.eventsource()`-parsed stream
+# (`codex-client/src/sse.rs`, `codex-api/src/sse/responses.rs`), and that parser
+# drops comment lines and refuses to dispatch an event whose data buffer is
+# empty. A comment therefore produces no item, does not reset the timer, and
+# would make this whole mechanism a no-op with no symptom — the turn would still
+# be killed at the timeout while the logs showed heartbeats going out.
+#
+# An unknown type is safe on the other side: Codex's event match ends in
+# `_ => trace!("unhandled responses event")`, and even a payload it cannot parse
+# at all is a `debug!` and a `continue`.
+EV_HEARTBEAT = "fluxion.heartbeat"
+
 RECOGNIZED_EVENTS = frozenset(
     {
         EV_CREATED,
@@ -64,6 +81,16 @@ TERMINAL_EVENTS = frozenset({EV_COMPLETED, EV_FAILED, EV_INCOMPLETE, EV_ERROR})
 
 def is_terminal_event(event_type: str) -> bool:
     return event_type in TERMINAL_EVENTS
+
+
+def heartbeat_event(response_id: str) -> dict[str, Any]:
+    """A keepalive frame carrying no content.
+
+    Kept out of `RECOGNIZED_EVENTS`: this is Fluxion's own framing, not part of
+    the protocol being spoken, and nothing downstream should start treating it
+    as one.
+    """
+    return {"type": EV_HEARTBEAT, "response_id": response_id}
 
 
 # ── SSE codec ────────────────────────────────────────────────────────
