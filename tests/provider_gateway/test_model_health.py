@@ -58,7 +58,12 @@ def catalogs(**by_executor: ExecutorCatalog):
 
     def load(executor: str) -> ExecutorCatalog:
         asked.append(executor)
-        return by_executor.get(executor, ExecutorCatalog(executor=executor, error="not stubbed"))
+        # An unstubbed executor stands in for Claude Code: no catalog command at
+        # all, which is a permanent property and not a failure to report.
+        return by_executor.get(
+            executor,
+            ExecutorCatalog(executor=executor, supported=False, error="no catalog command"),
+        )
 
     load.asked = asked  # type: ignore[attr-defined]
     return load
@@ -230,6 +235,40 @@ def test_an_ejection_is_logged_with_what_it_means(caplog):
     assert "no longer listed by its CLI" in caplog.text
 
 
+def test_a_catalog_that_cannot_be_read_is_reported(caplog):
+    """The one failure with no other symptom.
+
+    Nothing is ejected and no turn behaves differently, so a gateway whose PATH
+    does not reach the CLI runs with this whole mechanism inert — while
+    `check-models` from a normal shell reports everything fine.
+    """
+    health = CatalogHealth(routing(), load=catalogs(antigravity=unreadable()))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.model_health"):
+        health.refresh()
+
+    assert "cannot read antigravity's model catalog" in caplog.text
+
+
+def test_an_executor_with_no_catalog_command_is_not_reported_as_a_fault(caplog):
+    """Claude Code has no catalog by design; warning about it every cycle is crying wolf."""
+    health = CatalogHealth(routing(), load=catalogs(antigravity=live("gemini-live")))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.model_health"):
+        health.refresh()
+
+    assert "claude" not in caplog.text
+    assert "claude" not in health.snapshot.unreadable
+
+
+def test_an_unreadable_catalog_is_reported_once_not_every_cycle(caplog):
+    """A refresh every 10 minutes would otherwise fill the log with one standing fault."""
+    health = CatalogHealth(routing(), load=catalogs(antigravity=unreadable()))
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.model_health"):
+        health.refresh()
+        health.refresh()
+
+    assert caplog.text.count("cannot read antigravity's model catalog") == 1
+
+
 # ── background refresh ───────────────────────────────────────────────
 def test_the_background_thread_refreshes_and_stops():
     """Refreshing has to happen somewhere, and it cannot be the request path."""
@@ -281,3 +320,43 @@ def test_a_refresh_that_raises_does_not_end_the_loop():
 
     assert health.snapshot.checked
     assert health.health_check(RETIRED) == HEALTH_RETIRED
+
+
+def test_the_app_lifespan_runs_the_refresher():
+    """The seam where this feature silently becomes dead code.
+
+    Everything else here tests `CatalogHealth` directly, so dropping the two
+    lines that start and stop it in `create_app` would leave a gateway that
+    never checks a catalog and never ejects anything — with the whole suite
+    still green.
+    """
+    from fastapi.testclient import TestClient
+
+    from fluxion.provider_gateway.app import GatewayContext, create_app
+    from fluxion.provider_gateway.auth import TokenAuthenticator
+    from fluxion.provider_gateway.routing import Router
+    from fluxion.provider_gateway.sticky import StickyStore
+
+    refreshed = threading.Event()
+
+    def load(executor: str) -> ExecutorCatalog:
+        refreshed.set()
+        return live("gemini-live")
+
+    health = CatalogHealth(routing(), load=load, interval=0.01)
+    context = GatewayContext(
+        router=Router(policies={}, routes={}, capabilities={}, health_check=health.health_check),
+        sticky=StickyStore(":memory:"),
+        authenticator=TokenAuthenticator("t"),
+        model_health=health,
+    )
+
+    with TestClient(create_app(context)) as client:
+        assert refreshed.wait(timeout=5.0)
+        assert client.get("/healthz").status_code == 200
+
+    assert health.health_check(RETIRED) == HEALTH_RETIRED
+    # Shutdown has to stop it too: a thread left shelling out to a CLI after the
+    # app is gone is exactly what the lifespan's `finally` exists to prevent.
+    refreshed.clear()
+    assert not refreshed.wait(timeout=0.2)

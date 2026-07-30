@@ -51,8 +51,11 @@ class HealthSnapshot:
     """
 
     ejected: frozenset[str] = frozenset()
-    # Per-executor reason its catalog could not be read. An entry here means
-    # that executor's models were all left healthy.
+    # Per-executor reason a catalog read that *should* have worked did not, which
+    # means that executor's models were all left healthy this cycle. Executors
+    # with no catalog command at all (Claude Code) are deliberately absent: they
+    # are permanently uncheckable by design, and listing them here would put a
+    # standing fault next to real ones.
     unreadable: Mapping[str, str] = field(default_factory=dict)
     # 0.0 until the first refresh finishes. Before that nothing is ejected,
     # which is the same state as "everything checks out" by design — the safe
@@ -158,7 +161,10 @@ class CatalogHealth:
             catalog = catalogs[executor]
             if not catalog.readable:
                 # The whole point of constraint one: no catalog, no verdict.
-                unreadable.setdefault(executor, catalog.error)
+                # `supported` separates "this CLI has no catalog command" from
+                # "asking failed"; only the second is something to report.
+                if catalog.supported:
+                    unreadable.setdefault(executor, catalog.error)
                 continue
             _, model_id = split_candidate(candidate)
             if not catalog.has(model_id):
@@ -188,6 +194,21 @@ class CatalogHealth:
                 candidate,
             )
             self._eject(candidate)
+        # A catalog that cannot be read is the failure mode with no other
+        # symptom. Nothing is ejected, no turn fails differently, and the whole
+        # mechanism is quietly inert — the shape this takes in production is a
+        # gateway started by launchd with a PATH that does not reach `agy`,
+        # while `check-models` in the operator's own shell works perfectly and
+        # reports everything fine. Without this line, nothing anywhere says so.
+        for executor in sorted(set(current.unreadable) - set(previous.unreadable)):
+            log.warning(
+                "cannot read %s's model catalog (%s); its models are all left in rotation "
+                "and retired ones will not be skipped until this is fixed",
+                executor,
+                current.unreadable[executor],
+            )
+        for executor in sorted(set(previous.unreadable) - set(current.unreadable)):
+            log.info("%s's model catalog is readable again", executor)
         for candidate in sorted(previous.ejected - current.ejected):
             reason = (
                 "its catalog can no longer be read, so it is no longer ejected"
