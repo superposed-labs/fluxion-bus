@@ -1338,8 +1338,11 @@ extension NotchIslandView {
               let end = Calendar.current.date(byAdding: .hour, value: 1, to: start)
         else { return "—" }
 
-        let formatter = SharedDateFormatters.shortTimeRange(language: L10n.resolvedAppLanguage)
-        return formatter.string(from: start, to: end)
+        return SharedDateFormatters.hourRangeText(
+            from: start,
+            to: end,
+            language: L10n.resolvedAppLanguage
+        )
     }
 
     @ViewBuilder
@@ -1457,11 +1460,11 @@ extension NotchIslandView {
     func detailedUsageFlowFigure(label: String, value: String, secondary: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text(value)
-                .font(.system(size: secondary ? 11.5 : 13, weight: secondary ? .semibold : .bold))
+                .font(.system(size: secondary ? 12.5 : 14, weight: secondary ? .semibold : .bold))
                 .monospacedDigit()
                 .foregroundColor(.white.opacity(secondary ? 0.68 : 0.9))
             Text(label.uppercased())
-                .font(.system(size: secondary ? 7 : 7.5, weight: .semibold))
+                .font(.system(size: secondary ? 8 : 8.5, weight: .semibold))
                 .tracking(secondary ? 0.35 : 0.5)
                 .foregroundColor(.white.opacity(secondary ? 0.32 : 0.38))
         }
@@ -1807,9 +1810,11 @@ extension NotchIslandView {
                 ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(tile.label.uppercased())
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .tracking(0.4)
                             .foregroundColor(.white.opacity(0.42))
+                        // Held at 13: the peak-hour range ("19:00–20:00") is the
+                        // widest value any tile carries and overflows at 14.
                         Text(tile.value)
                             .font(.system(size: 13, weight: .bold))
                             .monospacedDigit()
