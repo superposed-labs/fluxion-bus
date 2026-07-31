@@ -156,6 +156,20 @@ class GatewayContext:
         )
 
 
+def _sticky_candidate(sticky: StickyRoute | None) -> str | None:
+    """The remembered route, but only once a turn has completed on it.
+
+    A row also gets written before its turn runs, to capture the workspace while
+    the request still reports one. The provider/model on such a row record what
+    was attempted, not what worked, and reusing them would pin a conversation to
+    a backend that may have just failed it — the thing `remember`'s
+    completed-only rule exists to prevent.
+    """
+    if sticky is None or not sticky.route_confirmed:
+        return None
+    return sticky.candidate_id
+
+
 class _ProviderLimitsMiddleware:
     """Bound inference request memory and in-flight local-agent turns.
 
@@ -375,7 +389,7 @@ async def _handle_messages(context: GatewayContext, request: Request):
     # to resend — see `extract_messages_prompt`.
     try:
         decision = context.router.select(
-            identity, requirements, sticky_candidate=sticky.candidate_id if sticky else None
+            identity, requirements, sticky_candidate=_sticky_candidate(sticky)
         )
         upstream = context.local_agent_for(decision)
         if upstream is None:
@@ -383,6 +397,16 @@ async def _handle_messages(context: GatewayContext, request: Request):
         workspace = context.workspace_for(decision, identity, sticky)
     except NoRouteAvailableError as err:
         return _error_response(503, "no_route_available", str(err))
+
+    # Before the turn, not after it: this request may be the only one that ever
+    # reports the workspace, and it is no less true if the turn then fails.
+    context.sticky.remember_workspace(
+        identity,
+        str(workspace),
+        attempted_provider_id=decision.provider_id,
+        attempted_upstream_model=decision.upstream_model,
+        attempted_policy_id=decision.policy_id,
+    )
 
     try:
         images = materialize_anthropic_images(
@@ -593,7 +617,7 @@ async def _run(
     decision = context.router.select(
         identity,
         requirements,
-        sticky_candidate=sticky.candidate_id if sticky else None,
+        sticky_candidate=_sticky_candidate(sticky),
     )
     async for chunk in _run_local_agent(
         context,
@@ -638,6 +662,13 @@ async def _run_local_agent(
     The tracker that enforced both was removed with the API-upstream path.
     """
     workspace = context.workspace_for(decision, identity, sticky)
+    context.sticky.remember_workspace(
+        identity,
+        str(workspace),
+        attempted_provider_id=decision.provider_id,
+        attempted_upstream_model=decision.upstream_model,
+        attempted_policy_id=decision.policy_id,
+    )
     # Resume the agent session this sub-thread used last time, so a follow-up
     # turn continues rather than starting cold with no memory of its own work.
     session_id = sticky.executor_session_id if sticky else ""
