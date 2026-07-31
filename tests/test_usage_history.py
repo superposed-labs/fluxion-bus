@@ -1322,6 +1322,49 @@ def test_codex_rollout_without_a_provider_is_attributed_to_openai(tmp_path: Path
     assert [e.output_tokens for e in entries] == [40]
 
 
+def test_codex_forked_subagent_keeps_its_own_provider_not_the_parents(tmp_path: Path):
+    """`fork_context: true` replays the parent's `session_meta` into the child.
+
+    A gateway-routed sub-thread spawned with inherited context therefore holds
+    its own `model_provider: fluxion_worker` first and the parent's
+    `model_provider: openai` after it. Reading the last one answers a question
+    about the child with the parent's provider and prices the child's turns.
+    Found in real data — one rollout survived the first version of this filter.
+    """
+    day = _codex_day(tmp_path)
+    own = _codex_meta_line("sess-child", model_provider="fluxion_worker")
+    replayed_parent = _codex_meta_line("sess-parent", model_provider="openai")
+    turn = json.dumps(
+        {
+            "type": "event_msg",
+            "timestamp": "2026-07-20T10:00:00.000Z",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 10854,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 224,
+                        "total_tokens": 11078,
+                    },
+                    "total_token_usage": {
+                        "input_tokens": 10854,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 224,
+                        "total_tokens": 11078,
+                    },
+                },
+            },
+        }
+    )
+    ctx = json.dumps({"type": "turn_context", "payload": {"type": "turn_context", "model": "opus"}})
+    (day / "rollout-2026-07-20T10-00-00-child.jsonl").write_text(
+        "\n".join([own, replayed_parent, ctx, turn]) + "\n", encoding="utf-8"
+    )
+
+    assert collect_codex_entries(tmp_path / "sessions") == []
+
+
 def test_codex_provider_filter_does_not_key_on_the_fluxion_name(tmp_path: Path):
     """Any non-OpenAI provider is unpriced, not just Fluxion's.
 
@@ -1543,6 +1586,76 @@ def test_store_aggregate_matches_pure_aggregate(tmp_path: Path, window: str):
     got = store.aggregate(window, tz=UTC, now=now)
 
     assert got == reference
+
+
+def test_store_rebuilds_when_the_schema_version_changes(tmp_path: Path):
+    """The mechanism a parser change depends on to reach already-parsed files.
+
+    `files` records the scan offset of every transcript read so far, so a
+    corrected parser never revisits them: without the version bump the stale
+    rows outlive the fix and the aggregate stays wrong however often the
+    service restarts. This is not hypothetical — the non-OpenAI provider rule
+    shipped one commit before its bump and changed nothing until it followed.
+    """
+    import sqlite3
+
+    from fluxion.usage.history import store as store_mod
+    from fluxion.usage.history.store import UsageStore
+
+    db = tmp_path / "usage.db"
+    UsageStore(db).sync(
+        projects_dir=tmp_path / "none", sessions_dir=tmp_path / "none", antigravity_dirs=()
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO entries (dedup_key, path, provider, ts, day, hour, model, session_id,"
+            " i, o, cc, cc1h, cr, bi, is_fast, total) VALUES"
+            " ('stale', '/gone', 'codex', '2026-07-20T10:00:00+00:00', '2026-07-20', 10,"
+            " 'REPLACE_WITH_A_REAL_MODEL_ID', 's', 999, 9, 0, 0, 0, 999, 0, 1008)"
+        )
+        conn.execute(
+            "INSERT INTO files (path, provider, mtime, size, offset) VALUES"
+            " ('/gone', 'codex', 1.0, 1, 1)"
+        )
+        conn.commit()
+        assert conn.execute("SELECT count(*) FROM entries").fetchone()[0] == 1
+
+    monkey = store_mod._SCHEMA_VERSION + 1
+    try:
+        store_mod._SCHEMA_VERSION = monkey
+        UsageStore(db).sync(
+            projects_dir=tmp_path / "none", sessions_dir=tmp_path / "none", antigravity_dirs=()
+        )
+    finally:
+        store_mod._SCHEMA_VERSION = monkey - 1
+
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM entries").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+
+
+def test_store_never_records_turns_another_provider_served(tmp_path: Path):
+    """End-to-end through the store, not just the line parser.
+
+    The parser filter and the store's incremental scan are separate mechanisms;
+    a turn excluded by one can still reach the ledger through the other.
+    """
+    from fluxion.usage.history.store import UsageStore
+
+    sessions = tmp_path / "sessions"
+    day = sessions / "2026" / "07" / "20"
+    day.mkdir(parents=True)
+    turns = [{"ts": "2026-07-20T10:00:00.000Z", "input": 10416, "cached": 0, "output": 1322}]
+    (day / "rollout-2026-07-20T10-00-00-sub.jsonl").write_text(
+        _codex_rollout("sess-sub", turns, model="gpt-5.6-sol", model_provider="fluxion_worker"),
+        encoding="utf-8",
+    )
+
+    store = UsageStore(tmp_path / "usage.db")
+    store.sync(projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC)
+    payload = store.aggregate("all", tz=UTC, now=datetime(2026, 7, 20, 23, tzinfo=UTC))
+
+    assert payload["totals"]["total_tokens"] == 0
 
 
 def test_store_incremental_sync_matches_full_after_append_and_delete(tmp_path: Path):

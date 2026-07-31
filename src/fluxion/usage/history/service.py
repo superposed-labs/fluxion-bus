@@ -27,7 +27,14 @@ from fluxion.usage.history.parsing import (
 from fluxion.usage.history.store import UsageStore
 from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 
-_CACHE_VERSION = 8
+# Same invalidation rule as `store._SCHEMA_VERSION`, for the JSON-cache path:
+# a mismatch discards the file, so every transcript is reparsed. **Raise it
+# whenever a line parser's output changes** — the cache holds per-file scan
+# state, so otherwise a corrected parser never revisits what it already read.
+#
+# v9: `_codex_line_parser` stopped emitting turns served by a provider other
+# than OpenAI.
+_CACHE_VERSION = 9
 
 
 def _parse_usage_date(raw: str, fallback: date) -> date:
