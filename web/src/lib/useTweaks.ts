@@ -10,6 +10,10 @@ export interface Tweaks {
   sideRail: boolean;
   showQuota: boolean;
   groupByConversation: boolean;
+  // How to read cost on the usage page. A personal reading preference, not
+  // a slice of data — it stays out of the URL so a shared link does not
+  // impose the sender's choice on the reader.
+  billing: "sub" | "metered";
   locale: LocalePreference;
 }
 
@@ -20,6 +24,7 @@ export const TWEAK_DEFAULTS: Tweaks = {
   sideRail: true,
   showQuota: true,
   groupByConversation: false,
+  billing: "sub",
   locale: "auto",
 };
 

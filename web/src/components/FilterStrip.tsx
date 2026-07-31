@@ -10,13 +10,8 @@ import {
 } from "../lib/constants";
 import { channelLabel } from "../lib/channels";
 import { useI18n } from "../i18n";
+import { EMPTY_FILTERS, type Filters } from "../lib/urlState";
 import type { Task } from "../types";
-
-export interface Filters {
-  status: string[];
-  executor: string[];
-  channel: string[];
-}
 
 interface FilterStripProps {
   tasks: Task[];
@@ -61,7 +56,7 @@ export function FilterStrip({
       return { ...prev, [key]: next };
     });
   };
-  const clearFilters = () => setFilters(() => ({ status: [], executor: [], channel: [] }));
+  const clearFilters = () => setFilters(() => EMPTY_FILTERS);
   const hiddenStatusCount = filters.status.filter(
     (status) => !FILTER_STATUSES.includes(status as (typeof FILTER_STATUSES)[number]),
   ).length;

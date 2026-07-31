@@ -5,13 +5,18 @@ import { createI18n, I18nProvider, languageName, type LocalePreference } from ".
 import { applyEvent } from "./lib/applyEvent";
 import { EXECUTORS, statusPriority } from "./lib/constants";
 import { ACCENT_OPTIONS, applyTweaks, useTweaks } from "./lib/useTweaks";
-import { useView } from "./lib/useView";
+import {
+  selectedTaskFromSearch,
+  useFilters,
+  useSelectedTask,
+  useView,
+} from "./lib/urlState";
 import type { ExecutorInfo, ProviderUsage, Task } from "./types";
 
 import { BusFoot } from "./components/BusFoot";
 import { ConversationGroup, type ConversationTaskGroup } from "./components/ConversationGroup";
 import { DetailPane } from "./components/Detail";
-import { FilterStrip, type Filters } from "./components/FilterStrip";
+import { FilterStrip } from "./components/FilterStrip";
 import { ExecutorRail, RecentChannels, SessionRail } from "./components/Rails";
 import { RunTaskDrawer, type RunTaskPrefill } from "./components/RunTaskDrawer";
 import { SchedulesPanel } from "./components/Schedules";
@@ -35,7 +40,6 @@ const NOW_TICK_MS = 1000;
 // Provider quota refresh. Independent of the SSE task stream; the backend
 // TTL-caches results so this poll is cheap.
 const USAGE_POLL_INTERVAL_MS = 60000;
-const EMPTY_FILTERS: Filters = { status: [], executor: [], channel: [] };
 const INITIAL_SPARK = Array.from({ length: 24 }, (_, i) =>
   3 + Math.round(6 * Math.abs(Math.sin(i * 0.7 + 1))) + (i > 18 ? 2 : 0),
 );
@@ -153,18 +157,17 @@ export function App(): JSX.Element {
   }, [tweaks]);
 
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useSelectedTask();
   const [load, setLoad] = useState<LoadState>({ status: "idle" });
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useFilters();
   const [expandedConversations, setExpandedConversations] = useState<Set<string>>(
     () => new Set(),
   );
   const [spark, setSpark] = useState<number[]>(INITIAL_SPARK);
   const [usage, setUsage] = useState<ProviderUsage[]>([]);
   const [executors, setExecutors] = useState<ExecutorInfo[]>([]);
-  // Derived from the URL so a reload keeps the page the user is on — see
-  // lib/useView.ts.
+  // View, filters and selection all live in the URL — see lib/urlState.ts.
   const [view, setView] = useView();
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [runPrefill, setRunPrefill] = useState<RunTaskPrefill | null>(null);
@@ -192,10 +195,13 @@ export function App(): JSX.Element {
           }),
         );
         setLoad({ status: "ready" });
-        setSelectedId((prev) => {
-          if (prev && next.some((t) => t.task_id === prev)) return prev;
-          return next[0]?.task_id ?? null;
-        });
+        // Keep whatever the URL points at as long as it still exists — a
+        // shared `?task=` link, or the user's own selection across the 15s
+        // fallback poll. Only fall back to the newest task otherwise.
+        const current = selectedTaskFromSearch(window.location.search);
+        if (!current || !next.some((t) => t.task_id === current)) {
+          setSelectedId(next[0]?.task_id ?? null);
+        }
       } catch (err) {
         if (cancelled) return;
         setLoad({
@@ -441,7 +447,7 @@ export function App(): JSX.Element {
       />
 
       {view === "stats" ? (
-        <UsageStats />
+        <UsageStats billing={tweaks.billing} setTweak={setTweak} />
       ) : (
       <div className="shell-cols">
         <div className="pane">
