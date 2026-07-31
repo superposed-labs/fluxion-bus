@@ -24,6 +24,7 @@ from fluxion.provider_gateway.stream import (
     EV_OUTPUT_ITEM_DONE,
     EV_OUTPUT_TEXT_DELTA,
 )
+from fluxion.provider_gateway.upstream import local_agent as local_agent_module
 from fluxion.provider_gateway.upstream.local_agent import (
     LocalAgentUpstream,
     extract_prompt,
@@ -617,6 +618,116 @@ def test_runs_sharing_a_workspace_are_serialized():
 
     asyncio.run(main())
     assert peak == 1
+
+
+# ── waiting for a busy workspace ─────────────────────────────────────
+# Serialization is the point of the lock; going quiet while it holds is not.
+# The wait used to start *before* the first event, so a queued sub-agent
+# produced no `response.created`, no heartbeat and no error — from the parent's
+# side identical to one thinking hard, and unbounded besides.
+def _busy_workspace(name: str) -> Path:
+    """A workspace whose lock is fresh, so tests cannot leak into each other."""
+    workspace = Path(f"/tmp/{name}")
+    local_agent_module._WORKSPACE_LOCKS.pop(workspace.resolve(), None)
+    return workspace
+
+
+def test_a_run_queued_behind_another_still_opens_its_stream(monkeypatch):
+    """`response.created` must not wait on the workspace.
+
+    Codex kills a turn whose stream is idle for `stream_idle_timeout_ms`
+    (300s), so a silent wait is not merely opaque — it is fatal well before the
+    workspace frees up.
+    """
+    monkeypatch.setattr(local_agent_module, "HEARTBEAT_INTERVAL_SEC", 0.01)
+    upstream = build()
+    workspace = _busy_workspace("queued-open")
+    seen: list[dict] = []
+
+    async def main():
+        lock = local_agent_module._workspace_lock(workspace)
+        await lock.acquire()
+
+        async def consume():
+            async for event in upstream.stream(
+                {"input": [{"role": "user", "content": "go"}]}, "opus", workspace=workspace
+            ):
+                seen.append(event)
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.1)
+        while_waiting = list(seen)
+        lock.release()
+        await task
+        return while_waiting
+
+    while_waiting = asyncio.run(main())
+
+    assert while_waiting[0]["type"] == EV_CREATED
+    assert any(e["type"] == EV_HEARTBEAT for e in while_waiting), "queued run went silent"
+    assert seen[-1]["type"] == EV_COMPLETED, "it should still run once the workspace frees"
+
+
+def test_waiting_for_a_workspace_is_bounded_and_says_why(monkeypatch):
+    """A holder past its own task budget is wedged, not slow.
+
+    Waiting forever turns one stuck run into every later run on that repo
+    hanging too, with nothing anywhere naming the cause.
+    """
+    monkeypatch.setattr(local_agent_module, "HEARTBEAT_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(local_agent_module, "WORKSPACE_LOCK_TIMEOUT_SEC", 0.05)
+    upstream = build()
+    workspace = _busy_workspace("queued-timeout")
+
+    async def main():
+        await local_agent_module._workspace_lock(workspace).acquire()
+        return [
+            event
+            async for event in upstream.stream(
+                {"input": [{"role": "user", "content": "go"}]}, "opus", workspace=workspace
+            )
+        ]
+
+    events = asyncio.run(main())
+
+    assert events[-1]["type"] == EV_FAILED
+    message = events[-1]["response"]["error"]["message"]
+    assert str(workspace) in message
+    assert "one local agent per workspace" in message
+
+
+def test_the_workspace_is_released_after_a_run():
+    """Otherwise the first run poisons the workspace for every later one."""
+    upstream = build()
+    workspace = _busy_workspace("released")
+
+    run_stream(upstream, workspace=workspace)
+
+    assert not local_agent_module._workspace_lock(workspace).locked()
+
+
+def test_a_queued_messages_run_pings_instead_of_stalling(monkeypatch):
+    """The Anthropic renderer shares the lock, so it shares the failure mode."""
+    monkeypatch.setattr(local_agent_module, "HEARTBEAT_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(local_agent_module, "WORKSPACE_LOCK_TIMEOUT_SEC", 0.05)
+    upstream = build()
+    workspace = _busy_workspace("queued-messages")
+
+    async def main():
+        await local_agent_module._workspace_lock(workspace).acquire()
+        return [
+            event
+            async for event in upstream.stream_messages(
+                {}, "opus", prompt="go", workspace=workspace
+            )
+        ]
+
+    events = asyncio.run(main())
+    kinds = [e.get("type") for e in events]
+
+    assert kinds[0] == "message_start"
+    assert "ping" in kinds, "queued run went silent"
+    assert kinds[-1] == "error"
 
 
 def test_developer_instructions_reach_the_local_agent():

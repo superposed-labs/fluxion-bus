@@ -112,6 +112,57 @@ def _workspace_lock(workspace: Path) -> asyncio.Lock:
     return _WORKSPACE_LOCKS.setdefault(_resolve(workspace), asyncio.Lock())
 
 
+# How long a run may wait for the workspace before giving up.
+#
+# Matches the engine's `FLUXION_WORKSPACE_LOCK_TIMEOUT_SEC` default, which is
+# itself the task budget: a holder can never legitimately outlive its own
+# timeout, so waiting longer than one can only mean the holder is wedged.
+#
+# The wait used to be unbounded, and silent with it — the lock was taken
+# *before* the first event, so a second sub-agent on the same repository
+# produced no `response.created`, no heartbeat, and no error. From the parent's
+# side that is indistinguishable from a sub-agent thinking hard, which is the
+# failure this gateway keeps producing in different disguises.
+WORKSPACE_LOCK_TIMEOUT_SEC = 1800.0
+
+
+async def _acquire_with_keepalive(
+    lock: asyncio.Lock, workspace: Path
+) -> AsyncIterator[bool | None]:
+    """Wait for `lock`, asking the caller to emit a keepalive as it goes.
+
+    Yields `None` every `HEARTBEAT_INTERVAL_SEC` to mean "still waiting, send
+    something" — without it Codex's `stream_idle_timeout_ms` (300s) would kill
+    the turn five minutes into a legitimate wait, long before the timeout below
+    could report anything. Yields `True` once held, or `False` on timeout; the
+    caller owns the release.
+    """
+    waited = 0.0
+    while True:
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=HEARTBEAT_INTERVAL_SEC)
+        except TimeoutError:
+            waited += HEARTBEAT_INTERVAL_SEC
+            if waited >= WORKSPACE_LOCK_TIMEOUT_SEC:
+                log.warning("workspace %s still busy after %.0fs, giving up", workspace, waited)
+                yield False
+                return
+            log.info("waiting for workspace %s (%.0fs)", workspace, waited)
+            yield None
+            continue
+        yield True
+        return
+
+
+def _workspace_busy_message(workspace: Path) -> str:
+    return (
+        f"workspace {workspace} is still in use by another local agent after "
+        f"{WORKSPACE_LOCK_TIMEOUT_SEC:.0f}s. Fluxion runs one local agent per workspace "
+        "at a time; the run holding it has outlived its own task budget, so it is "
+        "wedged rather than slow. Retry once it is gone."
+    )
+
+
 def _resolve(workspace: Path) -> Path:
     try:
         return workspace.resolve()
@@ -233,9 +284,21 @@ class LocalAgentUpstream:
             )
             return
 
-        async with _workspace_lock(workspace):
-            yield _created(response_id, model)
+        # Announce the response before waiting for the workspace, so a queued
+        # run is a stream that is visibly waiting rather than a silent socket.
+        yield _created(response_id, model)
+        lock = _workspace_lock(workspace)
+        held = False
+        async for ready in _acquire_with_keepalive(lock, workspace):
+            if ready is None:
+                yield heartbeat_event(response_id)
+            else:
+                held = ready
+        if not held:
+            yield _failed(response_id, _workspace_busy_message(workspace))
+            return
 
+        try:
             # Exactly one item is open at a time, and switching channels closes
             # the current one first.
             #
@@ -305,6 +368,8 @@ class LocalAgentUpstream:
                         run,
                         _context_usage(body, streamed, "".join(thought)),
                     )
+        finally:
+            lock.release()
 
     async def stream_messages(
         self,
@@ -344,8 +409,21 @@ class LocalAgentUpstream:
             )
             return
 
-        async with _workspace_lock(workspace):
-            yield message_start(message_id, model, _messages_input_tokens(body))
+        # Same ordering as `stream`: open the message first so a queued run can
+        # keep the connection alive with pings while it waits its turn.
+        yield message_start(message_id, model, _messages_input_tokens(body))
+        lock = _workspace_lock(workspace)
+        held = False
+        async for ready in _acquire_with_keepalive(lock, workspace):
+            if ready is None:
+                yield ping_event()
+            else:
+                held = ready
+        if not held:
+            yield error_event(_workspace_busy_message(workspace))
+            return
+
+        try:
             yield content_block_start()
 
             streamed: list[str] = []
@@ -393,6 +471,8 @@ class LocalAgentUpstream:
                 # left waiting on an open message.
                 yield content_block_stop()
                 yield error_event("local agent produced no result")
+        finally:
+            lock.release()
 
     async def _run(
         self,
