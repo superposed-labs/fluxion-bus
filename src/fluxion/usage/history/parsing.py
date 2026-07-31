@@ -28,6 +28,30 @@ from fluxion.usage.history.entry import (
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
+
+# Codex's own provider id, and the only one whose turns this parser may price.
+#
+# A rollout is a record of what *Codex* did, not of what OpenAI billed. Codex
+# will happily drive any OpenAI-compatible endpoint the user configures, and it
+# writes those threads into exactly the same rollout format — same
+# `token_count` events, same shape. Pricing them from the OpenAI rate table
+# invents a bill nobody sent.
+#
+# `session_meta.model_provider` is Codex's own record of which provider served
+# the thread, which makes it the right question to ask: not "is this thread
+# ours?" but "did OpenAI bill this?". Deliberately *not* keyed on Fluxion's
+# `fluxion_*` provider naming — that convention is explicitly undecided
+# (`provider_gateway/codex_config.py`), and a filter that silently stops
+# matching when a name changes is worse than no filter, because the phantom
+# cost comes back with nothing to show that it did.
+_OPENAI_PROVIDER = "openai"
+
+# Rollouts predating `session_meta.model_provider` are attributed to OpenAI.
+#
+# Safe rather than optimistic: Codex has written the field since 2025-11-07,
+# eight months before Fluxion could route a Codex thread anywhere else, so a
+# rollout without it necessarily ran against OpenAI.
+_PROVIDER_UNKNOWN_DEFAULT = _OPENAI_PROVIDER
 ANTIGRAVITY_CONVERSATIONS_DIRS = (
     Path.home() / ".gemini" / "antigravity" / "conversations",
     Path.home() / ".gemini" / "antigravity-cli" / "conversations",
@@ -424,14 +448,20 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     with no signal to correct it (verified in the Codex source: TurnContextItem
     serialises model/effort/mode but not tier).
 
-    State that spans lines — the current session id / model, the running event
-    sequence, and the last cumulative-total signature — is restored from and
-    written back to `state` so an appended tail resumes exactly where the
-    previous parse stopped."""
+    Turns served by a provider other than OpenAI are parsed for state but not
+    emitted. See `_OPENAI_PROVIDER`: a rollout records what Codex did, and Codex
+    drives whatever endpoint it was pointed at, so `session_meta.model_provider`
+    decides whether the OpenAI rate table applies at all.
+
+    State that spans lines — the current session id / model / provider, the
+    running event sequence, and the last cumulative-total signature — is
+    restored from and written back to `state` so an appended tail resumes
+    exactly where the previous parse stopped."""
     out: list[UsageEntry] = []
     session_id = str(state.get("session_id", ""))
     lineage = str(state.get("lineage", ""))
     model = str(state.get("model", "unknown"))
+    provider_id = str(state.get("provider_id", _PROVIDER_UNKNOWN_DEFAULT))
     seq = int(state.get("seq", 0))
     previous_total_signature: str | None = state.get("prev_sig")
     pending_compaction = bool(state.get("pending_compaction"))
@@ -460,6 +490,9 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                 session_id = sid
             fork_parent = payload.get("forked_from_id")
             lineage = fork_parent if isinstance(fork_parent, str) and fork_parent else session_id
+            served_by = payload.get("model_provider")
+            if isinstance(served_by, str) and served_by:
+                provider_id = served_by
         elif ptype == "turn_context":
             m = payload.get("model")
             if isinstance(m, str) and m:
@@ -505,6 +538,14 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                 dedup_key = f"codex:{lineage}:{digest}"
             else:
                 dedup_key = f"codex:{path.name}:{seq}"
+            if provider_id != _OPENAI_PROVIDER:
+                # Another provider served this turn, so there is no OpenAI bill
+                # to record. The dedup and compaction bookkeeping still advances
+                # so a mixed-provider rollout (a fork that switched providers)
+                # keeps parsing correctly from here.
+                seq += 1
+                pending_compaction = False
+                continue
             out.append(
                 UsageEntry(
                     provider="codex",
@@ -529,6 +570,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     state["session_id"] = session_id
     state["lineage"] = lineage
     state["model"] = model
+    state["provider_id"] = provider_id
     state["seq"] = seq
     state["prev_sig"] = previous_total_signature
     state["pending_compaction"] = pending_compaction

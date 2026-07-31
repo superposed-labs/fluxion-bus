@@ -1169,10 +1169,17 @@ def test_collect_codex_incremental_append_resumes_session_state(tmp_path: Path):
     assert len({e.dedup_key for e in entries}) == 2  # distinct keys across the boundary
 
 
-def _codex_meta_line(session_id: str, forked_from: str | None = None) -> str:
+def _codex_meta_line(
+    session_id: str,
+    forked_from: str | None = None,
+    *,
+    model_provider: str | None = None,
+) -> str:
     meta: dict = {"type": "session_meta", "id": session_id}
     if forked_from:
         meta["forked_from_id"] = forked_from
+    if model_provider is not None:
+        meta["model_provider"] = model_provider
     return json.dumps({"type": "session_meta", "payload": meta})
 
 
@@ -1182,10 +1189,11 @@ def _codex_rollout(
     *,
     forked_from: str | None = None,
     model: str = "gpt-5-codex",
+    model_provider: str | None = None,
 ) -> str:
     """Codex rollout lines with realistic cumulative `total_token_usage`."""
     lines = [
-        _codex_meta_line(session_id, forked_from),
+        _codex_meta_line(session_id, forked_from, model_provider=model_provider),
         json.dumps({"type": "turn_context", "payload": {"type": "turn_context", "model": model}}),
     ]
     total = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -1251,6 +1259,84 @@ def _codex_fork(session_id: str, parent_text: str, fork_ts: str, new_turns: list
             )
         )
     return "\n".join(out) + "\n"
+
+
+# ── only OpenAI-served turns carry an OpenAI bill ────────────────────
+# A rollout records what Codex did, not what OpenAI charged for. Codex drives
+# whatever OpenAI-compatible endpoint it is configured with — Fluxion's gateway
+# routes sub-agents to local CLIs on a subscription — and writes those threads
+# in the identical format. `session_meta.model_provider` is what tells them
+# apart.
+def _codex_day(tmp_path: Path) -> Path:
+    day = tmp_path / "sessions" / "2026" / "07" / "20"
+    day.mkdir(parents=True)
+    return day
+
+
+def test_codex_turns_served_by_another_provider_are_not_priced(tmp_path: Path):
+    """Fluxion reports an estimate to size the sub-thread, not a bill.
+
+    The gateway hands Codex `len(text) // 4` so its auto-compaction has a number
+    to threshold against, Codex writes that into the rollout, and reading it
+    back as billed usage turns Fluxion's own estimate into invented API cost —
+    for work that ran on a local CLI and cost nothing per token.
+    """
+    day = _codex_day(tmp_path)
+    turns = [{"ts": "2026-07-20T10:00:00.000Z", "input": 10416, "cached": 0, "output": 1322}]
+    (day / "rollout-2026-07-20T10-00-00-sub.jsonl").write_text(
+        _codex_rollout("sess-sub", turns, model="gpt-5.6-sol", model_provider="fluxion_worker"),
+        encoding="utf-8",
+    )
+
+    assert collect_codex_entries(tmp_path / "sessions") == []
+
+
+def test_codex_turns_served_by_openai_are_still_priced(tmp_path: Path):
+    day = _codex_day(tmp_path)
+    turns = [{"ts": "2026-07-20T10:00:00.000Z", "input": 1000, "cached": 200, "output": 50}]
+    (day / "rollout-2026-07-20T10-00-00-main.jsonl").write_text(
+        _codex_rollout("sess-main", turns, model="gpt-5.6-sol", model_provider="openai"),
+        encoding="utf-8",
+    )
+
+    entries = collect_codex_entries(tmp_path / "sessions")
+    assert [e.model for e in entries] == ["gpt-5.6-sol"]
+    assert entries[0].output_tokens == 50
+
+
+def test_codex_rollout_without_a_provider_is_attributed_to_openai(tmp_path: Path):
+    """Codex has written `model_provider` since 2025-11-07.
+
+    That predates any Fluxion-routed Codex thread by eight months, so a rollout
+    missing the field necessarily ran against OpenAI. Dropping those would
+    silently erase real history.
+    """
+    day = _codex_day(tmp_path)
+    turns = [{"ts": "2026-07-20T10:00:00.000Z", "input": 800, "cached": 0, "output": 40}]
+    (day / "rollout-2026-07-20T10-00-00-old.jsonl").write_text(
+        _codex_rollout("sess-old", turns),  # no model_provider at all
+        encoding="utf-8",
+    )
+
+    entries = collect_codex_entries(tmp_path / "sessions")
+    assert [e.output_tokens for e in entries] == [40]
+
+
+def test_codex_provider_filter_does_not_key_on_the_fluxion_name(tmp_path: Path):
+    """Any non-OpenAI provider is unpriced, not just Fluxion's.
+
+    Keying on the `fluxion_*` prefix would tie this to a naming convention that
+    `provider_gateway/codex_config.py` explicitly leaves undecided — and would
+    silently resume inventing cost the day it changed.
+    """
+    day = _codex_day(tmp_path)
+    turns = [{"ts": "2026-07-20T10:00:00.000Z", "input": 500, "cached": 0, "output": 25}]
+    (day / "rollout-2026-07-20T10-00-00-other.jsonl").write_text(
+        _codex_rollout("sess-other", turns, model_provider="some-other-gateway"),
+        encoding="utf-8",
+    )
+
+    assert collect_codex_entries(tmp_path / "sessions") == []
 
 
 def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
