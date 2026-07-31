@@ -462,6 +462,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     lineage = str(state.get("lineage", ""))
     model = str(state.get("model", "unknown"))
     provider_id = str(state.get("provider_id", _PROVIDER_UNKNOWN_DEFAULT))
+    provider_known = bool(state.get("provider_known"))
     seq = int(state.get("seq", 0))
     previous_total_signature: str | None = state.get("prev_sig")
     pending_compaction = bool(state.get("pending_compaction"))
@@ -490,9 +491,27 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                 session_id = sid
             fork_parent = payload.get("forked_from_id")
             lineage = fork_parent if isinstance(fork_parent, str) and fork_parent else session_id
-            served_by = payload.get("model_provider")
-            if isinstance(served_by, str) and served_by:
-                provider_id = served_by
+            # First `session_meta` only — it describes the thread this file
+            # belongs to. The ones after it were copied in.
+            #
+            # `spawn_agent` with `fork_context: true` replays the parent's whole
+            # history into the sub-agent's rollout, its `session_meta` included,
+            # so a gateway-routed sub-thread ends with its own
+            # `model_provider: fluxion_worker` first and the parent's
+            # `model_provider: openai` after. Taking the last one read the
+            # parent's answer to a question about the child and let the phantom
+            # turns through. Note this is the opposite of `lineage` just above,
+            # which deliberately walks to the *last* meta to reach the root of a
+            # fork chain: one identifies the thread, the other its ancestry.
+            #
+            # Ancestor turns replayed into this file are not lost by skipping
+            # them here — they carry the same dedup keys as the parent's own
+            # rollout, which supplies them once.
+            if not provider_known:
+                provider_known = True
+                served_by = payload.get("model_provider")
+                if isinstance(served_by, str) and served_by:
+                    provider_id = served_by
         elif ptype == "turn_context":
             m = payload.get("model")
             if isinstance(m, str) and m:
@@ -571,6 +590,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
     state["lineage"] = lineage
     state["model"] = model
     state["provider_id"] = provider_id
+    state["provider_known"] = provider_known
     state["seq"] = seq
     state["prev_sig"] = previous_total_signature
     state["pending_compaction"] = pending_compaction

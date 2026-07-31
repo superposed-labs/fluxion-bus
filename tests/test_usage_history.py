@@ -1322,6 +1322,49 @@ def test_codex_rollout_without_a_provider_is_attributed_to_openai(tmp_path: Path
     assert [e.output_tokens for e in entries] == [40]
 
 
+def test_codex_forked_subagent_keeps_its_own_provider_not_the_parents(tmp_path: Path):
+    """`fork_context: true` replays the parent's `session_meta` into the child.
+
+    A gateway-routed sub-thread spawned with inherited context therefore holds
+    its own `model_provider: fluxion_worker` first and the parent's
+    `model_provider: openai` after it. Reading the last one answers a question
+    about the child with the parent's provider and prices the child's turns.
+    Found in real data — one rollout survived the first version of this filter.
+    """
+    day = _codex_day(tmp_path)
+    own = _codex_meta_line("sess-child", model_provider="fluxion_worker")
+    replayed_parent = _codex_meta_line("sess-parent", model_provider="openai")
+    turn = json.dumps(
+        {
+            "type": "event_msg",
+            "timestamp": "2026-07-20T10:00:00.000Z",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 10854,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 224,
+                        "total_tokens": 11078,
+                    },
+                    "total_token_usage": {
+                        "input_tokens": 10854,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 224,
+                        "total_tokens": 11078,
+                    },
+                },
+            },
+        }
+    )
+    ctx = json.dumps({"type": "turn_context", "payload": {"type": "turn_context", "model": "opus"}})
+    (day / "rollout-2026-07-20T10-00-00-child.jsonl").write_text(
+        "\n".join([own, replayed_parent, ctx, turn]) + "\n", encoding="utf-8"
+    )
+
+    assert collect_codex_entries(tmp_path / "sessions") == []
+
+
 def test_codex_provider_filter_does_not_key_on_the_fluxion_name(tmp_path: Path):
     """Any non-OpenAI provider is unpriced, not just Fluxion's.
 
