@@ -32,6 +32,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -100,16 +101,43 @@ _REASONING = "reasoning"
 # a tool may take, and whether anyone is still on the other end.
 HEARTBEAT_INTERVAL_SEC = 60.0
 
+
+class _WorkspaceLock:
+    """An `asyncio.Lock` that also remembers when the current holder took it.
+
+    The timeout below is about a *wedged holder*, and telling that from a long
+    queue needs the holder's own clock. Timing the waiter instead punishes runs
+    for the length of the line ahead of them: three well-behaved runs, each
+    finishing inside its budget, made the last one declare the workspace stuck.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self.held_since: float | None = None
+
+    async def acquire(self) -> bool:
+        await self._lock.acquire()
+        self.held_since = time.monotonic()
+        return True
+
+    def release(self) -> None:
+        self.held_since = None
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
 # Workspace locks are module-level, not per-adapter. Two providers (say a Claude
 # one and an Antigravity one) can be pointed at the same repository; if each held
 # its own lock they would not exclude each other and would edit the tree
 # simultaneously. Keyed by resolved path so "." and an absolute path to the same
 # directory share a lock.
-_WORKSPACE_LOCKS: dict[Path, asyncio.Lock] = {}
+_WORKSPACE_LOCKS: dict[Path, _WorkspaceLock] = {}
 
 
-def _workspace_lock(workspace: Path) -> asyncio.Lock:
-    return _WORKSPACE_LOCKS.setdefault(_resolve(workspace), asyncio.Lock())
+def _workspace_lock(workspace: Path) -> _WorkspaceLock:
+    return _WORKSPACE_LOCKS.setdefault(_resolve(workspace), _WorkspaceLock())
 
 
 # How long a run may wait for the workspace before giving up.
@@ -127,27 +155,39 @@ WORKSPACE_LOCK_TIMEOUT_SEC = 1800.0
 
 
 async def _acquire_with_keepalive(
-    lock: asyncio.Lock, workspace: Path
+    lock: _WorkspaceLock, workspace: Path
 ) -> AsyncIterator[bool | None]:
     """Wait for `lock`, asking the caller to emit a keepalive as it goes.
 
     Yields `None` every `HEARTBEAT_INTERVAL_SEC` to mean "still waiting, send
     something" — without it Codex's `stream_idle_timeout_ms` (300s) would kill
-    the turn five minutes into a legitimate wait, long before the timeout below
-    could report anything. Yields `True` once held, or `False` on timeout; the
-    caller owns the release.
+    the turn five minutes into a legitimate wait, long before anything else
+    could report. Yields `True` once held, or `False` when the *current holder*
+    has outstayed its budget; the caller owns the release.
+
+    Only a single holder's overrun ends the wait, never the queue's total
+    length. A run that has waited a long time behind several short, healthy
+    holders has learned nothing bad about the workspace, and failing it would
+    invent a problem out of the fact that the repository is busy — which is what
+    the lock is for. With the keepalive in place a long queue costs patience,
+    not a dead turn, so waiting it out is the right answer.
     """
-    waited = 0.0
     while True:
         try:
             await asyncio.wait_for(lock.acquire(), timeout=HEARTBEAT_INTERVAL_SEC)
         except TimeoutError:
-            waited += HEARTBEAT_INTERVAL_SEC
-            if waited >= WORKSPACE_LOCK_TIMEOUT_SEC:
-                log.warning("workspace %s still busy after %.0fs, giving up", workspace, waited)
-                yield False
-                return
-            log.info("waiting for workspace %s (%.0fs)", workspace, waited)
+            held_since = lock.held_since
+            if held_since is not None:
+                held_for = time.monotonic() - held_since
+                if held_for >= WORKSPACE_LOCK_TIMEOUT_SEC:
+                    log.warning(
+                        "workspace %s held for %.0fs by one run, giving up waiting",
+                        workspace,
+                        held_for,
+                    )
+                    yield False
+                    return
+            log.info("waiting for workspace %s", workspace)
             yield None
             continue
         yield True
@@ -156,10 +196,10 @@ async def _acquire_with_keepalive(
 
 def _workspace_busy_message(workspace: Path) -> str:
     return (
-        f"workspace {workspace} is still in use by another local agent after "
-        f"{WORKSPACE_LOCK_TIMEOUT_SEC:.0f}s. Fluxion runs one local agent per workspace "
-        "at a time; the run holding it has outlived its own task budget, so it is "
-        "wedged rather than slow. Retry once it is gone."
+        f"one local agent has held workspace {workspace} for over "
+        f"{WORKSPACE_LOCK_TIMEOUT_SEC:.0f}s without finishing. Fluxion runs one local agent "
+        "per workspace at a time, and that is longer than a run's own budget allows, so it "
+        "is wedged rather than slow. Retry once it is gone."
     )
 
 

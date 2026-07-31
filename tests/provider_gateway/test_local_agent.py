@@ -696,6 +696,60 @@ def test_waiting_for_a_workspace_is_bounded_and_says_why(monkeypatch):
     assert "one local agent per workspace" in message
 
 
+def test_a_long_queue_of_healthy_runs_is_not_a_wedged_workspace(monkeypatch):
+    """The timeout is about one holder overstaying, never about queue length.
+
+    Timing the waiter instead punishes a run for the line ahead of it: three
+    runs, each finishing well inside its budget, made one of them declare the
+    workspace stuck. A run that has waited behind several short, healthy holders
+    has learned nothing bad about the workspace.
+    """
+    monkeypatch.setattr(local_agent_module, "HEARTBEAT_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(local_agent_module, "WORKSPACE_LOCK_TIMEOUT_SEC", 0.30)
+    workspace = _busy_workspace("healthy-queue")
+    verdicts: dict[str, bool] = {}
+
+    async def main():
+        lock = local_agent_module._workspace_lock(workspace)
+
+        async def contender(name: str, start_after: float):
+            await asyncio.sleep(start_after)
+            held = False
+            async for ready in local_agent_module._acquire_with_keepalive(lock, workspace):
+                if ready is not None:
+                    held = ready
+            verdicts[name] = held
+            if held:
+                await asyncio.sleep(0.28)  # inside its own budget, every time
+                lock.release()
+
+        await asyncio.gather(
+            contender("first", 0.0), contender("second", 0.02), contender("third", 0.04)
+        )
+
+    asyncio.run(main())
+
+    assert all(verdicts.values()), f"a healthy queue was called wedged: {verdicts}"
+
+
+def test_one_holder_overstaying_is_still_caught(monkeypatch):
+    """The other half of the same rule: a holder that never lets go must end the wait."""
+    monkeypatch.setattr(local_agent_module, "HEARTBEAT_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(local_agent_module, "WORKSPACE_LOCK_TIMEOUT_SEC", 0.05)
+    workspace = _busy_workspace("wedged-holder")
+
+    async def main():
+        lock = local_agent_module._workspace_lock(workspace)
+        await lock.acquire()  # and never releases
+        held = None
+        async for ready in local_agent_module._acquire_with_keepalive(lock, workspace):
+            if ready is not None:
+                held = ready
+        return held
+
+    assert asyncio.run(main()) is False
+
+
 def test_the_workspace_is_released_after_a_run():
     """Otherwise the first run poisons the workspace for every later one."""
     upstream = build()
