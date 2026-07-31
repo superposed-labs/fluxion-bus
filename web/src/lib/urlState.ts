@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { CHANNELS, EXECUTORS, STATUSES } from "./constants";
+import type { UsageWindowKey } from "../types";
 
 /**
  * Everything the console encodes in its URL.
@@ -24,6 +25,12 @@ import { CHANNELS, EXECUTORS, STATUSES } from "./constants";
 
 export type AppView = "tasks" | "stats";
 
+/** Which breakdown the usage page shows. */
+export type StatsBreakdown = "overview" | "models";
+
+export const USAGE_RANGES: readonly UsageWindowKey[] = ["1d", "7d", "30d", "all"];
+const DEFAULT_RANGE: UsageWindowKey = "7d";
+
 export interface Filters {
   status: string[];
   executor: string[];
@@ -34,6 +41,8 @@ export const EMPTY_FILTERS: Filters = { status: [], executor: [], channel: [] };
 
 const VIEW_PARAM = "view";
 const TASK_PARAM = "task";
+const BREAKDOWN_PARAM = "breakdown";
+const RANGE_PARAM = "range";
 const FILTER_PARAM: Record<keyof Filters, string> = {
   status: "status",
   executor: "executor",
@@ -97,6 +106,29 @@ export function searchWithFilters(search: string, filters: Filters): string {
       if (filters[key].includes(value)) params.append(FILTER_PARAM[key], value);
     }
   }
+  return renderSearch(params);
+}
+
+export function breakdownFromSearch(search: string): StatsBreakdown {
+  return new URLSearchParams(search).get(BREAKDOWN_PARAM) === "models" ? "models" : "overview";
+}
+
+export function searchWithBreakdown(search: string, breakdown: StatsBreakdown): string {
+  const params = new URLSearchParams(search);
+  if (breakdown === "models") params.set(BREAKDOWN_PARAM, "models");
+  else params.delete(BREAKDOWN_PARAM);
+  return renderSearch(params);
+}
+
+export function rangeFromSearch(search: string): UsageWindowKey {
+  const raw = new URLSearchParams(search).get(RANGE_PARAM);
+  return USAGE_RANGES.find((value) => value === raw) ?? DEFAULT_RANGE;
+}
+
+export function searchWithRange(search: string, range: UsageWindowKey): string {
+  const params = new URLSearchParams(search);
+  if (range !== DEFAULT_RANGE) params.set(RANGE_PARAM, range);
+  else params.delete(RANGE_PARAM);
   return renderSearch(params);
 }
 
@@ -171,6 +203,33 @@ export function useFilters(): [Filters, (updater: (prev: Filters) => Filters) =>
   }, []);
 
   return [filters, setFilters];
+}
+
+/**
+ * The usage page's own controls. Both are sub-views of `?view=stats` rather
+ * than page changes, so they replace — you should not have to press back
+ * four times to leave the usage page after comparing a few ranges.
+ */
+export function useBreakdown(): [StatsBreakdown, (next: StatsBreakdown) => void] {
+  const search = useSearch();
+  const breakdown = useMemo(() => breakdownFromSearch(search), [search]);
+
+  const setBreakdown = useCallback((next: StatsBreakdown) => {
+    commit(searchWithBreakdown(window.location.search, next), "replace");
+  }, []);
+
+  return [breakdown, setBreakdown];
+}
+
+export function useUsageRange(): [UsageWindowKey, (next: UsageWindowKey) => void] {
+  const search = useSearch();
+  const range = useMemo(() => rangeFromSearch(search), [search]);
+
+  const setRange = useCallback((next: UsageWindowKey) => {
+    commit(searchWithRange(window.location.search, next), "replace");
+  }, []);
+
+  return [range, setRange];
 }
 
 export function useSelectedTask(): [string | null, (next: string | null) => void] {

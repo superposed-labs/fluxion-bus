@@ -10,6 +10,8 @@ import {
 
 import { fetchUsage, fetchUsageHistory } from "../api";
 import { useI18n, type Locale } from "../i18n";
+import { useBreakdown, useUsageRange } from "../lib/urlState";
+import type { SetTweak } from "../lib/useTweaks";
 import type {
   ProviderUsage,
   UsageHistory,
@@ -80,11 +82,23 @@ function hasUnreportedGpt56CacheWrites(model: UsageModelStat): boolean {
 }
 
 // ── component ───────────────────────────────────────────────────────
-export function UsageStats(): JSX.Element {
+interface UsageStatsProps {
+  billing: Billing;
+  setTweak: SetTweak;
+}
+
+/**
+ * `billing` arrives as a prop rather than from a local useTweaks() call:
+ * that hook keeps a private snapshot and persists the whole object, so a
+ * second instance would clobber whatever the first one changed after mount.
+ */
+export function UsageStats({ billing, setTweak }: UsageStatsProps): JSX.Element {
   const { t } = useI18n();
-  const [view, setView] = useState<"overview" | "models">("overview");
-  const [window, setWindow] = useState<UsageWindowKey>("7d");
-  const [billing, setBilling] = useState<Billing>("sub");
+  const [view, setView] = useBreakdown();
+  // Named `range`, not `window`: the old name shadowed the global inside this
+  // component, which is a trap now that URL state reads window.location.
+  const [range, setRange] = useUsageRange();
+  const setBilling = (next: Billing) => setTweak("billing", next);
   const [data, setData] = useState<UsageHistory | null>(null);
   const [quota, setQuota] = useState<ProviderUsage[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -94,14 +108,14 @@ export function UsageStats(): JSX.Element {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchUsageHistory(window)
+    fetchUsageHistory(range)
       .then((next) => !cancelled && setData(next))
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : String(err)))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [window]);
+  }, [range]);
 
   // The weekly-quota strip reuses the live quota probe (read-only, TTL-cached).
   useEffect(() => {
@@ -174,7 +188,7 @@ export function UsageStats(): JSX.Element {
             </div>
             <div className="seg mono">
               {WINDOWS.map((w) => (
-                <button key={w} className={window === w ? "on" : ""} onClick={() => setWindow(w)}>
+                <button key={w} className={range === w ? "on" : ""} onClick={() => setRange(w)}>
                   {w === "1d" ? t("usage.today") : w === "all" ? t("usage.all") : w}
                 </button>
               ))}

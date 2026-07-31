@@ -447,7 +447,7 @@ export function App(): JSX.Element {
       />
 
       {view === "stats" ? (
-        <UsageStats />
+        <UsageStats billing={tweaks.billing} setTweak={setTweak} />
       ) : (
       <div className="shell-cols">
         <div className="pane">
