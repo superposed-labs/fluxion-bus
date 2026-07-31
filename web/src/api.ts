@@ -157,8 +157,30 @@ export function setToken(token: string): void {
  */
 export function initTokenFromLocation(): void {
   if (typeof window === "undefined") return;
-  const fromUrl = new URLSearchParams(window.location.search).get("token");
-  if (fromUrl) setToken(fromUrl);
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = params.get("token");
+  if (!fromUrl) return;
+
+  try {
+    setToken(fromUrl);
+  } catch {
+    // Storage unavailable (private mode): leave the param in place, it is
+    // the only copy of the token this page has.
+    return;
+  }
+  if (getToken() !== fromUrl) return;
+
+  // Drop it from the address bar now that localStorage holds it. The console
+  // URL is a shareable link to a view, a filter set and a task — it must not
+  // carry FLUXION_UI_TOKEN along when someone copies it. Runs before React
+  // mounts, so no navigation event is needed.
+  params.delete("token");
+  const query = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+  );
 }
 
 export interface TaskEventSubscription {

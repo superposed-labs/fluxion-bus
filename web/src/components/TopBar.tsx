@@ -2,7 +2,7 @@ import { useMemo, type ChangeEvent } from "react";
 
 import { STATUSES } from "../lib/constants";
 import { useI18n } from "../i18n";
-import type { AppView } from "../lib/useView";
+import type { AppView } from "../lib/urlState";
 import type { Task } from "../types";
 
 interface TopBarProps {
