@@ -1,8 +1,9 @@
 ---
 name: update-model-prices
 description: >-
-  Refresh the model price table at src/fluxion/usage/model_prices.json that
-  powers Fluxion's token-usage cost estimates, by pulling current prices from
+  Refresh the model price table that powers Fluxion's token-usage cost estimates
+  — the upstream llm-price-table repo plus the bundled snapshot at
+  src/fluxion/usage/model_prices.json — by pulling current prices from
   the official provider pricing pages (Anthropic, OpenAI, Google Gemini). Use
   this whenever the user wants to update, check, or verify model prices; suspects
   a price is stale, wrong, or too high/low; says a provider changed prices or a
@@ -16,15 +17,35 @@ description: >-
 # Update model prices
 
 Fluxion estimates the dollar cost of token usage from a hand-maintained price
-table, `src/fluxion/usage/model_prices.json`. There is no official pricing API,
-and the CLIs run models newer than any public price list, so prices are refreshed
-by a person running this procedure on demand (a few times a year, when prices
-change) — **not** by a scheduled scraper.
+table. There is no official pricing API, and the CLIs run models newer than any
+public price list, so prices are refreshed by a person running this procedure on
+demand (a few times a year, when prices change) — **not** by a scheduled scraper.
 
 Your job here is the judgment-heavy part a cron can't do: render the pages,
 read the numbers semantically, decide how each model maps into the table, and
 hand the human a clear, correct proposal. The mechanical fetching/auditing is
 already scripted.
+
+## Where the table lives — edit upstream first
+
+The source of truth is the standalone repo
+[superposed-labs/llm-price-table](https://github.com/superposed-labs/llm-price-table)
+(its `SCHEMA.md` defines the format). `src/fluxion/usage/model_prices.json` is a
+**bundled snapshot** of that file — the offline fallback and release baseline.
+At runtime `price_data.load_price_json` picks whichever of the snapshot and the
+locally refreshed cache carries the newer top-level `updated_at`, so the daily
+background refresh normally delivers a new price within a day even with no
+Fluxion change at all.
+
+A price change therefore lands in **two** repos, in this order:
+
+1. Edit `model_prices.json` in the llm-price-table checkout; bump its `updated_at`.
+2. Copy that file verbatim over `src/fluxion/usage/model_prices.json`.
+
+Keep the snapshot a byte-for-byte copy and `diff` the two afterwards. Drift is a
+silent bug: a family present upstream but missing from the snapshot mispriced
+every id that resolved through it (this actually happened with `mythos`, which
+fell through to the coarse `claude` fallback at half the real rate).
 
 ## The one hard rule
 
@@ -38,23 +59,27 @@ human-authored.
 ## Prerequisites
 
 - **Network access** to fetch the pricing pages.
-- **Browser MCP** (`mcp__Claude_in_Chrome__*`, load via ToolSearch if deferred):
-  OpenAI's pricing page is a JS-rendered shell — a plain fetch returns an empty
-  page, so it must be rendered in a real browser and read with `get_page_text`.
-  Anthropic and Google serve prices in plain HTML, so `curl`/WebFetch is enough
-  for those.
+- **A browser tool** (the in-app `mcp__Claude_Browser__*` pane, or
+  `mcp__claude-in-chrome__*`; load via ToolSearch if deferred): OpenAI's pricing
+  page is a JS-rendered shell — a plain fetch returns an empty page, so it must
+  be rendered in a real browser and read with `get_page_text`. Anthropic and
+  Google serve prices in plain HTML, so `curl`/WebFetch is enough for those.
 
 ## How the table works (read this before proposing edits)
 
 Rates are USD per 1M tokens. Resolution for a given model id cascades:
 
-1. `models` — exact model id (highest priority; use for versions that diverge).
-2. `families` — case-insensitive **word-boundary** substring (opus, sonnet,
-   haiku, mini, nano, flash-lite, flash, gemini).
-3. `providers` — coarse fallback per provider (codex, claude, antigravity).
-4. otherwise `$0` (local/unknown models).
+1. `fast` — tried first, and only for a turn flagged fast (`usage.speed !=
+   standard`, i.e. Anthropic Fast mode): exact id, then family. Falls through to
+   the standard tables when the model has no fast rate (most don't).
+2. `models` — exact model id (highest priority; use for versions that diverge).
+3. `families` — case-insensitive **word-boundary** substring (fable, mythos,
+   opus, sonnet-5, sonnet, haiku, nano, mini, flash-lite, flash, gemini).
+4. `providers` — coarse fallback per provider (codex, claude, antigravity).
+5. otherwise `$0` (local/unknown models, surfaced as "uncosted" rather than hidden).
 
-Each entry is a list of dated rates: `{ effective_date, observed, in, out, cw, cw1h, cr, source }`.
+Each entry is a list of dated rates: `{ effective_date, observed, in, out, cw, cw1h, cr, source }`,
+optionally plus `context_pricing` (below).
 
 - `in` / `out` — input / output price.
 - `cw` — the model's default cache **write** rate. For Anthropic this is the
@@ -79,6 +104,13 @@ Each entry is a list of dated rates: `{ effective_date, observed, in, out, cw, c
 - `observed` — the day you read the number off the page. Provenance only; the
   pricing logic ignores it.
 - `source` — short note on where the number came from.
+- `context_pricing` — **optional**, for models whose official page lists distinct
+  short/long context tiers: `{ metric, short_max, short: {...}, long: {...} }`.
+  `_rate_for_entry` in `history/pricing.py` picks the tier per request from the
+  original billed input (`input_tokens_total`), against the provider threshold
+  (272k for the GPT-5.4/5.5/5.6 family, 200k for Gemini Pro). Mirror the short
+  tier in the top-level `in/out/cw/cr` so a consumer that ignores the block still
+  gets a conservative number instead of a null.
 
 Cost is computed **per turn at the rate in effect on that turn's date**, so a
 recorded price change splits correctly by period. That only works if you record
@@ -110,10 +142,18 @@ browser yourself. Read the snapshots in `scratch/price-snapshots/`.
 ### 3. Read prices semantically
 
 Don't trust the script's heuristic extraction — read the rendered page/snapshot
-yourself and pull each model's **standard, short-context** tier: input, cached
-input (→ `cr`), output. Ignore batch/flex/priority tiers, the long-context
-(>200k) tier, and free-tier columns. Note deprecated vs current models — list
-the current ones (e.g. price the live Opus, not the deprecated one).
+yourself and pull each model's **standard** tier: input, cached input (→ `cr`),
+cache write (→ `cw`, where the page lists a column for it), and output. Ignore
+batch/flex/Fast-mode tiers and free-tier columns. Where the page has distinct
+**short/long context** tiers, read *both* and record them via `context_pricing`.
+Note deprecated vs current models — list the current ones (e.g. price the live
+Opus, not the deprecated one). For Anthropic also read the **Fast mode** premiums
+(→ `fast` section) and the caching multipliers (5-min → `cw`, 1-hour → `cw1h`).
+
+Cross-check the provider's **changelog** as well as the pricing table: it gives
+the real announced change date for `effective_date` (which is the only field
+that affects cost) instead of a first-observed floor, and it names what moved —
+e.g. OpenAI's 2026-07-30 entry stating Luna dropped 80% and Terra 20%.
 
 ### 4. Decide family vs exact — the key judgment
 
@@ -132,13 +172,17 @@ the current ones (e.g. price the live Opus, not the deprecated one).
 - **Word-boundary matching.** Family keys match on a boundary, not raw substring,
   because "mini" is a substring of "ge**mini**" — without the boundary check every
   Gemini model would silently resolve to the `mini` (GPT-5 mini) rate. The
-  resolver (`_rates_for` in `history.py`) already handles this; just keep family
-  keys unambiguous and remember the collision exists.
+  resolver (`_rates_for` in `history/pricing.py`, re-exported from
+  `fluxion.usage.history`) already handles this; just keep family keys
+  unambiguous and remember the collision exists.
 - **Resolution order.** Families are tried in JSON order, so more specific keys
   must come first: `flash-lite` before `flash` before `gemini` (all three match
-  "gemini-2.5-flash-lite").
-- **Short-context only.** The table models one tier; don't mix in long-context
-  prices.
+  "gemini-2.5-flash-lite"), and `sonnet-5` before `sonnet`.
+- **Standard tier only.** Don't mix in batch/flex/Fast-mode rates. Long context
+  is *not* excluded — it belongs in `context_pricing`, not in the top-level rate.
+- **Cache-write semantics vary by model generation.** `cw` is the model's default
+  write rate, not universally "same as input". Don't apply the older OpenAI
+  `cw = in` convention to GPT-5.6 or later, which bill writes at 1.25× input.
 
 ### 6. Record changes correctly
 
@@ -162,13 +206,28 @@ the user.
 ## Verify after applying (only once the user approves edits)
 
 ```bash
-PYTHONPATH=src python -c "from fluxion.usage.history import _rates_for; \
-print(_rates_for('antigravity','gemini-3.5-flash'))"   # spot-check a few ids
-PYTHONPATH=src python -m pytest tests/test_usage_history.py -q
+diff src/fluxion/usage/model_prices.json ../llm-price-table/model_prices.json
 ```
 
-Confirm the JSON still parses, the changed models resolve to the new numbers,
-and tests pass. The running `fluxion-web` only reloads the file on restart.
+```bash
+PYTHONPATH=src python -c "from fluxion.usage.history import _rates_for; \
+print(_rates_for('codex','gpt-5.6-luna','2026-07-29')); \
+print(_rates_for('codex','gpt-5.6-luna','2026-07-31'))"
+```
+
+```bash
+PYTHONPATH=src python -m pytest tests/test_usage_history.py tests/test_price_data.py -q
+```
+
+Confirm the snapshot matches upstream exactly, the JSON still parses, and the
+tests pass. Spot-check each changed id **on two dates — one before and one on/
+after the new `effective_date`** — to prove the period split works and you added
+a rate rather than overwriting one. Also spot-check an id you did *not* touch,
+to catch a family edit with wider blast radius than intended.
+
+No restart is needed: the parsed table and the resolver cache are keyed on
+`price_data.price_file_stamp`, so a rewritten file is picked up on the next
+lookup in a running service.
 
 ## Example: a price change done right
 
