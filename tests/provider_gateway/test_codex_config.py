@@ -341,3 +341,68 @@ def test_write_capable_roles_are_told_the_task_governs():
     """Asked to summarize a README, a worker read its own framing as licence to rewrite it."""
     for role in ("auto", "worker"):
         assert "answer it and change nothing on disk" in render_role_file(role, "opus")
+
+
+# ── supervision note ─────────────────────────────────────────────────
+# It rides on `description` rather than `developer_instructions` because only
+# `description` reaches the parent: Codex renders it into the `agent_type`
+# parameter of the parent's `spawn_agent` schema. Instructions reach the
+# sub-agent, and the sub-agent is not the one making the mistake.
+def test_every_role_tells_the_parent_a_wait_timeout_is_not_a_stall():
+    """A parent read five `wait_agent` timeouts as silence and interrupted the turn."""
+    for role in ("auto", "explorer", "reviewer", "worker"):
+        description = tomllib.loads(render_role_file(role, "opus"))["description"]
+        assert "wait_agent timeout means still working, not stalled" in description
+
+
+def test_every_role_warns_the_parent_off_interrupting_for_progress():
+    """`interrupt=true` aborts the turn; asking for a report this way destroys it."""
+    for role in ("auto", "explorer", "reviewer", "worker"):
+        description = tomllib.loads(render_role_file(role, "opus"))["description"]
+        assert "Never send_input with interrupt=true" in description
+
+
+def test_the_supervision_note_does_not_reach_the_sub_agent():
+    """Instructions are prepended to every turn, and the sub-agent cannot act on this.
+
+    Nothing a sub-agent emits mid-turn reaches its parent, so telling the
+    sub-agent about `wait_agent` would be tokens spent on advice for someone
+    else — and would invite it to narrate progress into a void.
+    """
+    for role in ("auto", "explorer", "reviewer", "worker"):
+        instructions = tomllib.loads(render_role_file(role, "opus"))["developer_instructions"]
+        assert "wait_agent" not in instructions
+        assert "interrupt" not in instructions
+
+
+def test_each_role_keeps_its_own_description(tmp_path):
+    """The note is appended to the role's identity, not a replacement for it."""
+    assert (
+        "Read-only explorer" in tomllib.loads(render_role_file("explorer", "opus"))["description"]
+    )
+    assert (
+        "Implementation worker" in tomllib.loads(render_role_file("worker", "opus"))["description"]
+    )
+
+
+# ── generated role files must parse ──────────────────────────────────
+def test_every_generated_role_file_is_valid_toml():
+    """Descriptions and instructions are free text inside TOML string literals.
+
+    An unescaped quote in one of those constants produces a role file Codex
+    cannot parse, so it declines to register the role — and an unregistered role
+    routes nothing: the sub-agent quietly runs on the parent's own provider.
+    """
+    for role in ("auto", "explorer", "reviewer", "worker"):
+        parsed = tomllib.loads(render_role_file(role, "gpt-x"))
+        assert parsed["name"] == f"fluxion_{role}"
+
+
+def test_planning_refuses_a_role_file_that_would_not_parse(tmp_path, monkeypatch):
+    """Proven before anything is written, like the merged config."""
+    monkeypatch.setattr(
+        "fluxion.provider_gateway.codex_config._SUPERVISION_NOTE",
+        'an unescaped " breaks the literal',
+    )
+    with pytest.raises(CodexConfigError, match="role file"):
+        build_plan(tmp_path)
