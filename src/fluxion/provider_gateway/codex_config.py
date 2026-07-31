@@ -71,6 +71,44 @@ _ROLE_DESCRIPTIONS = {
     "worker": "Implementation worker whose model is selected by Fluxion.",
 }
 
+# Appended to every role's `description`, which is the only text this module
+# writes that the *parent* agent ever reads.
+#
+# Codex renders each role's description into the `agent_type` parameter of the
+# parent's `spawn_agent` schema, and uses that same field for its own built-in
+# roles to carry coordinator-facing rules — "assign ownership", "spawn multiple
+# explorers in parallel", "tell workers they are not alone in the codebase".
+# So this is the channel for telling a coordinator how to supervise a role.
+# `developer_instructions` reaches the sub-agent, which is the wrong end: a
+# sub-agent asked to narrate its progress narrates into a void, because nothing
+# it emits mid-turn reaches the parent at all.
+#
+# It has to be said because this gateway leaves the parent with no interim
+# signal whatsoever. A Fluxion role is backed by a local agent CLI that runs for
+# minutes and produces nothing until its turn ends, and `wait_agent` is
+# edge-triggered on terminal status — it answers with an empty map on timeout.
+# "Still working" and "wedged" are therefore indistinguishable from the parent's
+# side, and the parent has to guess.
+#
+# It guessed wrong, in the way that costs the most. Observed 2026-07-30: five
+# consecutive `wait_agent` timeouts read as silence, so the parent sent
+# `send_input` with `interrupt: true` asking for a progress report — which
+# aborted the six-minute turn it had been waiting on (`turn_aborted`, reason
+# `interrupted`), restarted from nothing, timed out again 30s later, and was
+# closed while `close_agent` still reported `previous_status: "running"`. The
+# parent then reported that the sub-agent had produced no progress and no file
+# changes: an accurate description with the causality exactly reversed.
+#
+# Carried by every role, not just the write-capable ones. The blindness is a
+# property of the gateway rather than of write capability — a read-only explorer
+# backed by the same CLI goes just as quiet for just as long.
+_SUPERVISION_NOTE = (
+    "Backed by a local agent CLI: one turn takes minutes and reports nothing until it "
+    "finishes, so a wait_agent timeout means still working, not stalled. Never send_input "
+    "with interrupt=true to ask for progress; that aborts the turn and discards all of "
+    "its work. Wait, or do non-overlapping work meanwhile."
+)
+
 # `developer_instructions` is REQUIRED for standalone agent role files: without
 # it Codex logs `must define developer_instructions` at startup and does not
 # register the role at all (core/src/config/agent_roles.rs).
@@ -229,9 +267,10 @@ def render_provider_block(
 def render_role_file(role: str, model: str, *, provider_id: str | None = None) -> str:
     """Render one `.codex/agents/<role>.toml` role layer."""
     provider = provider_id or f"fluxion_{role}"
+    description = f"{_ROLE_DESCRIPTIONS.get(role, role)} {_SUPERVISION_NOTE}"
     lines = [
         f'name = "fluxion_{role}"',
-        f'description = "{_ROLE_DESCRIPTIONS.get(role, role)}"',
+        f'description = "{description}"',
         f'model = "{model}"',
         # Without this line the sub-agent silently inherits the parent session's
         # provider and no routing happens at all — the single most important
@@ -280,11 +319,29 @@ def plan_install(
     except tomllib.TOMLDecodeError as err:
         raise CodexConfigError(f"generated config is not valid TOML: {err}") from err
 
+    # Same rule as the merged config above, for the same reason. The role files
+    # carry free text — descriptions and instructions — into TOML string
+    # literals, so an unescaped quote in one of those constants would land on
+    # the user's disk as a file Codex cannot parse. Codex answers that by
+    # refusing to register the role, and a role that never registers routes
+    # nothing: the sub-agent runs on the parent's provider, silently, with
+    # nothing anywhere saying why.
+    role_files = {}
+    for role in roles:
+        rendered = render_role_file(role, model)
+        try:
+            tomllib.loads(rendered)
+        except tomllib.TOMLDecodeError as err:
+            raise CodexConfigError(
+                f"generated role file for {role!r} is not valid TOML: {err}"
+            ) from err
+        role_files[agents_dir / f"{role}.toml"] = rendered
+
     return CodexConfigPlan(
         config_path=config_path,
         agents_dir=agents_dir,
         provider_block=block,
-        role_files={agents_dir / f"{role}.toml": render_role_file(role, model) for role in roles},
+        role_files=role_files,
         merged_config=merged,
         replaced_existing=replaced,
     )
