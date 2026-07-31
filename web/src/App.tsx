@@ -5,6 +5,7 @@ import { createI18n, I18nProvider, languageName, type LocalePreference } from ".
 import { applyEvent } from "./lib/applyEvent";
 import { EXECUTORS, statusPriority } from "./lib/constants";
 import { ACCENT_OPTIONS, applyTweaks, useTweaks } from "./lib/useTweaks";
+import { useView } from "./lib/useView";
 import type { ExecutorInfo, ProviderUsage, Task } from "./types";
 
 import { BusFoot } from "./components/BusFoot";
@@ -15,7 +16,7 @@ import { ExecutorRail, RecentChannels, SessionRail } from "./components/Rails";
 import { RunTaskDrawer, type RunTaskPrefill } from "./components/RunTaskDrawer";
 import { SchedulesPanel } from "./components/Schedules";
 import { TaskRow } from "./components/TaskRow";
-import { TopBar, type AppView } from "./components/TopBar";
+import { TopBar } from "./components/TopBar";
 import { UsageRail } from "./components/UsageRail";
 import { UsageStats } from "./components/UsageStats";
 import {
@@ -162,14 +163,9 @@ export function App(): JSX.Element {
   const [spark, setSpark] = useState<number[]>(INITIAL_SPARK);
   const [usage, setUsage] = useState<ProviderUsage[]>([]);
   const [executors, setExecutors] = useState<ExecutorInfo[]>([]);
-  // ?view=stats deep-links straight to the usage page — the desktop app's
-  // quota surfaces (notch panel) use it so "see more detail" is one step.
-  const [view, setView] = useState<AppView>(() => {
-    if (typeof window === "undefined") return "tasks";
-    return new URLSearchParams(window.location.search).get("view") === "stats"
-      ? "stats"
-      : "tasks";
-  });
+  // Derived from the URL so a reload keeps the page the user is on — see
+  // lib/useView.ts.
+  const [view, setView] = useView();
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [runPrefill, setRunPrefill] = useState<RunTaskPrefill | null>(null);
   const [schedulesActive, setSchedulesActive] = useState(0);

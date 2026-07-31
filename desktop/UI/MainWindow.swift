@@ -34,8 +34,10 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
     private var connectionRetry: DispatchWorkItem?
     private var connectionAttempt = 0
     private let maxConnectionAttempts = 30
-    // Console view to land on (?view= query param), set per show() call and
-    // kept across connection retries so a retry doesn't lose the deep link.
+    // Console view to land on (?view= query param), set per show() call. Kept
+    // across connection retries so a retry doesn't lose the deep link, then
+    // cleared once the page loads — from there the console owns the current
+    // view and reflects it in its own URL.
     private var initialView: String?
 
     private var appDelegate: AppDelegate {
@@ -265,6 +267,10 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         connectionRetry?.cancel()
         connectionRetry = nil
         connectionAttempt = 0
+        // The deep link is a one-shot intent, spent once the console has it.
+        // Holding it past this point would make every later load (reload,
+        // service restart) replay it over whatever page the user navigated to.
+        initialView = nil
         webView.isHidden = false
         loadingView?.isHidden = true
         spinner?.stopAnimation(nil)
@@ -315,9 +321,17 @@ class MainWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: retry)
     }
 
+    /// Reload what's on screen. Rebuilding the initial URL instead would
+    /// discard the page the user navigated to and re-apply the query params
+    /// they arrived with — a refresh that undoes their last action.
     @objc func reloadWebview() {
         connectionAttempt = 0
-        checkConnectionAndLoad()
+        if let web = webView, web.url != nil {
+            web.reload()
+        } else {
+            // Nothing loaded yet (offline placeholder): fall back to connecting.
+            checkConnectionAndLoad()
+        }
     }
 
     @objc func retryConnection() {
