@@ -43,7 +43,20 @@ from fluxion.usage.history.parsing import (
     _parse_incremental,
 )
 
-_SCHEMA_VERSION = 3
+# Bumping this drops `entries` and `files` and reparses every transcript from
+# scratch (`_ensure_schema`).
+#
+# **Raise it whenever a line parser's output changes**, not only when a column
+# is added. `files` records the offset and scan state of everything already
+# read, so an unchanged transcript is never parsed again — the corrected rule
+# applies to new turns while the old rows sit in `entries` forever, and the
+# aggregate stays wrong in a way no amount of restarting fixes.
+#
+# v4: `_codex_line_parser` stopped emitting turns served by a provider other
+# than OpenAI. Shipped one commit too late — the rule landed while 61 already
+# parsed phantom turns (3.75M input tokens under a model slug that does not
+# exist) stayed in the table, so the fix reported success and changed nothing.
+_SCHEMA_VERSION = 4
 
 
 def _local(ts: datetime, tz: timezone | None) -> datetime:
