@@ -717,7 +717,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     install_parser = subparsers.add_parser(
         "install-codex-config", help="Install the Fluxion block into ~/.codex/config.toml."
     )
-    install_parser.add_argument("--model", default="REPLACE_WITH_A_REAL_MODEL_ID")
+    # Required, unlike `print-codex-config` above, because this one writes.
+    #
+    # The old default put the literal `REPLACE_WITH_A_REAL_MODEL_ID` into every
+    # role file, and nothing downstream minded: routing keys off the provider
+    # header, so sub-agents ran correctly for weeks under a model name that does
+    # not exist. What did mind was usage accounting, which read that string back
+    # out of Codex's rollouts and priced it — and the placeholder was the only
+    # reason anyone noticed, because a name that obviously fake is a name you
+    # look at twice. A plausible default would have hidden the same cost inside
+    # a real model's row.
+    install_parser.add_argument(
+        "--model",
+        required=True,
+        help="Model slug to write into every role file, e.g. gpt-5.6-sol.",
+    )
     install_parser.add_argument("--token-command", default="")
     add_codex_paths(install_parser)
     install_parser.set_defaults(handler=_install_codex_config)
