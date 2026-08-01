@@ -335,6 +335,34 @@ extension NotchIslandView {
         quota.taggedPools(for: provider).compactMap { $0.weekly }
     }
 
+    /// Both pools' 5-hour resets, for the ring's hover panel. Empty for every
+    /// provider but a dual-pool one: the others already print their 5h
+    /// countdown in the detail band, and there is nothing to reveal.
+    func poolResetRows(
+        for provider: ProviderUsage,
+        state: ProviderQuotaState,
+        visual: ProviderVisual
+    ) -> [PoolResetRow] {
+        let pools = antigravityFiveHourPools(for: provider)
+        guard provider.provider == "antigravity", pools.count >= 2 else { return [] }
+        // While loading or errored the snapshots are empty and every row would
+        // read "now"; the ring is showing a lock reason then, not a level.
+        guard state.mode == .healthy || state.mode == .credits else { return [] }
+        return pools.prefix(2).map { pool in
+            let tag = pool.tag ?? splitQuotaName(for: pool).uppercased()
+            let lock = state.blockedPools.first(where: { $0.tag == tag })
+            return PoolResetRow(
+                tag: tag,
+                // A blocked pool counts down the window that is blocking it,
+                // which is the answer to "when can I use this again".
+                value: timerString(for: lock?.snapshot ?? pool),
+                color: splitQuotaColor(for: pool, visual: visual),
+                idle: lock == nil && pool.idle,
+                blocked: lock != nil
+            )
+        }
+    }
+
     func splitQuotaName(for snapshot: QuotaWindowSnapshot) -> String {
         switch snapshot.tag {
         case "GEM": return "Gemini"
@@ -814,19 +842,21 @@ extension NotchIslandView {
                         providerHeaderRow(for: p, visual: visual)
                     }
 
-                    CircularProgressRing(
-                        percentage: ringPercentage,
-                        mode: state.mode,
-                        credits: credits,
-                        creditsIsDollar: p.provider != "antigravity",
-                        color: ringColor,
-                        glowColor: ringColor.opacity(0.5),
-                        subtitle: ringSubtitle,
-                        lockCountdown: timerString(for: state.lockSnapshot),
-                        poolArcs: poolArcs,
-                        secondaryPool: secondaryPool
-                    )
-                    .frame(height: 128, alignment: .center)
+                    PoolResetHover(rows: poolResetRows(for: p, state: state, visual: visual)) {
+                        CircularProgressRing(
+                            percentage: ringPercentage,
+                            mode: state.mode,
+                            credits: credits,
+                            creditsIsDollar: p.provider != "antigravity",
+                            color: ringColor,
+                            glowColor: ringColor.opacity(0.5),
+                            subtitle: ringSubtitle,
+                            lockCountdown: timerString(for: state.lockSnapshot),
+                            poolArcs: poolArcs,
+                            secondaryPool: secondaryPool
+                        )
+                        .frame(height: 128, alignment: .center)
+                    }
                     
                     quotaDetailBand(
                         for: p,
