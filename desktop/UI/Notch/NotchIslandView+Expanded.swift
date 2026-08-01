@@ -1352,8 +1352,19 @@ extension NotchIslandView {
         narrow: Bool,
         placeholder: Bool = false
     ) -> some View {
-        let peak = max(1, series.max() ?? 1)
-        let labels = compactTrendLabels(count: series.count, narrow: narrow)
+        let axisLabels = compactTrendLabels(count: series.count, narrow: narrow)
+        // The hover chip always spells the day out ("周三" / "Wed") even where
+        // the axis below the bars is down to a single character, so a value
+        // read out of the chip can't be attached to the wrong day.
+        let chipLabels = compactTrendLabels(count: series.count, narrow: false)
+        let days = series.indices.map { idx in
+            CompactTrendDay(
+                value: series[idx],
+                axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
+                full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
+                amount: formatTokenCount(series[idx])
+            )
+        }
         VStack(spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(L10n.tr("notch.card.last_7_days").uppercased())
@@ -1367,44 +1378,12 @@ extension NotchIslandView {
                     .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
             }
 
-            HStack(alignment: .bottom, spacing: narrow ? 2 : 4) {
-                ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
-                    let isToday = idx == series.count - 1
-                    VStack(spacing: 4) {
-                        ZStack(alignment: .bottom) {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.08))
-                                .frame(height: 0.5)
-                            TopRoundedBar(radius: 2)
-                                .fill(placeholder
-                                    ? Color.white.opacity(0.08)
-                                    : (isToday ? Color(visual.brandColor) : Color.white.opacity(0.22)))
-                                .frame(
-                                    width: narrow ? 8 : 11,
-                                    height: placeholder
-                                        ? 5
-                                        : (value == 0 ? 1 : max(isToday ? 5 : 3, 25 * CGFloat(value) / CGFloat(peak)))
-                                )
-                                .shadow(
-                                    color: !placeholder && isToday
-                                        ? Color(visual.brandColor).opacity(0.45)
-                                        : .clear,
-                                    radius: 3
-                                )
-                        }
-                        .frame(height: 25, alignment: .bottom)
-
-                        Text(labels[idx])
-                            .font(.system(size: narrow ? 6.5 : 7.5, weight: isToday ? .bold : .medium))
-                            .foregroundColor(placeholder
-                                ? .white.opacity(0.18)
-                                : (isToday ? Color(visual.brandColor).opacity(0.9) : .white.opacity(0.34)))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
+            CompactTrendBars(
+                days: days,
+                brandColor: Color(visual.brandColor),
+                narrow: narrow,
+                placeholder: placeholder
+            )
         }
     }
 
