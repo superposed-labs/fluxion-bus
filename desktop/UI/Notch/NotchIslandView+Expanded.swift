@@ -1396,7 +1396,7 @@ extension NotchIslandView {
             CompactTrendBars(
                 days: days,
                 brandColor: Color(visual.brandColor),
-                narrow: narrow,
+                style: narrow ? .narrowColumn : .wideColumn,
                 placeholder: placeholder
             )
         }
@@ -1569,14 +1569,16 @@ extension NotchIslandView {
         let state = quotaState(for: p)
         // 14-day series: the trailing 7 are displayed, and the prior 7 form
         // the comparison baseline. An old backend sends 7 → no baseline.
-        // This page's chart and tiles work in plain totals; the per-day
-        // breakdown is only read by the compact page's hover chip.
-        let fullSeries = (model.dailyTokens[p.provider.lowercased()] ?? []).map(\.generated)
-        let series = Array(fullSeries.suffix(7))
+        let fullDays = model.dailyTokens[p.provider.lowercased()] ?? []
+        // The analytics tiles work in plain totals; the chart also needs each
+        // day's cost, for the hover chip.
+        let fullSeries = fullDays.map(\.generated)
+        let days = Array(fullDays.suffix(7))
         // The trend and analytics are permanent layout modules. Before
         // history arrives (or for a genuinely empty history), seven zero days
         // preserve their final geometry instead of removing the whole block.
-        let displaySeries = series.count > 1 ? series : Array(repeating: 0, count: 7)
+        let displayDays = days.count > 1 ? days : Array(repeating: .empty, count: 7)
+        let displaySeries = displayDays.map(\.generated)
         let prevTotal = fullSeries.count >= 14 ? fullSeries.prefix(7).reduce(0, +) : 0
         let weekTotal = displaySeries.reduce(0, +)
         let denom = stats.cacheRead + stats.input + stats.cacheCreation
@@ -1594,6 +1596,7 @@ extension NotchIslandView {
                     stats: stats,
                     cachePct: cachePct,
                     denom: denom,
+                    days: displayDays,
                     series: displaySeries,
                     weekTotal: weekTotal,
                     prevTotal: prevTotal
@@ -1634,6 +1637,7 @@ extension NotchIslandView {
         stats: ProviderHistoryStats,
         cachePct: Int?,
         denom: Int,
+        days: [ProviderDayUsage],
         series: [Int],
         weekTotal: Int,
         prevTotal: Int
@@ -1674,7 +1678,13 @@ extension NotchIslandView {
             .frame(height: 20)
             .padding(.top, 10)
 
-            soloWeekSection(series: series, weekTotal: weekTotal, prevTotal: prevTotal, visual: visual)
+            soloWeekSection(
+                days: days,
+                weekTotal: weekTotal,
+                prevTotal: prevTotal,
+                visual: visual,
+                isSub: isSubscription(for: p)
+            )
                 .padding(.top, 12)
 
             soloUsageTiles(provider: p.provider, series: series, weekTotal: weekTotal)
@@ -1704,9 +1714,14 @@ extension NotchIslandView {
     // labels. The explicit time range matches the backend's trailing window;
     // calling it "this week" would incorrectly imply a calendar-week total.
     @ViewBuilder
-    func soloWeekSection(series: [Int], weekTotal: Int, prevTotal: Int, visual: ProviderVisual) -> some View {
-        let peak = max(1, series.max() ?? 1)
-        let labels = compactTrendLabels(count: series.count, narrow: false)
+    func soloWeekSection(
+        days: [ProviderDayUsage],
+        weekTotal: Int,
+        prevTotal: Int,
+        visual: ProviderVisual,
+        isSub: Bool
+    ) -> some View {
+        let labels = compactTrendLabels(count: days.count, narrow: false)
         // Week-over-week: this week's total against the 7 days before it.
         // Consumption up reads warm (spending faster), down reads green.
         let delta: Int? = prevTotal > 0
@@ -1743,38 +1758,24 @@ extension NotchIslandView {
                     .foregroundColor(.white)
             }
 
-            ZStack(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.09))
-                    .frame(height: 0.5)
-                HStack(alignment: .bottom, spacing: 4) {
-                    ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
-                        let isToday = idx == series.count - 1
-                        TopRoundedBar(radius: 2)
-                            .fill(isToday ? Color(visual.brandColor) : Color.white.opacity(0.12))
-                            .frame(height: max(isToday ? 6 : 3, 35 * CGFloat(value) / CGFloat(peak)))
-                            .frame(maxWidth: .infinity)
-                            .shadow(color: isToday ? Color(visual.brandColor).opacity(0.5) : .clear, radius: 3)
-                    }
-                }
-            }
-            .frame(height: 35, alignment: .bottom)
+            // Same component the compact page uses, in its wider skin: the two
+            // charts look different but must behave identically under the
+            // cursor, and two hover implementations would drift.
+            CompactTrendBars(
+                days: days.indices.map { idx in
+                    CompactTrendDay(
+                        value: days[idx].generated,
+                        axis: labels.indices.contains(idx) ? labels[idx] : "",
+                        full: labels.indices.contains(idx) ? labels[idx] : "",
+                        amount: formatTokenCount(days[idx].generated),
+                        cost: trendDayCost(days[idx], isSub: isSub)
+                    )
+                },
+                brandColor: Color(visual.brandColor),
+                style: .solo,
+                placeholder: false
+            )
             .padding(.top, 8)
-
-            HStack(spacing: 4) {
-                ForEach(Array(labels.enumerated()), id: \.offset) { idx, label in
-                    let isToday = idx == labels.count - 1
-                    Text(label)
-                        .font(.system(size: 10, weight: isToday ? .bold : .medium))
-                        .foregroundColor(isToday
-                            ? Color(visual.brandColor).opacity(0.9)
-                            : .white.opacity(0.46))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.top, 4)
         }
     }
 

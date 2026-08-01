@@ -16,8 +16,46 @@ struct CompactTrendDay {
     let cost: String?
 }
 
-/// The seven bars of the compact trend, split out of `compactUsageTrend` so
-/// they can own hover state: a `@ViewBuilder` method on the view extension has
+/// How a trend chart is drawn. The two surfaces that use it are different
+/// visual weights — a third of a three-provider row versus the full width of a
+/// single-provider dashboard — but they behave identically under the cursor,
+/// which is the reason they share a view instead of each growing their own
+/// hover code to drift apart.
+struct CompactTrendStyle {
+    /// Height the tallest bar is scaled to.
+    let barArea: CGFloat
+    /// Fixed bar width, or nil to divide the row evenly between the days.
+    let barWidth: CGFloat?
+    let spacing: CGFloat
+    /// Fill for a day that is neither today nor hovered.
+    let idleBar: Double
+    let labelSize: CGFloat
+    let chipSize: CGFloat
+    /// Gap between the top of the bar row and the chip's foot: enough to clear
+    /// the header above the bars, which differs per surface.
+    let chipLift: CGFloat
+
+    /// One column of a three-provider row (~161pt).
+    static let narrowColumn = CompactTrendStyle(
+        barArea: 25, barWidth: 8, spacing: 2, idleBar: 0.22,
+        labelSize: 9, chipSize: 9.5, chipLift: 21
+    )
+    /// One or two providers on the compact page.
+    static let wideColumn = CompactTrendStyle(
+        barArea: 25, barWidth: 11, spacing: 4, idleBar: 0.22,
+        labelSize: 10, chipSize: 10.5, chipLift: 21
+    )
+    /// The single-provider detailed dashboard: taller bars that fill the width.
+    /// `chipLift` is 25 rather than 21 because that header carries a
+    /// week-over-week badge and the bars sit under 8pt of padding, not 6.
+    static let solo = CompactTrendStyle(
+        barArea: 35, barWidth: nil, spacing: 4, idleBar: 0.12,
+        labelSize: 10, chipSize: 10.5, chipLift: 25
+    )
+}
+
+/// The seven bars of a trend chart, split out of `compactUsageTrend` so they
+/// can own hover state: a `@ViewBuilder` method on the view extension has
 /// nowhere to keep `@State`.
 ///
 /// The hovered day's total arrives as an overlay rather than a row of its own.
@@ -30,7 +68,7 @@ struct CompactTrendDay {
 struct CompactTrendBars: View {
     let days: [CompactTrendDay]
     let brandColor: Color
-    let narrow: Bool
+    let style: CompactTrendStyle
     let placeholder: Bool
 
     /// Height of the box the chip is bottom-aligned in. Only needs to exceed
@@ -41,34 +79,38 @@ struct CompactTrendBars: View {
 
     var body: some View {
         let peak = max(1, days.map(\.value).max() ?? 1)
-        HStack(alignment: .bottom, spacing: narrow ? 2 : 4) {
+        HStack(alignment: .bottom, spacing: style.spacing) {
             ForEach(Array(days.enumerated()), id: \.offset) { idx, day in
                 let isToday = idx == days.count - 1
                 let isHovered = hovered == idx
                 VStack(spacing: 4) {
                     ZStack(alignment: .bottom) {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 0.5)
                         TopRoundedBar(radius: 2)
                             .fill(barFill(isToday: isToday, isHovered: isHovered))
                             .frame(
-                                width: narrow ? 8 : 11,
+                                width: style.barWidth,
                                 height: placeholder
                                     ? 5
+                                    // A day with nothing on it draws a stub
+                                    // rather than the 3pt floor, so "didn't
+                                    // use it" stays distinct from "barely".
                                     : (day.value == 0
                                         ? 1
-                                        : max(isToday ? 5 : 3, 25 * CGFloat(day.value) / CGFloat(peak)))
+                                        : max(
+                                            isToday ? 5 : 3,
+                                            style.barArea * CGFloat(day.value) / CGFloat(peak)
+                                        ))
                             )
+                            .frame(maxWidth: style.barWidth == nil ? .infinity : nil)
                             .shadow(
                                 color: !placeholder && isToday ? brandColor.opacity(0.45) : .clear,
                                 radius: 3
                             )
                     }
-                    .frame(height: 25, alignment: .bottom)
+                    .frame(height: style.barArea, alignment: .bottom)
 
                     Text(day.axis)
-                        .font(.system(size: narrow ? 9 : 10, weight: isToday ? .bold : .medium))
+                        .font(.system(size: style.labelSize, weight: isToday ? .bold : .medium))
                         .foregroundColor(axisColor(isToday: isToday, isHovered: isHovered))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -87,6 +129,17 @@ struct CompactTrendBars: View {
                 }
             }
         }
+        // One rule spanning the row, not one per column: drawn per column it
+        // breaks at every gap, which reads as dashes rather than a baseline.
+        // Bottom-aligning it in a bar-area-tall box puts it on the bars' feet
+        // without disturbing the columns, which have to stay whole to serve as
+        // hover targets.
+        .background(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.09))
+                .frame(height: 0.5)
+                .frame(height: style.barArea, alignment: .bottom)
+        }
         .overlay(alignment: .top) {
             if let idx = hovered, days.indices.contains(idx) {
                 chip(for: days[idx])
@@ -98,15 +151,13 @@ struct CompactTrendBars: View {
                     // Sitting the chip at the bottom of a fixed box, then
                     // lifting the whole box, pins its foot to one place no
                     // matter how tall the chip renders — which varies with the
-                    // language and with whether the day carries a cost. The 21
-                    // is what sits between: 6pt of stack spacing, the ~13pt
-                    // header, and 2pt of daylight.
+                    // language and with whether the day carries a cost.
                     //
                     // Drawing outside this module is safe: nothing clips until
                     // the card silhouette, and the trend block is a later
                     // sibling in the column stack, so it composites on top.
                     .frame(height: Self.chipBox, alignment: .bottom)
-                    .offset(y: -(Self.chipBox + 21))
+                    .offset(y: -(Self.chipBox + style.chipLift))
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
@@ -117,7 +168,9 @@ struct CompactTrendBars: View {
     private func barFill(isToday: Bool, isHovered: Bool) -> Color {
         if placeholder { return Color.white.opacity(0.08) }
         if isToday { return brandColor }
-        return Color.white.opacity(isHovered ? 0.42 : 0.22)
+        // Hovering lifts an idle bar by the same amount on either surface, so
+        // the solo chart's quieter bars stay quieter when lit.
+        return Color.white.opacity(isHovered ? style.idleBar + 0.2 : style.idleBar)
     }
 
     private func axisColor(isToday: Bool, isHovered: Bool) -> Color {
@@ -142,7 +195,7 @@ struct CompactTrendBars: View {
                     .foregroundColor(.white.opacity(0.72))
             }
         }
-        .font(.system(size: narrow ? 9.5 : 10.5, weight: .bold))
+        .font(.system(size: style.chipSize, weight: .bold))
         .lineLimit(1)
         // The overlay proposes the row's width; without this the chip would
         // stretch to fill it instead of hugging its text.
