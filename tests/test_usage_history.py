@@ -294,6 +294,47 @@ def test_aggregate_totals_and_breakdowns(fixed_prices):
     assert out["by_model"][0]["model"] == "sonnet"  # sorted desc
 
 
+def test_provider_day_series_carries_the_token_breakdown():
+    # The notch's per-day hover reads this breakdown, so the series has to
+    # carry more than a single total. Cost is intentionally not part of it.
+    entries = [
+        UsageEntry(
+            provider="claude",
+            ts=datetime(2026, 6, 9, 12, tzinfo=UTC),
+            model="m",
+            session_id="s",
+            input_tokens=100,
+            output_tokens=20,
+            cache_creation_tokens=5,
+            cache_read_tokens=900,
+            dedup_key="d1",
+        ),
+        UsageEntry(
+            provider="claude",
+            ts=datetime(2026, 6, 9, 13, tzinfo=UTC),
+            model="m",
+            session_id="s",
+            input_tokens=50,
+            output_tokens=10,
+            cache_creation_tokens=0,
+            cache_read_tokens=100,
+            dedup_key="d2",
+        ),
+    ]
+
+    out = aggregate(entries, window="1d", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+    row = next(r for r in out["by_provider_day"] if r["date"] == "2026-06-09")
+
+    assert row["input_tokens"] == 150
+    assert row["output_tokens"] == 30
+    assert row["cache_creation_tokens"] == 5
+    assert row["cache_read_tokens"] == 1000
+    # Unchanged meaning: generated excludes cache re-reads, total includes them.
+    assert row["generated_tokens"] == 185
+    assert row["total_tokens"] == 1185
+    assert "cost" not in row
+
+
 def test_provider_hour_series_is_trailing_seven_days_and_provider_scoped():
     entries = [
         _entry("2026-06-05T14:00:00Z", "c1"),

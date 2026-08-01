@@ -30,18 +30,44 @@ struct ProviderHistoryStats: Equatable {
     let cost: Double
 }
 
+/// One day of one provider's usage in the trailing 14-day series.
+///
+/// `generated` is the measure the bars are drawn from and the one the headline
+/// figure uses, so a bar and the big number above it always agree. The rest
+/// backs the per-day hover breakdown. Cost is absent by design — it prices per
+/// entry, and the backend won't run a 14-day pricing pass on a 30s poll for a
+/// figure that's only on screen while a bar is hovered.
+struct ProviderDayUsage: Equatable {
+    let generated: Int
+    let input: Int
+    let output: Int
+    let cacheRead: Int
+    let cacheCreation: Int
+
+    /// Share of input-side context served from cache rather than sent fresh.
+    /// Nil when the day has no input-side tokens at all, which is not the same
+    /// as a 0% hit rate and must not render as one.
+    var cacheHit: Double? {
+        let denom = cacheRead + input + cacheCreation
+        return denom > 0 ? Double(cacheRead) / Double(denom) : nil
+    }
+
+    static let empty = ProviderDayUsage(
+        generated: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0
+    )
+}
+
 // MARK: - Notch Data Model
 class NotchDataModel: ObservableObject {
     @Published var isUpgradingBackend: Bool = false
     @Published var providers: [ProviderUsage] = []
     @Published var justGranted: Int = 0
     @Published var todayStats: [String: ProviderHistoryStats] = [:]
-    // Per-provider daily generated-token series for the trailing 14 local days
-    // (oldest → today), keyed by lowercased provider: the last 7 draw the
-    // usage page's week chart, the 7 before them anchor its week-over-week
-    // delta. Empty when the backend predates by_provider_day, and the chart
-    // simply doesn't render.
-    @Published var dailyTokens: [String: [Int]] = [:]
+    // Per-provider daily usage for the trailing 14 local days (oldest → today),
+    // keyed by lowercased provider: the last 7 draw the usage page's week
+    // chart, the 7 before them anchor its week-over-week delta. Empty when the
+    // backend predates by_provider_day, and the chart simply doesn't render.
+    @Published var dailyTokens: [String: [ProviderDayUsage]] = [:]
     // Provider-specific peak local hour across the trailing seven days. The
     // backend counts turns rather than tokens so one unusually large request
     // cannot distort the user's habitual busy time.
@@ -530,6 +556,12 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 // Same measure as the headline (see HistoryModelStat), so
                 // today's bar always matches the big number above it.
                 let generated_tokens: Int
+                // Optional: a backend that predates the breakdown still decodes,
+                // and the hover chip falls back to the day's total alone.
+                let input_tokens: Int?
+                let output_tokens: Int?
+                let cache_read_tokens: Int?
+                let cache_creation_tokens: Int?
             }
 
             struct ProviderHourStat: Codable {
@@ -551,7 +583,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             // anything else — connection refused, timeout, non-200, undecodable —
             // is a miss worth retrying while the server comes up.
             var parsed: [String: ProviderHistoryStats]? = nil
-            var parsedDaily: [String: [Int]] = [:]
+            var parsedDaily: [String: [ProviderDayUsage]] = [:]
             var parsedPeakHours: [String: Int] = [:]
             if let data = data, error == nil,
                (response as? HTTPURLResponse)?.statusCode == 200,
@@ -583,12 +615,23 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                     let dayKeys: [String] = (0..<14).reversed().map { offset in
                         formatter.string(from: Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date())
                     }
-                    var byProviderDay: [String: [String: Int]] = [:]
+                    // The server emits one row per (day, provider); summing
+                    // rather than assigning keeps the merge correct if that
+                    // ever loosens to a finer grain.
+                    var byProviderDay: [String: [String: ProviderDayUsage]] = [:]
                     for row in rows {
-                        byProviderDay[row.provider.lowercased(), default: [:]][row.date, default: 0] += row.generated_tokens
+                        let pKey = row.provider.lowercased()
+                        let prior = byProviderDay[pKey]?[row.date] ?? .empty
+                        byProviderDay[pKey, default: [:]][row.date] = ProviderDayUsage(
+                            generated: prior.generated + row.generated_tokens,
+                            input: prior.input + (row.input_tokens ?? 0),
+                            output: prior.output + (row.output_tokens ?? 0),
+                            cacheRead: prior.cacheRead + (row.cache_read_tokens ?? 0),
+                            cacheCreation: prior.cacheCreation + (row.cache_creation_tokens ?? 0)
+                        )
                     }
                     for (pKey, days) in byProviderDay {
-                        parsedDaily[pKey] = dayKeys.map { days[$0] ?? 0 }
+                        parsedDaily[pKey] = dayKeys.map { days[$0] ?? .empty }
                     }
                 }
 

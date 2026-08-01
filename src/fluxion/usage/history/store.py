@@ -640,6 +640,12 @@ class UsageStore:
                     "provider": p,
                     "total_tokens": bucket.total_tokens,
                     "generated_tokens": bucket.generated_tokens,
+                    # Mirrors aggregate.py's payload — see the note there on
+                    # why cost is not part of this series.
+                    "input_tokens": bucket.input_tokens,
+                    "output_tokens": bucket.output_tokens,
+                    "cache_read_tokens": bucket.cache_read_tokens,
+                    "cache_creation_tokens": bucket.cache_creation_tokens,
                 }
                 for (d, p), bucket in sorted(by_provider_day.items())
             ],

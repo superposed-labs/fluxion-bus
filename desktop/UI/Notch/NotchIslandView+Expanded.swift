@@ -21,7 +21,7 @@ import SwiftUI
 struct ExpandedPageInputs: Equatable {
     let providers: [ProviderUsage]
     let todayStats: [String: ProviderHistoryStats]
-    let dailyTokens: [String: [Int]]
+    let dailyTokens: [String: [ProviderDayUsage]]
     let peakHours: [String: Int]
     let historyLoaded: Bool
     let expandedStyle: String
@@ -1303,10 +1303,33 @@ extension NotchIslandView {
     // The backend returns a rolling 14-day series. The compact page displays
     // its trailing seven days; unlike the old decorative sparkline, an empty
     // week still has useful meaning and therefore keeps its labelled frame.
-    func tokenSparklineSeries(for provider: ProviderUsage) -> [Int]? {
+    func tokenSparklineSeries(for provider: ProviderUsage) -> [ProviderDayUsage]? {
         guard let full = model.dailyTokens[provider.provider.lowercased()] else { return nil }
         let series = Array(full.suffix(7))
         return series.count > 1 ? series : nil
+    }
+
+    // Second line of the hover chip: where the day's tokens went.
+    //
+    // Nil collapses the chip back to one line, which is right for a day with
+    // no usage and for a backend that predates the breakdown — there every
+    // component is zero while the total is not, and three zeroes would be a
+    // confident lie about a day we simply have no detail for.
+    //
+    // The cache share is dropped in narrow columns purely for width: the
+    // three-provider layout leaves ~161pt per column, and a third clause
+    // overflows it into the neighbouring provider.
+    func trendDayDetail(_ day: ProviderDayUsage, narrow: Bool) -> String? {
+        guard day.input > 0 || day.output > 0 || day.cacheRead > 0 || day.cacheCreation > 0
+        else { return nil }
+        var parts = [
+            "\(L10n.tr("notch.card.input")) \(formatTokenCount(day.input))",
+            "\(L10n.tr("notch.card.output")) \(formatTokenCount(day.output))"
+        ]
+        if !narrow, let hit = day.cacheHit {
+            parts.append("\(L10n.tr("notch.card.cache")) \(Int((hit * 100).rounded()))%")
+        }
+        return parts.joined(separator: " · ")
     }
 
     func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
@@ -1347,7 +1370,7 @@ extension NotchIslandView {
 
     @ViewBuilder
     func compactUsageTrend(
-        _ series: [Int],
+        _ series: [ProviderDayUsage],
         visual: ProviderVisual,
         narrow: Bool,
         placeholder: Bool = false
@@ -1359,10 +1382,11 @@ extension NotchIslandView {
         let chipLabels = compactTrendLabels(count: series.count, narrow: false)
         let days = series.indices.map { idx in
             CompactTrendDay(
-                value: series[idx],
+                value: series[idx].generated,
                 axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
                 full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
-                amount: formatTokenCount(series[idx])
+                amount: formatTokenCount(series[idx].generated),
+                detail: trendDayDetail(series[idx], narrow: narrow)
             )
         }
         VStack(spacing: 6) {
@@ -1372,7 +1396,7 @@ extension NotchIslandView {
                     .tracking(narrow ? 0.35 : 0.65)
                     .foregroundColor(.white.opacity(0.4))
                 Spacer(minLength: 4)
-                Text(placeholder ? "—" : formatTokenCount(series.reduce(0, +)))
+                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.generated }))
                     .font(.system(size: narrow ? 10 : 11, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
@@ -1554,7 +1578,9 @@ extension NotchIslandView {
         let state = quotaState(for: p)
         // 14-day series: the trailing 7 are displayed, and the prior 7 form
         // the comparison baseline. An old backend sends 7 → no baseline.
-        let fullSeries = model.dailyTokens[p.provider.lowercased()] ?? []
+        // This page's chart and tiles work in plain totals; the per-day
+        // breakdown is only read by the compact page's hover chip.
+        let fullSeries = (model.dailyTokens[p.provider.lowercased()] ?? []).map(\.generated)
         let series = Array(fullSeries.suffix(7))
         // The trend and analytics are permanent layout modules. Before
         // history arrives (or for a genuinely empty history), seven zero days
@@ -1921,7 +1947,7 @@ extension NotchIslandView {
                             .frame(height: 0.5)
                             .padding(.bottom, 10)
                         compactUsageTrend(
-                            sparkline ?? Array(repeating: 0, count: 7),
+                            sparkline ?? Array(repeating: .empty, count: 7),
                             visual: visual,
                             narrow: model.providers.count > 1,
                             placeholder: !model.historyLoaded

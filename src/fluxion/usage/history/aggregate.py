@@ -265,6 +265,16 @@ def aggregate(
                 "provider": p,
                 "total_tokens": bucket.total_tokens,
                 "generated_tokens": bucket.generated_tokens,
+                # The notch's per-day hover breakdown. Cost is deliberately
+                # absent: it prices per entry (rates vary per turn), and this
+                # series spans 14 days regardless of `window`, so carrying it
+                # would put a full 14-day pricing pass on every poll — the
+                # notch refetches this payload every 30s for a figure that is
+                # only on screen while a bar is hovered.
+                "input_tokens": bucket.input_tokens,
+                "output_tokens": bucket.output_tokens,
+                "cache_read_tokens": bucket.cache_read_tokens,
+                "cache_creation_tokens": bucket.cache_creation_tokens,
             }
             for (d, p), bucket in sorted(by_provider_day.items())
         ],

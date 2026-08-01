@@ -11,6 +11,9 @@ struct CompactTrendDay {
     let full: String
     /// Preformatted token total for the hover chip.
     let amount: String
+    /// Where the day's tokens went ("输入 1.2M · 输出 260k"), or nil when the
+    /// backend sent no breakdown for it — the chip then stays a single line.
+    let detail: String?
 }
 
 /// The seven bars of the compact trend, split out of `compactUsageTrend` so
@@ -29,6 +32,10 @@ struct CompactTrendBars: View {
     let brandColor: Color
     let narrow: Bool
     let placeholder: Bool
+
+    /// Height of the box the chip is bottom-aligned in. Only needs to exceed
+    /// the tallest chip (two lines, ~33pt); the box itself never draws.
+    private static let chipBox: CGFloat = 44
 
     @State private var hovered: Int?
 
@@ -83,19 +90,23 @@ struct CompactTrendBars: View {
         .overlay(alignment: .top) {
             if let idx = hovered, days.indices.contains(idx) {
                 chip(for: days[idx])
-                    // Lifted into the gap above the trend header rather than
-                    // onto it: the chip is opaque, and covering the header
-                    // would take away the week total just as the reader gains
-                    // a day to compare against it. Measured up from the top of
-                    // the bar row — 6 (stack spacing) + ~13 (header) puts the
-                    // chip's foot at the header's top edge, and the ~23pt of
-                    // padding above the header (see the module's call site)
-                    // swallows the rest, so only the hairline divider is hidden.
+                    // Lifted clear of the trend header rather than onto it: the
+                    // chip is opaque, and covering the header would take away
+                    // the week total just as the reader gains a day to compare
+                    // against it.
+                    //
+                    // Sitting the chip at the bottom of a fixed box, then
+                    // lifting the whole box, pins its foot to one place whether
+                    // it renders one line or two — a bare offset could only
+                    // clear the header for one of the two heights. The 21 is
+                    // what sits between: 6pt of stack spacing, the ~13pt
+                    // header, and 2pt of daylight.
                     //
                     // Drawing outside this module is safe: nothing clips until
                     // the card silhouette, and the trend block is a later
                     // sibling in the column stack, so it composites on top.
-                    .offset(y: -40)
+                    .frame(height: Self.chipBox, alignment: .bottom)
+                    .offset(y: -(Self.chipBox + 21))
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
@@ -117,27 +128,41 @@ struct CompactTrendBars: View {
 
     @ViewBuilder
     private func chip(for day: CompactTrendDay) -> some View {
-        HStack(spacing: 4) {
-            Text(day.full)
-                .foregroundColor(.white.opacity(0.6))
-            Text(day.amount)
-                .monospacedDigit()
-                .foregroundColor(.white.opacity(0.95))
+        VStack(spacing: 2) {
+            HStack(spacing: 4) {
+                Text(day.full)
+                    .foregroundColor(.white.opacity(0.6))
+                Text(day.amount)
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(0.95))
+            }
+            .font(.system(size: narrow ? 9.5 : 10.5, weight: .bold))
+
+            if let detail = day.detail {
+                Text(detail)
+                    .font(.system(size: narrow ? 9 : 9.5, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(0.55))
+            }
         }
-        .font(.system(size: narrow ? 9.5 : 10.5, weight: .bold))
         .lineLimit(1)
         // The overlay proposes the row's width; without this the chip would
         // stretch to fill it instead of hugging its text.
         .fixedSize()
         .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.black.opacity(0.82))
+                .fill(Color.black.opacity(0.92))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                 )
+                // A two-line chip is taller than the gap above the header, so
+                // it necessarily crosses the metric tiles. The shadow makes
+                // that read as one surface floating over another rather than
+                // as a label that has been cut in half.
+                .shadow(color: .black.opacity(0.6), radius: 7, y: 3)
         )
     }
 }
