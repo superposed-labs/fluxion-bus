@@ -11,9 +11,9 @@ struct CompactTrendDay {
     let full: String
     /// Preformatted token total for the hover chip.
     let amount: String
-    /// Where the day's tokens went ("输入 1.2M · 输出 260k"), or nil when the
-    /// backend sent no breakdown for it — the chip then stays a single line.
-    let detail: String?
+    /// What the day was worth at API rates ("≈$21.08"), or nil when it has no
+    /// priced usage — the chip then shows the total alone.
+    let cost: String?
 }
 
 /// The seven bars of the compact trend, split out of `compactUsageTrend` so
@@ -34,7 +34,7 @@ struct CompactTrendBars: View {
     let placeholder: Bool
 
     /// Height of the box the chip is bottom-aligned in. Only needs to exceed
-    /// the tallest chip (two lines, ~33pt); the box itself never draws.
+    /// the chip (~19pt); the box itself never draws.
     private static let chipBox: CGFloat = 44
 
     @State private var hovered: Int?
@@ -96,10 +96,10 @@ struct CompactTrendBars: View {
                     // against it.
                     //
                     // Sitting the chip at the bottom of a fixed box, then
-                    // lifting the whole box, pins its foot to one place whether
-                    // it renders one line or two — a bare offset could only
-                    // clear the header for one of the two heights. The 21 is
-                    // what sits between: 6pt of stack spacing, the ~13pt
+                    // lifting the whole box, pins its foot to one place no
+                    // matter how tall the chip renders — which varies with the
+                    // language and with whether the day carries a cost. The 21
+                    // is what sits between: 6pt of stack spacing, the ~13pt
                     // header, and 2pt of daylight.
                     //
                     // Drawing outside this module is safe: nothing clips until
@@ -128,29 +128,27 @@ struct CompactTrendBars: View {
 
     @ViewBuilder
     private func chip(for day: CompactTrendDay) -> some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 4) {
-                Text(day.full)
-                    .foregroundColor(.white.opacity(0.6))
-                Text(day.amount)
+        HStack(spacing: 4) {
+            Text(day.full)
+                .foregroundColor(.white.opacity(0.6))
+            Text(day.amount)
+                .monospacedDigit()
+                .foregroundColor(.white.opacity(0.95))
+            if let cost = day.cost {
+                Text("·")
+                    .foregroundColor(.white.opacity(0.3))
+                Text(cost)
                     .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.95))
-            }
-            .font(.system(size: narrow ? 9.5 : 10.5, weight: .bold))
-
-            if let detail = day.detail {
-                Text(detail)
-                    .font(.system(size: narrow ? 9 : 9.5, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.white.opacity(0.72))
             }
         }
+        .font(.system(size: narrow ? 9.5 : 10.5, weight: .bold))
         .lineLimit(1)
         // The overlay proposes the row's width; without this the chip would
         // stretch to fill it instead of hugging its text.
         .fixedSize()
         .padding(.horizontal, 7)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.black.opacity(0.92))
@@ -158,11 +156,6 @@ struct CompactTrendBars: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                 )
-                // A two-line chip is taller than the gap above the header, so
-                // it necessarily crosses the metric tiles. The shadow makes
-                // that read as one surface floating over another rather than
-                // as a label that has been cut in half.
-                .shadow(color: .black.opacity(0.6), radius: 7, y: 3)
         )
     }
 }

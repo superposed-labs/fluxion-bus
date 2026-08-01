@@ -1309,27 +1309,17 @@ extension NotchIslandView {
         return series.count > 1 ? series : nil
     }
 
-    // Second line of the hover chip: where the day's tokens went.
+    // What the day was worth at API rates, for the hover chip.
     //
-    // Nil collapses the chip back to one line, which is right for a day with
-    // no usage and for a backend that predates the breakdown — there every
-    // component is zero while the total is not, and three zeroes would be a
-    // confident lie about a day we simply have no detail for.
-    //
-    // The cache share is dropped in narrow columns purely for width: the
-    // three-provider layout leaves ~161pt per column, and a third clause
-    // overflows it into the neighbouring provider.
-    func trendDayDetail(_ day: ProviderDayUsage, narrow: Bool) -> String? {
-        guard day.input > 0 || day.output > 0 || day.cacheRead > 0 || day.cacheCreation > 0
-        else { return nil }
-        var parts = [
-            "\(L10n.tr("notch.card.input")) \(formatTokenCount(day.input))",
-            "\(L10n.tr("notch.card.output")) \(formatTokenCount(day.output))"
-        ]
-        if !narrow, let hit = day.cacheHit {
-            parts.append("\(L10n.tr("notch.card.cache")) \(Int((hit * 100).rounded()))%")
-        }
-        return parts.joined(separator: " · ")
+    // Nil drops the clause entirely rather than printing $0: a zero reaches
+    // here both for a day with no usage and for a day whose models carry no
+    // price (a local model, or a backend predating per-day cost), and "$0.00"
+    // would state as fact something we either don't know or shouldn't imply.
+    // `≈` mirrors the today tiles, where it marks a subscription's notional
+    // API value as distinct from an API user's actual spend.
+    func trendDayCost(_ day: ProviderDayUsage, isSub: Bool) -> String? {
+        guard day.cost > 0 else { return nil }
+        return String(format: isSub ? "≈$%.2f" : "~$%.2f", day.cost)
     }
 
     func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
@@ -1373,6 +1363,7 @@ extension NotchIslandView {
         _ series: [ProviderDayUsage],
         visual: ProviderVisual,
         narrow: Bool,
+        isSub: Bool,
         placeholder: Bool = false
     ) -> some View {
         let axisLabels = compactTrendLabels(count: series.count, narrow: narrow)
@@ -1386,7 +1377,7 @@ extension NotchIslandView {
                 axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
                 full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
                 amount: formatTokenCount(series[idx].generated),
-                detail: trendDayDetail(series[idx], narrow: narrow)
+                cost: trendDayCost(series[idx], isSub: isSub)
             )
         }
         VStack(spacing: 6) {
@@ -1950,6 +1941,7 @@ extension NotchIslandView {
                             sparkline ?? Array(repeating: .empty, count: 7),
                             visual: visual,
                             narrow: model.providers.count > 1,
+                            isSub: isSub,
                             placeholder: !model.historyLoaded
                         )
                     }

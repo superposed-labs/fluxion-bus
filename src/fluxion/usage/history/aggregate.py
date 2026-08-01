@@ -162,29 +162,41 @@ def aggregate(
     provider_hour_cutoff = today - timedelta(days=PROVIDER_HOUR_SERIES_DAYS - 1)
     by_provider_day: dict[tuple[str, str], _Bucket] = {}
     by_provider_hour: dict[tuple[str, int], _Bucket] = {}
+    provider_day_cost: dict[tuple[str, str], float] = {}
     for e in unique_entries.values():
         local = e.ts.astimezone(tz) if tz is not None else e.ts.astimezone()
         day = local.date()
-        by_day_full.setdefault(day.isoformat(), _Bucket()).add(e)
-        if day >= provider_day_cutoff:
-            by_provider_day.setdefault((day.isoformat(), e.provider), _Bucket()).add(e)
+        day_key = day.isoformat()
+        by_day_full.setdefault(day_key, _Bucket()).add(e)
+        in_provider_day = day >= provider_day_cutoff
+        if in_provider_day:
+            by_provider_day.setdefault((day_key, e.provider), _Bucket()).add(e)
         if day >= provider_hour_cutoff:
             by_provider_hour.setdefault((e.provider, local.hour), _Bucket()).add(e)
 
-        if cutoff is not None and day < cutoff:
+        in_window = cutoff is None or day >= cutoff
+        # The provider-day series runs 14 days regardless of `window`, so an
+        # entry can need pricing for that series while falling outside the
+        # requested window. Resolve the rate once and spend it on both.
+        if not (in_provider_day or in_window):
+            continue
+        # Price each turn at the rate in effect on the day it ran, so a past
+        # price change (or promo) is reflected instead of back-pricing
+        # everything at today's rate. Fast-mode turns price at the premium.
+        rate = pricing._rates_for(e.provider, e.model, day_key, e.is_fast)
+        cost = pricing._entry_cost(e, rate)
+        if in_provider_day:
+            key = (day_key, e.provider)
+            provider_day_cost[key] = provider_day_cost.get(key, 0.0) + cost
+        if not in_window:
             continue
         providers.add(e.provider)
         total.add(e)
         by_provider.setdefault(e.provider, _Bucket()).add(e)
-        by_day.setdefault(day.isoformat(), _Bucket()).add(e)
+        by_day.setdefault(day_key, _Bucket()).add(e)
         by_hour[local.hour].add(e)
         by_model.setdefault(e.model, _Bucket()).add(e)
         model_provider.setdefault(e.model, e.provider)
-        # Price each turn at the rate in effect on the day it ran, so a past
-        # price change (or promo) is reflected instead of back-pricing
-        # everything at today's rate. Fast-mode turns price at the premium.
-        rate = pricing._rates_for(e.provider, e.model, day.isoformat(), e.is_fast)
-        cost = pricing._entry_cost(e, rate)
         context_tier = pricing._context_tier_for_entry(e, rate)
         total_cost += cost
         model_cost[e.model] = model_cost.get(e.model, 0.0) + cost
@@ -265,16 +277,10 @@ def aggregate(
                 "provider": p,
                 "total_tokens": bucket.total_tokens,
                 "generated_tokens": bucket.generated_tokens,
-                # The notch's per-day hover breakdown. Cost is deliberately
-                # absent: it prices per entry (rates vary per turn), and this
-                # series spans 14 days regardless of `window`, so carrying it
-                # would put a full 14-day pricing pass on every poll — the
-                # notch refetches this payload every 30s for a figure that is
-                # only on screen while a bar is hovered.
-                "input_tokens": bucket.input_tokens,
-                "output_tokens": bucket.output_tokens,
-                "cache_read_tokens": bucket.cache_read_tokens,
-                "cache_creation_tokens": bucket.cache_creation_tokens,
+                # What the notch's per-day hover reports alongside the total.
+                # Priced like every other cost here: per entry, at the rate in
+                # effect on the day it ran.
+                "cost": round(provider_day_cost.get((d, p), 0.0), 4),
             }
             for (d, p), bucket in sorted(by_provider_day.items())
         ],

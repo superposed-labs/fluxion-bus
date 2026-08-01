@@ -33,28 +33,14 @@ struct ProviderHistoryStats: Equatable {
 /// One day of one provider's usage in the trailing 14-day series.
 ///
 /// `generated` is the measure the bars are drawn from and the one the headline
-/// figure uses, so a bar and the big number above it always agree. The rest
-/// backs the per-day hover breakdown. Cost is absent by design — it prices per
-/// entry, and the backend won't run a 14-day pricing pass on a 30s poll for a
-/// figure that's only on screen while a bar is hovered.
+/// figure uses, so a bar and the big number above it always agree. `cost` is
+/// what that day was worth at API rates — on a subscription it is notional,
+/// the same "API value" the today tiles report, not money spent.
 struct ProviderDayUsage: Equatable {
     let generated: Int
-    let input: Int
-    let output: Int
-    let cacheRead: Int
-    let cacheCreation: Int
+    let cost: Double
 
-    /// Share of input-side context served from cache rather than sent fresh.
-    /// Nil when the day has no input-side tokens at all, which is not the same
-    /// as a 0% hit rate and must not render as one.
-    var cacheHit: Double? {
-        let denom = cacheRead + input + cacheCreation
-        return denom > 0 ? Double(cacheRead) / Double(denom) : nil
-    }
-
-    static let empty = ProviderDayUsage(
-        generated: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0
-    )
+    static let empty = ProviderDayUsage(generated: 0, cost: 0)
 }
 
 // MARK: - Notch Data Model
@@ -556,12 +542,9 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 // Same measure as the headline (see HistoryModelStat), so
                 // today's bar always matches the big number above it.
                 let generated_tokens: Int
-                // Optional: a backend that predates the breakdown still decodes,
+                // Optional: a backend that predates per-day cost still decodes,
                 // and the hover chip falls back to the day's total alone.
-                let input_tokens: Int?
-                let output_tokens: Int?
-                let cache_read_tokens: Int?
-                let cache_creation_tokens: Int?
+                let cost: Double?
             }
 
             struct ProviderHourStat: Codable {
@@ -624,10 +607,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                         let prior = byProviderDay[pKey]?[row.date] ?? .empty
                         byProviderDay[pKey, default: [:]][row.date] = ProviderDayUsage(
                             generated: prior.generated + row.generated_tokens,
-                            input: prior.input + (row.input_tokens ?? 0),
-                            output: prior.output + (row.output_tokens ?? 0),
-                            cacheRead: prior.cacheRead + (row.cache_read_tokens ?? 0),
-                            cacheCreation: prior.cacheCreation + (row.cache_creation_tokens ?? 0)
+                            cost: prior.cost + (row.cost ?? 0)
                         )
                     }
                     for (pKey, days) in byProviderDay {
