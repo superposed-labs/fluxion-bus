@@ -9,6 +9,46 @@ milestones.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-01
+
+### Added
+
+- **Provider model health and catalog management** — Fluxion now detects
+  retired or unreadable provider models, keeps usable protocol-compatible
+  models available, and exposes commands for inspecting and removing Codex
+  catalog pins.
+- **Provider Gateway supervision** — added a launchd service for keeping the
+  local provider gateway running.
+- **URL-persisted console state** — the web console now keeps its view,
+  filters, and selection in the URL so refreshes and shared links preserve
+  context.
+- **Richer Notch quota history** — seven-day usage bars now show both usage
+  amounts and estimated value.
+- **Dual-pool reset details** — hovering the Notch ring reveals the 5-hour
+  reset state for both Antigravity pools, including the window currently
+  blocking use.
+
+### Changed
+
+- **Usage accounting and history** — refreshed GPT-5.6 pricing and improved
+  usage-history parsing, caching, and aggregation for more accurate cost and
+  quota views.
+- **Notch quota presentation** — expanded quota surfaces now make provider
+  labels, reset windows, and localized values clearer.
+
+### Fixed
+
+- **Sub-agent lifecycle** — cleaned up escaped processes, wedged runs, and
+  interrupted spawns more reliably while preserving cancellation reports.
+- **Provider Gateway routing** — improved visibility and handling of retired,
+  unavailable, and protocol-incompatible models.
+- **Workspace queue feedback** — runs waiting behind a busy workspace now
+  report that state explicitly.
+- **Console refresh behavior** — refreshing the web console preserves the
+  current page and view state.
+- **Usage attribution** — Codex activity that was not actually billed is no
+  longer counted as OpenAI usage.
+
 ## [1.1.0] - 2026-07-29
 
 ### Added
@@ -267,7 +307,9 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.8...v1.0.9
