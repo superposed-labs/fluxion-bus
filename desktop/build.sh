@@ -210,6 +210,7 @@ swiftc -O \
     desktop/UI/WelcomeWindow.swift \
     desktop/UI/Notch/NotchQuotaPresenter.swift \
     desktop/UI/Notch/NotchControls.swift \
+    desktop/UI/Notch/CompactTrendBars.swift \
     desktop/UI/Notch/NotchWindowController.swift \
     desktop/UI/Notch/NotchIslandView+Collapsed.swift \
     desktop/UI/Notch/NotchIslandView+Peek.swift \

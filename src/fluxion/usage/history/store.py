@@ -100,7 +100,8 @@ class UsageStore:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != _SCHEMA_VERSION:
             conn.executescript(
-                "DROP TABLE IF EXISTS entries; DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS meta;"
+                "DROP TABLE IF EXISTS entries; DROP TABLE IF EXISTS files; "
+                "DROP TABLE IF EXISTS meta; DROP TABLE IF EXISTS day_cost;"
             )
         conn.executescript(
             """
@@ -118,6 +119,19 @@ class UsageStore:
             );
             CREATE INDEX IF NOT EXISTS ix_entries_day ON entries(day);
             CREATE INDEX IF NOT EXISTS ix_entries_path ON entries(path);
+            -- Per-day cost for the notch's trailing series. Pricing runs per
+            -- entry, and that series is 14 days wide however narrow the
+            -- requested window is, so recomputing it on every poll would cost
+            -- ~290ms against a real history. A closed day's cost cannot move
+            -- on its own, so it is cached and re-derived only when its entry
+            -- count changes or the price table does (see _provider_day_costs).
+            -- Added without a schema bump: the table creates itself on an
+            -- existing database, and the DROP above keeps a future bump clean.
+            CREATE TABLE IF NOT EXISTS day_cost (
+                day TEXT NOT NULL, provider TEXT NOT NULL,
+                cost REAL NOT NULL, entries INTEGER NOT NULL, prices TEXT NOT NULL,
+                PRIMARY KEY (day, provider)
+            );
             """
         )
         conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
@@ -209,7 +223,8 @@ class UsageStore:
         if row is not None and row[0] != marker:
             # Stored local day/hour no longer match the active timezone; the
             # cheapest correct fix is to re-derive everything from scratch.
-            conn.executescript("DELETE FROM entries; DELETE FROM files;")
+            # day_cost is keyed by local day, so it goes with them.
+            conn.executescript("DELETE FROM entries; DELETE FROM files; DELETE FROM day_cost;")
         conn.execute(
             "INSERT INTO meta(key,value) VALUES('tz',?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -512,6 +527,8 @@ class UsageStore:
                 bucket.messages = n
                 by_provider_day[(day, provider)] = bucket
 
+            provider_day_cost = self._provider_day_costs(conn, by_provider_day, provider_day_cutoff)
+
             # Provider-specific trailing-seven-day hourly activity. This is
             # deliberately independent of the requested window, just like the
             # notch's provider-day series above.
@@ -545,9 +562,87 @@ class UsageStore:
             model_sessions,
             by_day_full,
             by_provider_day,
+            provider_day_cost,
             by_provider_hour,
             by_hour_rows,
         )
+
+    def _provider_day_costs(
+        self,
+        conn: sqlite3.Connection,
+        by_provider_day: dict[tuple[str, str], _Bucket],
+        cutoff: str,
+    ) -> dict[tuple[str, str], float]:
+        """Cost per (day, provider) over the trailing series, mostly cached.
+
+        A day that has stopped receiving entries has a settled cost, so the
+        only inputs that can change it are its own entry count and the price
+        table. Both are cheap to compare, which leaves the recompute to today
+        (whose count moves constantly) instead of all fourteen days.
+        """
+        prices = str(pricing._load_prices().get("updated_at"))
+        cached = {
+            (day, provider): (cost, entries, stamp)
+            for day, provider, cost, entries, stamp in conn.execute(
+                "SELECT day, provider, cost, entries, prices FROM day_cost WHERE day >= ?",
+                (cutoff,),
+            )
+        }
+
+        costs: dict[tuple[str, str], float] = {}
+        stale_days: set[str] = set()
+        for key, bucket in by_provider_day.items():
+            hit = cached.get(key)
+            if hit is not None and hit[1] == bucket.messages and hit[2] == prices:
+                costs[key] = hit[0]
+            else:
+                stale_days.add(key[0])
+
+        if stale_days:
+            placeholders = ",".join("?" * len(stale_days))
+            rows = conn.execute(
+                f"""SELECT day, provider, model, is_fast, i, o, cc, cc1h, cr, bi
+                    FROM entries WHERE day IN ({placeholders})""",
+                tuple(sorted(stale_days)),
+            ).fetchall()
+            now = datetime.now(UTC)
+            recomputed: dict[tuple[str, str], float] = {
+                key: 0.0 for key in by_provider_day if key[0] in stale_days
+            }
+            for day, provider, model, is_fast, si, so, scc, scc1h, scr, sbi in rows:
+                entry = UsageEntry(
+                    provider=provider,
+                    ts=now,
+                    model=model,
+                    session_id="",
+                    input_tokens=si,
+                    output_tokens=so,
+                    cache_creation_tokens=scc,
+                    cache_read_tokens=scr,
+                    dedup_key="",
+                    billed_input_tokens_total=sbi,
+                    cache_creation_1h_tokens=scc1h,
+                    is_fast=bool(is_fast),
+                )
+                rate = pricing._rates_for(provider, model, day, bool(is_fast))
+                key = (day, provider)
+                recomputed[key] = recomputed.get(key, 0.0) + pricing._entry_cost(entry, rate)
+            costs.update(recomputed)
+            conn.executemany(
+                "INSERT INTO day_cost(day, provider, cost, entries, prices) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(day, provider) DO UPDATE SET "
+                "cost=excluded.cost, entries=excluded.entries, prices=excluded.prices",
+                [
+                    (day, provider, cost, by_provider_day[(day, provider)].messages, prices)
+                    for (day, provider), cost in recomputed.items()
+                ],
+            )
+            # The series only ever looks back `cutoff`; anything older is dead
+            # weight that would otherwise grow without bound.
+            conn.execute("DELETE FROM day_cost WHERE day < ?", (cutoff,))
+            conn.commit()
+
+        return costs
 
     @staticmethod
     def _payload(
@@ -567,6 +662,7 @@ class UsageStore:
         model_sessions,
         by_day_full,
         by_provider_day,
+        provider_day_cost,
         by_provider_hour,
         by_hour_rows,
     ) -> dict[str, Any]:
@@ -640,6 +736,9 @@ class UsageStore:
                     "provider": p,
                     "total_tokens": bucket.total_tokens,
                     "generated_tokens": bucket.generated_tokens,
+                    # Mirrors aggregate.py's payload; sourced from the day_cost
+                    # cache rather than a fresh 14-day pricing pass.
+                    "cost": round(provider_day_cost.get((d, p), 0.0), 4),
                 }
                 for (d, p), bucket in sorted(by_provider_day.items())
             ],

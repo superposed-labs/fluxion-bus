@@ -294,6 +294,68 @@ def test_aggregate_totals_and_breakdowns(fixed_prices):
     assert out["by_model"][0]["model"] == "sonnet"  # sorted desc
 
 
+def _priced_day_entry(day: int, key: str, *, output: int) -> UsageEntry:
+    return UsageEntry(
+        provider="claude",
+        ts=datetime(2026, 6, day, 12, tzinfo=UTC),
+        model="sonnet",
+        session_id="s",
+        input_tokens=1_000_000,
+        output_tokens=output,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        dedup_key=key,
+    )
+
+
+def test_provider_day_series_carries_cost_outside_the_window(fixed_prices):
+    # The notch asks for window=1d but draws 14 days of bars, so a day older
+    # than the window still needs its cost — that is the whole reason the
+    # pricing pass can't simply piggyback on the windowed one.
+    entries = [
+        _priced_day_entry(9, "d1", output=0),
+        _priced_day_entry(9, "d2", output=0),
+        _priced_day_entry(4, "old", output=0),
+    ]
+
+    out = aggregate(entries, window="1d", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+    rows = {r["date"]: r for r in out["by_provider_day"]}
+
+    # sonnet: $3/M input. Two turns on the 9th, one on the 4th.
+    assert rows["2026-06-09"]["cost"] == pytest.approx(6.0)
+    assert rows["2026-06-04"]["cost"] == pytest.approx(3.0)
+    # The windowed total still only counts the day inside window=1d.
+    assert out["totals"]["cost"] == pytest.approx(0.0)
+
+
+def test_provider_day_cost_cache_follows_new_entries(tmp_path: Path, fixed_prices):
+    """A cached day must not go stale when that day gains entries.
+
+    Today's row is the one that moves between polls, so a cache that only
+    keyed on the date would keep serving the first poll's cost all day.
+    """
+    from fluxion.usage.history.store import UsageStore
+
+    store = UsageStore(tmp_path / "usage.db")
+    now = datetime(2026, 6, 10, 23, tzinfo=UTC)
+
+    def costs_for(day: str) -> float:
+        payload = store.aggregate("1d", tz=UTC, now=now)
+        return next(r["cost"] for r in payload["by_provider_day"] if r["date"] == day)
+
+    def seed(path: str, entry: UsageEntry) -> None:
+        conn = store._db()
+        store._upsert_entries(conn, Path(path), [entry], UTC)
+        conn.commit()
+
+    seed("seed.jsonl", _priced_day_entry(10, "a", output=0))
+    assert costs_for("2026-06-10") == pytest.approx(3.0)
+
+    # Same day, another turn: the cached cost has to be re-derived.
+    seed("seed2.jsonl", _priced_day_entry(10, "b", output=0))
+    assert costs_for("2026-06-10") == pytest.approx(6.0)
+
+
 def test_provider_hour_series_is_trailing_seven_days_and_provider_scoped():
     entries = [
         _entry("2026-06-05T14:00:00Z", "c1"),

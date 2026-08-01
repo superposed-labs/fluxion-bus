@@ -21,7 +21,7 @@ import SwiftUI
 struct ExpandedPageInputs: Equatable {
     let providers: [ProviderUsage]
     let todayStats: [String: ProviderHistoryStats]
-    let dailyTokens: [String: [Int]]
+    let dailyTokens: [String: [ProviderDayUsage]]
     let peakHours: [String: Int]
     let historyLoaded: Bool
     let expandedStyle: String
@@ -1303,10 +1303,23 @@ extension NotchIslandView {
     // The backend returns a rolling 14-day series. The compact page displays
     // its trailing seven days; unlike the old decorative sparkline, an empty
     // week still has useful meaning and therefore keeps its labelled frame.
-    func tokenSparklineSeries(for provider: ProviderUsage) -> [Int]? {
+    func tokenSparklineSeries(for provider: ProviderUsage) -> [ProviderDayUsage]? {
         guard let full = model.dailyTokens[provider.provider.lowercased()] else { return nil }
         let series = Array(full.suffix(7))
         return series.count > 1 ? series : nil
+    }
+
+    // What the day was worth at API rates, for the hover chip.
+    //
+    // Nil drops the clause entirely rather than printing $0: a zero reaches
+    // here both for a day with no usage and for a day whose models carry no
+    // price (a local model, or a backend predating per-day cost), and "$0.00"
+    // would state as fact something we either don't know or shouldn't imply.
+    // `≈` mirrors the today tiles, where it marks a subscription's notional
+    // API value as distinct from an API user's actual spend.
+    func trendDayCost(_ day: ProviderDayUsage, isSub: Bool) -> String? {
+        guard day.cost > 0 else { return nil }
+        return String(format: isSub ? "≈$%.2f" : "~$%.2f", day.cost)
     }
 
     func compactTrendLabels(count: Int, narrow: Bool) -> [String] {
@@ -1347,13 +1360,26 @@ extension NotchIslandView {
 
     @ViewBuilder
     func compactUsageTrend(
-        _ series: [Int],
+        _ series: [ProviderDayUsage],
         visual: ProviderVisual,
         narrow: Bool,
+        isSub: Bool,
         placeholder: Bool = false
     ) -> some View {
-        let peak = max(1, series.max() ?? 1)
-        let labels = compactTrendLabels(count: series.count, narrow: narrow)
+        let axisLabels = compactTrendLabels(count: series.count, narrow: narrow)
+        // The hover chip always spells the day out ("周三" / "Wed") even where
+        // the axis below the bars is down to a single character, so a value
+        // read out of the chip can't be attached to the wrong day.
+        let chipLabels = compactTrendLabels(count: series.count, narrow: false)
+        let days = series.indices.map { idx in
+            CompactTrendDay(
+                value: series[idx].generated,
+                axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
+                full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
+                amount: formatTokenCount(series[idx].generated),
+                cost: trendDayCost(series[idx], isSub: isSub)
+            )
+        }
         VStack(spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(L10n.tr("notch.card.last_7_days").uppercased())
@@ -1361,50 +1387,18 @@ extension NotchIslandView {
                     .tracking(narrow ? 0.35 : 0.65)
                     .foregroundColor(.white.opacity(0.4))
                 Spacer(minLength: 4)
-                Text(placeholder ? "—" : formatTokenCount(series.reduce(0, +)))
+                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.generated }))
                     .font(.system(size: narrow ? 10 : 11, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
             }
 
-            HStack(alignment: .bottom, spacing: narrow ? 2 : 4) {
-                ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
-                    let isToday = idx == series.count - 1
-                    VStack(spacing: 4) {
-                        ZStack(alignment: .bottom) {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.08))
-                                .frame(height: 0.5)
-                            TopRoundedBar(radius: 2)
-                                .fill(placeholder
-                                    ? Color.white.opacity(0.08)
-                                    : (isToday ? Color(visual.brandColor) : Color.white.opacity(0.22)))
-                                .frame(
-                                    width: narrow ? 8 : 11,
-                                    height: placeholder
-                                        ? 5
-                                        : (value == 0 ? 1 : max(isToday ? 5 : 3, 25 * CGFloat(value) / CGFloat(peak)))
-                                )
-                                .shadow(
-                                    color: !placeholder && isToday
-                                        ? Color(visual.brandColor).opacity(0.45)
-                                        : .clear,
-                                    radius: 3
-                                )
-                        }
-                        .frame(height: 25, alignment: .bottom)
-
-                        Text(labels[idx])
-                            .font(.system(size: narrow ? 6.5 : 7.5, weight: isToday ? .bold : .medium))
-                            .foregroundColor(placeholder
-                                ? .white.opacity(0.18)
-                                : (isToday ? Color(visual.brandColor).opacity(0.9) : .white.opacity(0.34)))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
+            CompactTrendBars(
+                days: days,
+                brandColor: Color(visual.brandColor),
+                style: narrow ? .narrowColumn : .wideColumn,
+                placeholder: placeholder
+            )
         }
     }
 
@@ -1575,12 +1569,16 @@ extension NotchIslandView {
         let state = quotaState(for: p)
         // 14-day series: the trailing 7 are displayed, and the prior 7 form
         // the comparison baseline. An old backend sends 7 → no baseline.
-        let fullSeries = model.dailyTokens[p.provider.lowercased()] ?? []
-        let series = Array(fullSeries.suffix(7))
+        let fullDays = model.dailyTokens[p.provider.lowercased()] ?? []
+        // The analytics tiles work in plain totals; the chart also needs each
+        // day's cost, for the hover chip.
+        let fullSeries = fullDays.map(\.generated)
+        let days = Array(fullDays.suffix(7))
         // The trend and analytics are permanent layout modules. Before
         // history arrives (or for a genuinely empty history), seven zero days
         // preserve their final geometry instead of removing the whole block.
-        let displaySeries = series.count > 1 ? series : Array(repeating: 0, count: 7)
+        let displayDays = days.count > 1 ? days : Array(repeating: .empty, count: 7)
+        let displaySeries = displayDays.map(\.generated)
         let prevTotal = fullSeries.count >= 14 ? fullSeries.prefix(7).reduce(0, +) : 0
         let weekTotal = displaySeries.reduce(0, +)
         let denom = stats.cacheRead + stats.input + stats.cacheCreation
@@ -1598,6 +1596,7 @@ extension NotchIslandView {
                     stats: stats,
                     cachePct: cachePct,
                     denom: denom,
+                    days: displayDays,
                     series: displaySeries,
                     weekTotal: weekTotal,
                     prevTotal: prevTotal
@@ -1638,6 +1637,7 @@ extension NotchIslandView {
         stats: ProviderHistoryStats,
         cachePct: Int?,
         denom: Int,
+        days: [ProviderDayUsage],
         series: [Int],
         weekTotal: Int,
         prevTotal: Int
@@ -1678,7 +1678,13 @@ extension NotchIslandView {
             .frame(height: 20)
             .padding(.top, 10)
 
-            soloWeekSection(series: series, weekTotal: weekTotal, prevTotal: prevTotal, visual: visual)
+            soloWeekSection(
+                days: days,
+                weekTotal: weekTotal,
+                prevTotal: prevTotal,
+                visual: visual,
+                isSub: isSubscription(for: p)
+            )
                 .padding(.top, 12)
 
             soloUsageTiles(provider: p.provider, series: series, weekTotal: weekTotal)
@@ -1708,9 +1714,14 @@ extension NotchIslandView {
     // labels. The explicit time range matches the backend's trailing window;
     // calling it "this week" would incorrectly imply a calendar-week total.
     @ViewBuilder
-    func soloWeekSection(series: [Int], weekTotal: Int, prevTotal: Int, visual: ProviderVisual) -> some View {
-        let peak = max(1, series.max() ?? 1)
-        let labels = compactTrendLabels(count: series.count, narrow: false)
+    func soloWeekSection(
+        days: [ProviderDayUsage],
+        weekTotal: Int,
+        prevTotal: Int,
+        visual: ProviderVisual,
+        isSub: Bool
+    ) -> some View {
+        let labels = compactTrendLabels(count: days.count, narrow: false)
         // Week-over-week: this week's total against the 7 days before it.
         // Consumption up reads warm (spending faster), down reads green.
         let delta: Int? = prevTotal > 0
@@ -1747,38 +1758,24 @@ extension NotchIslandView {
                     .foregroundColor(.white)
             }
 
-            ZStack(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.09))
-                    .frame(height: 0.5)
-                HStack(alignment: .bottom, spacing: 4) {
-                    ForEach(Array(series.enumerated()), id: \.offset) { idx, value in
-                        let isToday = idx == series.count - 1
-                        TopRoundedBar(radius: 2)
-                            .fill(isToday ? Color(visual.brandColor) : Color.white.opacity(0.12))
-                            .frame(height: max(isToday ? 6 : 3, 35 * CGFloat(value) / CGFloat(peak)))
-                            .frame(maxWidth: .infinity)
-                            .shadow(color: isToday ? Color(visual.brandColor).opacity(0.5) : .clear, radius: 3)
-                    }
-                }
-            }
-            .frame(height: 35, alignment: .bottom)
+            // Same component the compact page uses, in its wider skin: the two
+            // charts look different but must behave identically under the
+            // cursor, and two hover implementations would drift.
+            CompactTrendBars(
+                days: days.indices.map { idx in
+                    CompactTrendDay(
+                        value: days[idx].generated,
+                        axis: labels.indices.contains(idx) ? labels[idx] : "",
+                        full: labels.indices.contains(idx) ? labels[idx] : "",
+                        amount: formatTokenCount(days[idx].generated),
+                        cost: trendDayCost(days[idx], isSub: isSub)
+                    )
+                },
+                brandColor: Color(visual.brandColor),
+                style: .solo,
+                placeholder: false
+            )
             .padding(.top, 8)
-
-            HStack(spacing: 4) {
-                ForEach(Array(labels.enumerated()), id: \.offset) { idx, label in
-                    let isToday = idx == labels.count - 1
-                    Text(label)
-                        .font(.system(size: 10, weight: isToday ? .bold : .medium))
-                        .foregroundColor(isToday
-                            ? Color(visual.brandColor).opacity(0.9)
-                            : .white.opacity(0.46))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.top, 4)
         }
     }
 
@@ -1942,9 +1939,10 @@ extension NotchIslandView {
                             .frame(height: 0.5)
                             .padding(.bottom, 10)
                         compactUsageTrend(
-                            sparkline ?? Array(repeating: 0, count: 7),
+                            sparkline ?? Array(repeating: .empty, count: 7),
                             visual: visual,
                             narrow: model.providers.count > 1,
+                            isSub: isSub,
                             placeholder: !model.historyLoaded
                         )
                     }
