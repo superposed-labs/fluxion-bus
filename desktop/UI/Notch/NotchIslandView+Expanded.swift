@@ -1433,11 +1433,14 @@ extension NotchIslandView {
     }
 
     @ViewBuilder
-    func compactUsagePair(input: Int, output: Int, inline: Bool) -> some View {
+    /// The two halves of the headline: fresh work and cache reads. They add up
+    /// to the big number above them, which input/output never did — those two
+    /// omit cache writes, and on a well-cached day the writes dwarf both.
+    func compactUsagePair(fresh: Int, cacheRead: Int, inline: Bool) -> some View {
         HStack(spacing: 0) {
             compactUsageFigure(
-                label: L10n.tr("notch.card.input"),
-                value: formatTokenCount(input),
+                label: L10n.tr("notch.card.fresh"),
+                value: formatTokenCount(fresh),
                 inline: inline
             )
             Rectangle()
@@ -1445,19 +1448,19 @@ extension NotchIslandView {
                 .frame(width: 0.5, height: inline ? 15 : 24)
                 .padding(.horizontal, inline ? 6 : 8)
             compactUsageFigure(
-                label: L10n.tr("notch.card.output"),
-                value: formatTokenCount(output),
+                label: L10n.tr("notch.card.cache_read"),
+                value: formatTokenCount(cacheRead),
                 inline: inline
             )
         }
     }
 
     @ViewBuilder
-    func detailedUsageFlow(input: Int, cacheHit: Int?, output: Int) -> some View {
+    func detailedUsageFlow(fresh: Int, cacheHit: Int?, cacheRead: Int) -> some View {
         HStack(spacing: 0) {
             detailedUsageFlowFigure(
-                label: L10n.tr("notch.card.fresh_input"),
-                value: formatTokenCount(input)
+                label: L10n.tr("notch.card.fresh"),
+                value: formatTokenCount(fresh)
             )
             detailedUsageFlowDivider
             detailedUsageFlowFigure(
@@ -1467,8 +1470,8 @@ extension NotchIslandView {
             )
             detailedUsageFlowDivider
             detailedUsageFlowFigure(
-                label: L10n.tr("notch.card.output"),
-                value: formatTokenCount(output)
+                label: L10n.tr("notch.card.cache_read"),
+                value: formatTokenCount(cacheRead)
             )
         }
     }
@@ -1701,7 +1704,7 @@ extension NotchIslandView {
                         )
                         .foregroundColor(.white.opacity(0.48))
                 } else {
-                    detailedUsageFlow(input: stats.input, cacheHit: cachePct, output: stats.output)
+                    detailedUsageFlow(fresh: stats.fresh, cacheHit: cachePct, cacheRead: stats.cacheRead)
                 }
             }
             .frame(maxWidth: 310)
@@ -1932,8 +1935,8 @@ extension NotchIslandView {
                     .padding(.top, model.providers.count == 1 ? 16 : 18)
 
                     compactUsagePair(
-                        input: stats.input,
-                        output: stats.output,
+                        fresh: stats.fresh,
+                        cacheRead: stats.cacheRead,
                         inline: inlineMetrics
                     )
                         .padding(.top, 12)

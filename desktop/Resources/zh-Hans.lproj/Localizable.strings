@@ -32,6 +32,7 @@
 "menu.api_value" = "API 价值";
 "menu.tokens" = "tokens";
 "menu.cache" = "缓存命中";
+"menu.fresh" = "新增";
 "menu.live_quota" = "实时配额";
 "menu.usage.loading" = "正在加载用量...";
 "menu.usage.notes" = "用量说明";
@@ -214,9 +215,8 @@
 "notch.card.today" = "今日";
 "notch.card.cache" = "缓存";
 "notch.card.cache_hit" = "缓存命中";
-"notch.card.input" = "输入";
-"notch.card.fresh_input" = "未缓存输入";
-"notch.card.output" = "输出";
+"notch.card.fresh" = "新增";
+"notch.card.cache_read" = "缓存读取";
 "notch.card.api_value" = "API 价值";
 "notch.card.value_short" = "价值";
 "notch.card.last_7_days" = "最近 7 天";
