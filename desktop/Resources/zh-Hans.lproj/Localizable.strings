@@ -52,7 +52,7 @@
 "notch.credits_ready" = "点数可用 · %@";
 "notch.credits_balance" = "使用额度 · %@";
 "notch.credits_title" = "使用额度";
-"notch.tokens_today.upper" = "今日 TOKENS";
+"notch.tokens_today.upper" = "今日总 Token";
 "notch.cache_hit" = "%d%% 缓存命中";
 "notch.in_plan" = "计划内";
 "notch.no_consumption" = "暂无消耗";

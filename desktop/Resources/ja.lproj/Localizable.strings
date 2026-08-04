@@ -52,7 +52,7 @@
 "notch.credits_ready" = "クレジット利用可 · %@";
 "notch.credits_balance" = "利用クレジット · %@";
 "notch.credits_title" = "利用クレジット";
-"notch.tokens_today.upper" = "今日のトークン";
+"notch.tokens_today.upper" = "今日の合計トークン";
 "notch.cache_hit" = "%d%% キャッシュヒット";
 "notch.in_plan" = "プラン内";
 "notch.no_consumption" = "消費なし";
