@@ -52,7 +52,7 @@
 "notch.credits_ready" = "クレジット利用可 · %@";
 "notch.credits_balance" = "利用クレジット · %@";
 "notch.credits_title" = "利用クレジット";
-"notch.tokens_today.upper" = "今日のトークン";
+"notch.tokens_today.upper" = "今日の合計トークン";
 "notch.cache_hit" = "%d%% キャッシュヒット";
 "notch.in_plan" = "プラン内";
 "notch.no_consumption" = "消費なし";
@@ -214,9 +214,9 @@
 "notch.card.today" = "今日";
 "notch.card.cache" = "キャッシュ";
 "notch.card.cache_hit" = "キャッシュ率";
-"notch.card.input" = "入力";
 "notch.card.fresh_input" = "新規入力";
 "notch.card.output" = "出力";
+"notch.card.cache_write" = "キャッシュ書込";
 "notch.card.api_value" = "API 価値";
 "notch.card.value_short" = "価値";
 "notch.card.last_7_days" = "過去7日間";

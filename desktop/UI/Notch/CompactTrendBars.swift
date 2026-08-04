@@ -37,13 +37,13 @@ struct CompactTrendStyle {
 
     /// One column of a three-provider row (~161pt).
     static let narrowColumn = CompactTrendStyle(
-        barArea: 25, barWidth: 8, spacing: 2, idleBar: 0.22,
-        labelSize: 9, chipSize: 9.5, chipLift: 21
+        barArea: 28, barWidth: 8, spacing: 2, idleBar: 0.22,
+        labelSize: 9.5, chipSize: 9.5, chipLift: 21
     )
     /// One or two providers on the compact page.
     static let wideColumn = CompactTrendStyle(
-        barArea: 25, barWidth: 11, spacing: 4, idleBar: 0.22,
-        labelSize: 10, chipSize: 10.5, chipLift: 21
+        barArea: 30, barWidth: 11, spacing: 4, idleBar: 0.22,
+        labelSize: 10.5, chipSize: 10.5, chipLift: 21
     )
     /// The single-provider detailed dashboard: taller bars that fill the width.
     /// `chipLift` is 25 rather than 21 because that header carries a
@@ -212,4 +212,3 @@ struct CompactTrendBars: View {
         )
     }
 }
-

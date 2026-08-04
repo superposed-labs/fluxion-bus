@@ -888,12 +888,10 @@ extension NotchIslandView {
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
-        // Three-provider cards can route the shell header around the physical
-        // notch, while one- and two-provider cards must push their whole body
-        // below it. Reinvest a little of that saved vertical room here so the
-        // quota content does not look pinned to the top with all of the shared
-        // page-height slack collected above the pager.
-        .padding(.top, model.providers.count == 3 ? 10 : 0)
+        // Keep the provider header on the same vertical anchor as the usage
+        // page. The shell already accounts for the physical notch band; an
+        // extra three-provider-only offset here makes the two pages jump when
+        // the user flips between them.
         .padding(.horizontal, 16)
     }
 
@@ -1403,21 +1401,21 @@ extension NotchIslandView {
         let chipLabels = compactTrendLabels(count: series.count, narrow: false)
         let days = series.indices.map { idx in
             CompactTrendDay(
-                value: series[idx].generated,
+                value: series[idx].total,
                 axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
                 full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
-                amount: formatTokenCount(series[idx].generated),
+                amount: formatTokenCount(series[idx].total),
                 cost: trendDayCost(series[idx], isSub: isSub)
             )
         }
         VStack(spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(L10n.tr("notch.card.last_7_days").uppercased())
-                    .font(.system(size: narrow ? 7.2 : 8, weight: .semibold))
+                    .font(.system(size: narrow ? 8 : 8.5, weight: .semibold))
                     .tracking(narrow ? 0.35 : 0.65)
                     .foregroundColor(.white.opacity(0.4))
                 Spacer(minLength: 4)
-                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.generated }))
+                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.total }))
                     .font(.system(size: narrow ? 10 : 11, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
@@ -1429,104 +1427,6 @@ extension NotchIslandView {
                 style: narrow ? .narrowColumn : .wideColumn,
                 placeholder: placeholder
             )
-        }
-    }
-
-    @ViewBuilder
-    func compactUsagePair(input: Int, output: Int, inline: Bool) -> some View {
-        HStack(spacing: 0) {
-            compactUsageFigure(
-                label: L10n.tr("notch.card.input"),
-                value: formatTokenCount(input),
-                inline: inline
-            )
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 0.5, height: inline ? 15 : 24)
-                .padding(.horizontal, inline ? 6 : 8)
-            compactUsageFigure(
-                label: L10n.tr("notch.card.output"),
-                value: formatTokenCount(output),
-                inline: inline
-            )
-        }
-    }
-
-    @ViewBuilder
-    func detailedUsageFlow(input: Int, cacheHit: Int?, output: Int) -> some View {
-        HStack(spacing: 0) {
-            detailedUsageFlowFigure(
-                label: L10n.tr("notch.card.fresh_input"),
-                value: formatTokenCount(input)
-            )
-            detailedUsageFlowDivider
-            detailedUsageFlowFigure(
-                label: L10n.tr("notch.card.cache_hit"),
-                value: cacheHit.map { "\($0)%" } ?? "—",
-                secondary: true
-            )
-            detailedUsageFlowDivider
-            detailedUsageFlowFigure(
-                label: L10n.tr("notch.card.output"),
-                value: formatTokenCount(output)
-            )
-        }
-    }
-
-    var detailedUsageFlowDivider: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.075))
-            .frame(width: 0.5, height: 18)
-            .padding(.horizontal, 5)
-    }
-
-    @ViewBuilder
-    func detailedUsageFlowFigure(label: String, value: String, secondary: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(value)
-                .font(.system(size: secondary ? 12.5 : 14, weight: secondary ? .semibold : .bold))
-                .monospacedDigit()
-                .foregroundColor(.white.opacity(secondary ? 0.68 : 0.9))
-            Text(label.uppercased())
-                .font(.system(size: secondary ? 8 : 8.5, weight: .semibold))
-                .tracking(secondary ? 0.35 : 0.5)
-                .foregroundColor(.white.opacity(secondary ? 0.32 : 0.38))
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.68)
-        .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    func compactUsageFigure(label: String, value: String, inline: Bool) -> some View {
-        if inline {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(value)
-                    .font(.system(size: 13, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.9))
-                Text(label.uppercased())
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundColor(.white.opacity(0.38))
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
-            .frame(maxWidth: .infinity)
-        } else {
-            VStack(spacing: 2) {
-                Text(value)
-                    .font(.system(size: 13, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.9))
-                Text(label.uppercased())
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .tracking(0.55)
-                    .foregroundColor(.white.opacity(0.38))
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -1555,7 +1455,7 @@ extension NotchIslandView {
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(label.uppercased())
-                        .font(.system(size: 7.5, weight: .semibold))
+                        .font(.system(size: condensed ? 8.5 : 8, weight: .semibold))
                         .tracking(0.45)
                         .foregroundColor(.white.opacity(0.38))
                     Text(value)
@@ -1581,9 +1481,9 @@ extension NotchIslandView {
     @ViewBuilder
     var tokenUsageView: some View {
         // Detailed solo mode gets the richer full-width usage dashboard.
-        // Compact solo mode deliberately falls through to the exact same
-        // usage column as 2+ providers, matching page 1's component reuse so
-        // both pages keep one coherent density and hierarchy.
+        // Its quota page already owns the Today/Cache/API summary, so the
+        // usage page keeps that space for the trend and analytics instead of
+        // repeating the same two cards.
         if model.providers.count == 1, model.expandedStyle == "detailed" {
             soloTokenUsageView
         } else {
@@ -1602,19 +1502,15 @@ extension NotchIslandView {
         let fullDays = model.dailyTokens[p.provider.lowercased()] ?? []
         // The analytics tiles work in plain totals; the chart also needs each
         // day's cost, for the hover chip.
-        let fullSeries = fullDays.map(\.generated)
+        let fullSeries = fullDays.map(\.total)
         let days = Array(fullDays.suffix(7))
         // The trend and analytics are permanent layout modules. Before
         // history arrives (or for a genuinely empty history), seven zero days
         // preserve their final geometry instead of removing the whole block.
         let displayDays = days.count > 1 ? days : Array(repeating: .empty, count: 7)
-        let displaySeries = displayDays.map(\.generated)
+        let displaySeries = displayDays.map(\.total)
         let prevTotal = fullSeries.count >= 14 ? fullSeries.prefix(7).reduce(0, +) : 0
         let weekTotal = displaySeries.reduce(0, +)
-        let denom = stats.cacheRead + stats.input + stats.cacheCreation
-        let cachePct = denom > 0
-            ? Int((Double(stats.cacheRead) / Double(denom) * 100).rounded())
-            : nil
         return VStack(spacing: 0) {
             providerHeaderRow(for: p, visual: visual, centered: true, subtle: true)
 
@@ -1624,8 +1520,6 @@ extension NotchIslandView {
                     visual: visual,
                     state: state,
                     stats: stats,
-                    cachePct: cachePct,
-                    denom: denom,
                     days: displayDays,
                     series: displaySeries,
                     weekTotal: weekTotal,
@@ -1665,8 +1559,6 @@ extension NotchIslandView {
         visual: ProviderVisual,
         state: ProviderQuotaState,
         stats: ProviderHistoryStats,
-        cachePct: Int?,
-        denom: Int,
         days: [ProviderDayUsage],
         series: [Int],
         weekTotal: Int,
@@ -1678,34 +1570,10 @@ extension NotchIslandView {
                     .font(.system(size: 32, weight: .bold, design: .default))
                     .foregroundColor(Color(visual.brandColor))
                 Text(L10n.tr("notch.tokens_today.upper"))
-                    .font(.system(size: 8.5, weight: .bold))
+                    .font(.system(size: 9.5, weight: .bold))
                     .tracking(1.2)
                     .foregroundColor(Color.white.opacity(0.36))
             }
-            .padding(.top, 10)
-
-            // Empty usage and the regular Input/Cache/Output flow occupy one
-            // identical slot. A true zero state changes its message, not the
-            // page's geometry.
-            Group {
-                if denom == 0 {
-                    Text(L10n.tr("notch.no_consumption"))
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                        )
-                        .foregroundColor(.white.opacity(0.48))
-                } else {
-                    detailedUsageFlow(input: stats.input, cacheHit: cachePct, output: stats.output)
-                }
-            }
-            .frame(maxWidth: 310)
-            .frame(height: 20)
             .padding(.top, 10)
 
             soloWeekSection(
@@ -1765,7 +1633,7 @@ extension NotchIslandView {
 
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text(L10n.tr("notch.card.last_7_days").uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 9.5, weight: .semibold))
                     .tracking(0.8)
                     .foregroundColor(.white.opacity(0.42))
                 Spacer()
@@ -1794,10 +1662,10 @@ extension NotchIslandView {
             CompactTrendBars(
                 days: days.indices.map { idx in
                     CompactTrendDay(
-                        value: days[idx].generated,
+                        value: days[idx].total,
                         axis: labels.indices.contains(idx) ? labels[idx] : "",
                         full: labels.indices.contains(idx) ? labels[idx] : "",
-                        amount: formatTokenCount(days[idx].generated),
+                        amount: formatTokenCount(days[idx].total),
                         cost: trendDayCost(days[idx], isSub: isSub)
                     )
                 },
@@ -1837,7 +1705,7 @@ extension NotchIslandView {
                 ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(tile.label.uppercased())
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundColor(.white.opacity(0.42))
                         // Held at 13: the peak-hour range ("19:00–20:00") is the
@@ -1883,10 +1751,10 @@ extension NotchIslandView {
                 let cacheValue = denom > 0
                     ? "\(Int(round(Double(stats.cacheRead) / Double(denom) * 100)))%"
                     : "—"
-                // Three provider columns are too narrow for translated labels
-                // and values to stay legible on one line. One and two columns
-                // use the denser inline treatment; three retain two-line rows.
-                let inlineMetrics = model.providers.count < 3
+                // Keep the label/value hierarchy on two lines for provider
+                // columns. A single compact provider can stay inline, while
+                // two and three columns need the larger, easier-to-scan card.
+                let inlineMetrics = model.providers.count == 1
                 let condensedMetrics = model.providers.count == 2
                 let condensedCacheLabel = L10n.resolvedAppLanguage.hasPrefix("zh")
                     ? L10n.tr("notch.card.cache_hit")
@@ -1929,15 +1797,17 @@ extension NotchIslandView {
                             .foregroundColor(Color.white.opacity(0.36))
                     }
                     .frame(height: 54)
-                    .padding(.top, model.providers.count == 1 ? 16 : 18)
+                    .padding(.top, model.providers.count == 1 ? 16 : 10)
 
-                    compactUsagePair(
-                        input: stats.input,
-                        output: stats.output,
-                        inline: inlineMetrics
-                    )
-                        .padding(.top, 12)
-
+                    // No input/output/cache-write row here. Not one of those
+                    // three means the same thing across providers — Codex folds
+                    // unreported cache writes into its input, and only Claude
+                    // reports writes at all — and a figure that needs a footnote
+                    // does not belong on a glance surface. The three numbers
+                    // this card does carry (total, hit rate, API value) mean the
+                    // same everywhere. The single-provider quota page owns
+                    // those summary details; its usage page is reserved for
+                    // the trend and analytics view.
                     HStack(spacing: 6) {
                         compactUsageMetric(
                             label: condensedMetrics
@@ -1971,7 +1841,7 @@ extension NotchIslandView {
                         compactUsageTrend(
                             sparkline ?? Array(repeating: .empty, count: 7),
                             visual: visual,
-                            narrow: model.providers.count > 1,
+                            narrow: model.providers.count >= 3,
                             isSub: isSub,
                             placeholder: !model.historyLoaded
                         )
