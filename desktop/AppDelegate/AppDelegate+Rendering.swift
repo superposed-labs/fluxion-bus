@@ -268,7 +268,6 @@ extension AppDelegate {
                 let provider: String
                 let cost: Double
                 let total_tokens: Int
-                let generated_tokens: Int
                 let input_tokens: Int
                 let output_tokens: Int
                 let cache_creation_tokens: Int?

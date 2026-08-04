@@ -1403,10 +1403,10 @@ extension NotchIslandView {
         let chipLabels = compactTrendLabels(count: series.count, narrow: false)
         let days = series.indices.map { idx in
             CompactTrendDay(
-                value: series[idx].generated,
+                value: series[idx].total,
                 axis: axisLabels.indices.contains(idx) ? axisLabels[idx] : "",
                 full: chipLabels.indices.contains(idx) ? chipLabels[idx] : "",
-                amount: formatTokenCount(series[idx].generated),
+                amount: formatTokenCount(series[idx].total),
                 cost: trendDayCost(series[idx], isSub: isSub)
             )
         }
@@ -1417,7 +1417,7 @@ extension NotchIslandView {
                     .tracking(narrow ? 0.35 : 0.65)
                     .foregroundColor(.white.opacity(0.4))
                 Spacer(minLength: 4)
-                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.generated }))
+                Text(placeholder ? "—" : formatTokenCount(series.reduce(0) { $0 + $1.total }))
                     .font(.system(size: narrow ? 10 : 11, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(.white.opacity(placeholder ? 0.25 : 0.76))
@@ -1602,13 +1602,13 @@ extension NotchIslandView {
         let fullDays = model.dailyTokens[p.provider.lowercased()] ?? []
         // The analytics tiles work in plain totals; the chart also needs each
         // day's cost, for the hover chip.
-        let fullSeries = fullDays.map(\.generated)
+        let fullSeries = fullDays.map(\.total)
         let days = Array(fullDays.suffix(7))
         // The trend and analytics are permanent layout modules. Before
         // history arrives (or for a genuinely empty history), seven zero days
         // preserve their final geometry instead of removing the whole block.
         let displayDays = days.count > 1 ? days : Array(repeating: .empty, count: 7)
-        let displaySeries = displayDays.map(\.generated)
+        let displaySeries = displayDays.map(\.total)
         let prevTotal = fullSeries.count >= 14 ? fullSeries.prefix(7).reduce(0, +) : 0
         let weekTotal = displaySeries.reduce(0, +)
         let denom = stats.cacheRead + stats.input + stats.cacheCreation
@@ -1794,10 +1794,10 @@ extension NotchIslandView {
             CompactTrendBars(
                 days: days.indices.map { idx in
                     CompactTrendDay(
-                        value: days[idx].generated,
+                        value: days[idx].total,
                         axis: labels.indices.contains(idx) ? labels[idx] : "",
                         full: labels.indices.contains(idx) ? labels[idx] : "",
-                        amount: formatTokenCount(days[idx].generated),
+                        amount: formatTokenCount(days[idx].total),
                         cost: trendDayCost(days[idx], isSub: isSub)
                     )
                 },

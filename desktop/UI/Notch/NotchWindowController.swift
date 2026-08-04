@@ -32,15 +32,15 @@ struct ProviderHistoryStats: Equatable {
 
 /// One day of one provider's usage in the trailing 14-day series.
 ///
-/// `generated` is the measure the bars are drawn from and the one the headline
+/// `total` is the measure the bars are drawn from and the one the headline
 /// figure uses, so a bar and the big number above it always agree. `cost` is
 /// what that day was worth at API rates — on a subscription it is notional,
 /// the same "API value" the today tiles report, not money spent.
 struct ProviderDayUsage: Equatable {
-    let generated: Int
+    let total: Int
     let cost: Double
 
-    static let empty = ProviderDayUsage(generated: 0, cost: 0)
+    static let empty = ProviderDayUsage(total: 0, cost: 0)
 }
 
 // MARK: - Notch Data Model
@@ -523,13 +523,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 let provider: String
                 let model: String
                 let cost: Double
-                // Headline volume uses `generated_tokens` (input + output +
-                // cache_creation), NOT `total_tokens` — i.e. cache *reads* are
-                // excluded. This keeps the notch's big number consistent with
-                // the web console's "Generated" hero; total_tokens would be
-                // inflated by repeated cached context and confuse the input →
-                // output breakdown shown below it.
-                let generated_tokens: Int
+                // Headline volume uses `total_tokens` (input + output +
+                // cache_creation + cache_read) — the same measure the web
+                // console's hero, the menu bar and ccusage report, and the one
+                // that reconciles with what Codex itself prints. Cache reads
+                // dominate it at a healthy hit rate; the breakdown below the
+                // number is what separates them out.
+                let total_tokens: Int
                 let input_tokens: Int
                 let output_tokens: Int
                 let cache_creation_tokens: Int?
@@ -541,7 +541,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 let provider: String
                 // Same measure as the headline (see HistoryModelStat), so
                 // today's bar always matches the big number above it.
-                let generated_tokens: Int
+                let total_tokens: Int
                 // Optional: a backend that predates per-day cost still decodes,
                 // and the hover chip falls back to the day's total alone.
                 let cost: Double?
@@ -577,7 +577,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                     let pKey = m.provider.lowercased()
                     let existing = stats[pKey] ?? ProviderHistoryStats(tokens: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0.0)
                     stats[pKey] = ProviderHistoryStats(
-                        tokens: existing.tokens + m.generated_tokens,
+                        tokens: existing.tokens + m.total_tokens,
                         input: existing.input + m.input_tokens,
                         output: existing.output + m.output_tokens,
                         cacheCreation: existing.cacheCreation + (m.cache_creation_tokens ?? 0),
@@ -606,7 +606,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                         let pKey = row.provider.lowercased()
                         let prior = byProviderDay[pKey]?[row.date] ?? .empty
                         byProviderDay[pKey, default: [:]][row.date] = ProviderDayUsage(
-                            generated: prior.generated + row.generated_tokens,
+                            total: prior.total + row.total_tokens,
                             cost: prior.cost + (row.cost ?? 0)
                         )
                     }

@@ -310,24 +310,31 @@ function Hero({
   lowerBound: boolean;
 }): JSX.Element {
   const { t } = useI18n();
+  // The bar decomposes the headline number, so it carries all four components
+  // — cache reads included. At a healthy hit rate they dominate it; that is the
+  // point, and the legend keeps the small segments legible.
   const parts = [
     { k: t("usage.input"), v: totals.input_tokens, cls: "seg-input", sw: "var(--tk-input)" },
     { k: t("usage.output"), v: totals.output_tokens, cls: "seg-output", sw: "var(--tk-output)" },
     { k: t("usage.cacheWrite"), v: totals.cache_creation_tokens, cls: "seg-cw", sw: "var(--tk-cw)" },
+    { k: t("usage.cacheRead"), v: totals.cache_read_tokens, cls: "seg-cr", sw: "var(--tk-cr)" },
   ];
   const hitPct = Math.round(totals.cache_hit * 100);
 
   return (
     <div className="hero">
       <div className="hero-card hero-main">
-        <div className="hero-label">{t("usage.generated")}</div>
+        <div className="hero-label">{t("usage.total")}</div>
         <div className="hero-num">
-          {fmtTok(totals.generated_tokens)}
+          {fmtTok(totals.total_tokens)}
           <span className="u">{t("usage.tokens")}</span>
         </div>
         <div className="hero-sub">
           {lowerBound ? "≥ " : "≈ "}<b>{fmtMoney(totals.cost)}</b>{" "}
           {lowerBound ? t("usage.lowerBound") : (sub ? t("usage.apiValueNote") : t("usage.spendNote"))}
+        </div>
+        <div className="hero-fresh">
+          <b>{fmtTok(totals.generated_tokens)}</b> {t("usage.freshLabel")}
         </div>
         <div className="compbar">
           {parts.map((p) => (
@@ -417,7 +424,7 @@ function StatStrip({
     {
       k: t("usage.sessions"),
       val: fmtInt(totals.sessions),
-      ctx: <span>{fmtTok(Math.round(totals.generated_tokens / sessions))} {t("usage.perSession")}</span>,
+      ctx: <span>{fmtTok(Math.round(totals.total_tokens / sessions))} {t("usage.perSession")}</span>,
     },
     {
       k: t("usage.messages"),
@@ -451,7 +458,7 @@ function StatStrip({
       ctx: top ? (
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span className="ex-sw" style={{ background: `var(--ex-${top.provider})` }} />
-          {top.provider} · {fmtTok(top.generated_tokens)}
+          {top.provider} · {fmtTok(top.total_tokens)}
         </span>
       ) : null,
     },
@@ -817,8 +824,8 @@ function ModelsView({
 
               <div className="m-right">
                 <div className="m-num">
-                  <div className="big">{fmtTok(m.generated_tokens)}</div>
-                  <div className="lbl">{t("usage.generatedShort")}</div>
+                  <div className="big">{fmtTok(m.total_tokens)}</div>
+                  <div className="lbl">{t("usage.totalShort")}</div>
                 </div>
                 <div className="m-num m-cost">
                   <div className="big">{fmtCost(m.cost, cacheWriteUnreported)}</div>

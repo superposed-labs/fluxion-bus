@@ -17,7 +17,10 @@
   --hm-2: oklch(0.78 0.10 236);
   --hm-3: oklch(0.70 0.14 232);
   --hm-4: oklch(0.62 0.16 230);
-  --tk-cr: oklch(0.70 0.012 250);
+  /* Cache read now sits next to input in the hero bar and its legend, and at
+     0.70 the two greys were a hair apart. Lighter keeps it recessive — it is
+     the cheap component — while staying clearly separable from input's 0.66. */
+  --tk-cr: oklch(0.78 0.012 250);
 }
 
 /* The stats view fills the shell body row and scrolls as a report. */
@@ -58,11 +61,14 @@
 .hero-num .u { color: var(--fg-2); font-size: 0.5em; font-weight: 500; padding-left: 4px; }
 .hero-sub { font-size: 12px; color: var(--fg-2); }
 .hero-sub b { color: var(--fg-1); font-weight: 500; }
-.compbar { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin: 18px 0 14px; background: var(--bg-3); gap: 2px; }
+.hero-fresh { font-size: 11.5px; color: var(--fg-3); margin-top: 5px; }
+.hero-fresh b { font-family: var(--font-mono); color: var(--fg-2); font-weight: 500; font-variant-numeric: tabular-nums; }
+.compbar { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin: 16px 0 14px; background: var(--bg-3); gap: 2px; }
 .compbar i { display: block; height: 100%; border-radius: 2px; min-width: 3px; }
 .seg-input { background: var(--tk-input); }
 .seg-output { background: var(--tk-output); }
 .seg-cw { background: var(--tk-cw); }
+.seg-cr { background: var(--tk-cr); }
 .complegend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: auto; }
 .lg { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--fg-2); white-space: nowrap; }
 .lg .sw { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
