@@ -28,12 +28,6 @@ struct ProviderHistoryStats: Equatable {
     let cacheCreation: Int
     let cacheRead: Int
     let cost: Double
-
-    /// Everything in `tokens` that was not re-read from cache. The two split
-    /// the headline exactly, which is why the cards break it down this way
-    /// rather than by input/output: those leave out cache writes, and on a
-    /// cached conversation the writes are most of the fresh work.
-    var fresh: Int { max(0, tokens - cacheRead) }
 }
 
 /// One day of one provider's usage in the trailing 14-day series.

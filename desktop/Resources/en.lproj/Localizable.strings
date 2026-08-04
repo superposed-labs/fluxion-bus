@@ -32,7 +32,6 @@
 "menu.api_value" = "API value";
 "menu.tokens" = "tokens";
 "menu.cache" = "cache hit";
-"menu.fresh" = "fresh";
 "menu.live_quota" = "Live quota";
 "menu.usage.loading" = "Loading usage...";
 "menu.usage.notes" = "Usage notes";
@@ -218,8 +217,10 @@
 "notch.card.today" = "Today";
 "notch.card.cache" = "Cache";
 "notch.card.cache_hit" = "Cache hit";
-"notch.card.fresh" = "Fresh";
-"notch.card.cache_read" = "Cache read";
+"notch.card.input" = "Input";
+"notch.card.fresh_input" = "Fresh input";
+"notch.card.output" = "Output";
+"notch.card.cache_write" = "Cache write";
 "notch.card.api_value" = "API value";
 "notch.card.value_short" = "Value";
 "notch.card.last_7_days" = "Last 7 days";

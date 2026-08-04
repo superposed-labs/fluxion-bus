@@ -494,11 +494,9 @@ final class RichMenuPanelView: NSView {
         cx += width(tokensText, size: 11.5, weight: .regular) + gap
         draw("·", x: cx, y: textY, size: 11.5, weight: .regular, color: dotColor)
         cx += width("·", size: 11.5, weight: .regular) + gap
-        // The fresh half of the total, not input→output: those two leave out
-        // cache writes, so they never added up to the figure just before them.
-        let freshText = "\(formatTokenCount(stats.fresh)) \(L10n.tr("menu.fresh"))"
-        draw(freshText, x: cx, y: textY + 0.9, size: 10.5, weight: .regular, color: muted)
-        cx += width(freshText, size: 10.5, weight: .regular)
+        let ioText = "\(formatTokenCount(stats.input))→\(formatTokenCount(stats.output))"
+        draw(ioText, x: cx, y: textY + 0.9, size: 10.5, weight: .regular, color: muted)
+        cx += width(ioText, size: 10.5, weight: .regular)
         
         let denom = stats.cacheRead + stats.input + stats.cacheCreation
         if denom > 0 {
