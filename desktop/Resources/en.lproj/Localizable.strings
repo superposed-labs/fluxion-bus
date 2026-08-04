@@ -217,7 +217,6 @@
 "notch.card.today" = "Today";
 "notch.card.cache" = "Cache";
 "notch.card.cache_hit" = "Cache hit";
-"notch.card.input" = "Input";
 "notch.card.fresh_input" = "Fresh input";
 "notch.card.output" = "Output";
 "notch.card.cache_write" = "Cache write";

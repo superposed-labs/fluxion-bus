@@ -1432,47 +1432,6 @@ extension NotchIslandView {
         }
     }
 
-    /// Input and output, plus cache writes when the provider reports them.
-    ///
-    /// Fresh and cache-read would split the headline exactly, but the hit-rate
-    /// tile beside this row already implies that split, so spending both slots
-    /// on it says nothing new. These are the quantities nothing else on the
-    /// card carries. The conditional write column is what closes the arithmetic
-    /// where it would otherwise be startling: only Claude reports writes, and
-    /// they can be three orders of magnitude above input and output, so without
-    /// it the row looks far too small for the number above it.
-    @ViewBuilder
-    func compactUsageBreakdown(input: Int, output: Int, cacheWrite: Int, inline: Bool) -> some View {
-        HStack(spacing: 0) {
-            compactUsageFigure(
-                label: L10n.tr("notch.card.input"),
-                value: formatTokenCount(input),
-                inline: inline
-            )
-            compactUsageDivider(inline: inline)
-            compactUsageFigure(
-                label: L10n.tr("notch.card.output"),
-                value: formatTokenCount(output),
-                inline: inline
-            )
-            if cacheWrite > 0 {
-                compactUsageDivider(inline: inline)
-                compactUsageFigure(
-                    label: L10n.tr("notch.card.cache_write"),
-                    value: formatTokenCount(cacheWrite),
-                    inline: inline
-                )
-            }
-        }
-    }
-
-    func compactUsageDivider(inline: Bool) -> some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 0.5, height: inline ? 15 : 24)
-            .padding(.horizontal, inline ? 6 : 8)
-    }
-
     @ViewBuilder
     func detailedUsageFlow(input: Int, cacheWrite: Int, cacheHit: Int?, output: Int) -> some View {
         HStack(spacing: 0) {
@@ -1523,39 +1482,6 @@ extension NotchIslandView {
         .lineLimit(1)
         .minimumScaleFactor(0.68)
         .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    func compactUsageFigure(label: String, value: String, inline: Bool) -> some View {
-        if inline {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(value)
-                    .font(.system(size: 13, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.9))
-                Text(label.uppercased())
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundColor(.white.opacity(0.38))
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
-            .frame(maxWidth: .infinity)
-        } else {
-            VStack(spacing: 2) {
-                Text(value)
-                    .font(.system(size: 13, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.9))
-                Text(label.uppercased())
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .tracking(0.55)
-                    .foregroundColor(.white.opacity(0.38))
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(maxWidth: .infinity)
-        }
     }
 
     @ViewBuilder
@@ -1964,14 +1890,14 @@ extension NotchIslandView {
                     .frame(height: 54)
                     .padding(.top, model.providers.count == 1 ? 16 : 18)
 
-                    compactUsageBreakdown(
-                        input: stats.input,
-                        output: stats.output,
-                        cacheWrite: stats.cacheCreation,
-                        inline: inlineMetrics
-                    )
-                        .padding(.top, 12)
-
+                    // No input/output/cache-write row here. Not one of those
+                    // three means the same thing across providers — Codex folds
+                    // unreported cache writes into its input, and only Claude
+                    // reports writes at all — and a figure that needs a footnote
+                    // does not belong on a glance surface. The three numbers
+                    // this card does carry (total, hit rate, API value) mean the
+                    // same everywhere. The solo card, which the user opens for
+                    // detail, still breaks it down.
                     HStack(spacing: 6) {
                         compactUsageMetric(
                             label: condensedMetrics

@@ -214,7 +214,6 @@
 "notch.card.today" = "今日";
 "notch.card.cache" = "キャッシュ";
 "notch.card.cache_hit" = "キャッシュ率";
-"notch.card.input" = "入力";
 "notch.card.fresh_input" = "新規入力";
 "notch.card.output" = "出力";
 "notch.card.cache_write" = "キャッシュ書込";
