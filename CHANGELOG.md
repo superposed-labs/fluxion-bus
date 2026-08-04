@@ -9,6 +9,20 @@ milestones.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-05
+
+### Fixed
+
+- **Consistent token totals** — the web console, Notch, and menu bar now use
+  the same total-token headline, and their visible breakdowns reconcile with
+  that number.
+- **Cache-aware usage breakdowns** — usage cards now distinguish fresh input,
+  cache reads, and provider-reported cache writes without implying that the
+  same fields have identical meanings across providers.
+- **Usage labels and hierarchy** — daily charts, localized strings, and compact
+  Notch surfaces now name the metric they actually display and keep detailed
+  provider-specific caveats out of glance-level summaries.
+
 ## [1.2.0] - 2026-08-01
 
 ### Added
@@ -307,7 +321,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.10...v1.0.11
