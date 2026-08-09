@@ -9,6 +9,16 @@ milestones.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-09
+
+### Fixed
+
+- **Antigravity model catalog parsing** — labeled catalog output is now parsed
+  correctly so model availability checks do not lose entries.
+- **Claude credit balances** — string-valued balances and cent-based amounts
+  are handled correctly, while the Notch surfaces preserve meaningful
+  precision and currency formatting across compact, peek, and expanded views.
+
 ## [1.2.1] - 2026-08-05
 
 ### Fixed
@@ -321,7 +331,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.0.11...v1.1.0
