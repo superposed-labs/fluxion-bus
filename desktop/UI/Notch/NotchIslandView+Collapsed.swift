@@ -685,7 +685,12 @@ extension NotchIslandView {
             } else if state.mode == .credits, let credits = state.credits {
                 HStack(spacing: 3) {
                     CoinIcon(size: 7)
-                    Text(p.provider != "antigravity" ? String(format: "$%.2f", credits) : "\(Int(credits))")
+                    Text(
+                        QuotaFormatter.formatCompactCreditBalance(
+                            credits,
+                            currency: p.windows.first(where: { $0.key == "ai_credits" })?.currency
+                        )
+                    )
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(Color(NSColor.systemGreen))
                         .fixedSize(horizontal: true, vertical: false)

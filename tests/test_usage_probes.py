@@ -531,15 +531,31 @@ def test_claude_fetches_oauth_prepaid_credits_and_caches_org(monkeypatch):
     assert calls == {"profile": 1, "credits": 2}
 
 
-def test_claude_prepaid_credits_falls_back_to_amount_minor_units():
+def test_claude_prepaid_credits_prioritizes_amount_over_balance_credits():
+    # Conflict case: amount=9689 (minor units -> 96.89) vs truncated balance_credits=96
     window = ClaudeUsageProbe._map_credits_window(
-        {"amount": 12_345, "currency": "USD"}, enabled=False
+        {"amount": 9689, "balance_credits": 96, "currency": "USD"}, enabled=True
     )
-
     assert window is not None
-    assert window.remaining == 123.45
-    assert window.currency == "USD"
-    assert window.enabled is False
+    assert window.remaining == 96.89
+
+    # Numeric string for amount
+    window_str = ClaudeUsageProbe._map_credits_window(
+        {"amount": "9689", "balance_credits": 96}, enabled=True
+    )
+    assert window_str is not None
+    assert window_str.remaining == 96.89
+
+    # Fallback to balance_credits when amount is missing
+    window_fallback = ClaudeUsageProbe._map_credits_window(
+        {"balance_credits": 96, "currency": "USD"}, enabled=True
+    )
+    assert window_fallback is not None
+    assert window_fallback.remaining == 96.0
+
+    # Bool inputs are rejected
+    assert ClaudeUsageProbe._map_credits_window({"amount": True}, enabled=True) is None
+    assert ClaudeUsageProbe._map_credits_window({"balance_credits": True}, enabled=True) is None
 
 
 def test_claude_credits_failure_does_not_break_usage_windows(monkeypatch):

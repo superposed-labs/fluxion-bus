@@ -377,14 +377,22 @@ class ClaudeUsageProbe:
     @staticmethod
     def _map_credits_window(data: dict[str, Any], *, enabled: bool | None) -> UsageWindow | None:
         def number(value: Any) -> float | None:
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if isinstance(value, bool):
                 return None
-            return float(value)
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value)
+                except ValueError:
+                    return None
+            return None
 
-        balance = number(data.get("balance_credits"))
-        if balance is None:
-            amount = number(data.get("amount"))
-            balance = amount / 100.0 if amount is not None else None
+        amount = number(data.get("amount"))
+        if amount is not None:
+            balance = amount / 100.0
+        else:
+            balance = number(data.get("balance_credits"))
         if balance is None:
             return None
         currency = data.get("currency")
