@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from fluxion.executors.antigravity import models as antigravity_models
@@ -162,3 +164,49 @@ def test_load_antigravity_model_catalog_caches_failure_briefly(monkeypatch):
     assert second_error == "failure 1"
     assert third_error == "failure 2"
     assert calls == ["/bin/agy", "/bin/agy"]
+
+
+def test_fetch_antigravity_model_catalog_extracts_ids_from_tab_separated_labels(
+    monkeypatch,
+):
+    stdout = "\n".join(
+        [
+            "gemini-3.6-flash-high\tGemini 3.6 Flash (High)",
+            "gemini-3.6-flash-low\tGemini 3.6 Flash (Low)",
+        ]
+    )
+    monkeypatch.setattr(
+        antigravity_models.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        ),
+    )
+
+    names, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
+
+    assert names == ["gemini-3.6-flash-high", "gemini-3.6-flash-low"]
+    assert error == ""
+
+
+def test_fetch_antigravity_model_catalog_preserves_legacy_single_column_names(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        antigravity_models.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout="Gemini 3.5 Flash (Low)\n",
+            stderr="",
+        ),
+    )
+
+    names, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
+
+    assert names == ["Gemini 3.5 Flash (Low)"]
+    assert error == ""
