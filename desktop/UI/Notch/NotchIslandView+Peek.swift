@@ -307,7 +307,12 @@ extension NotchIslandView {
                     Circle()
                         .fill(RadialGradient(colors: [Color(NSColor(hex: "#ffd700")), Color(NSColor(hex: "#daa520"))], center: .center, startRadius: 0, endRadius: 4))
                         .frame(width: 7, height: 7)
-                    Text(p.provider != "antigravity" ? String(format: "$%.2f", creds) : "\(Int(creds))")
+                    Text(
+                        QuotaFormatter.formatCreditBalance(
+                            creds,
+                            currency: p.windows.first(where: { $0.key == "ai_credits" })?.currency
+                        )
+                    )
                         .font(.system(size: 12.5, weight: .bold))
                         .monospacedDigit()
                         .foregroundColor(Color(NSColor.systemGreen))

@@ -119,7 +119,9 @@ enum SharedDateFormatters {
         formatter.locale = Locale(identifier: language)
         formatter.numberStyle = .currency
         formatter.currencyCode = code
-        formatter.minimumFractionDigits = 2
+        // Preserve real cents without manufacturing a trailing ".00" for
+        // whole balances.
+        formatter.minimumFractionDigits = 0
         formatter.maximumFractionDigits = 2
         currencyCache[key] = formatter
         return formatter
@@ -158,7 +160,17 @@ struct QuotaFormatter {
             return value.rounded() == value ? "\(Int(value))" : "\(value)"
         }
         let formatter = SharedDateFormatters.currency(code: code, language: L10n.resolvedAppLanguage)
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
+        if let formatted = formatter.string(from: NSNumber(value: value)) {
+            return formatted
+        }
+        return value.rounded() == value ? "$\(Int(value))" : String(format: "$%.2f", value)
+    }
+
+    /// The always-visible strip has a narrow shoulder beside the physical
+    /// notch. Show a conservative whole-unit balance there; peek and expanded
+    /// surfaces continue to show the exact cents via `formatCreditBalance`.
+    static func formatCompactCreditBalance(_ value: Double, currency: String?) -> String {
+        formatCreditBalance(value.rounded(.down), currency: currency)
     }
 
     static func formatExpiryDate(_ isoString: String?) -> String? {

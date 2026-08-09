@@ -228,7 +228,12 @@ struct CircularProgressRing: View {
                 } else if mode == .credits, let creds = credits {
                     HStack(spacing: 4) {
                         CoinIcon(size: 10)
-                        Text(creditsIsDollar ? String(format: "$%.2f", creds) : "\(Int(creds))")
+                        Text(
+                            QuotaFormatter.formatCreditBalance(
+                                creds,
+                                currency: creditsIsDollar ? "USD" : nil
+                            )
+                        )
                             .font(.system(size: 21, weight: .bold, design: .default))
                         .foregroundColor(.white)
                         .tracking(-0.5)

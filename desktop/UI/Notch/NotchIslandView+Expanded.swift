@@ -1591,7 +1591,13 @@ extension NotchIslandView {
             if state.mode == .credits, let creds = state.credits {
                 HStack(spacing: 5) {
                     CoinIcon(size: 9)
-                    Text("\(L10n.tr("notch.on_credits")) · \(p.provider != "antigravity" ? String(format: "$%.2f", creds) : "\(Int(creds))")")
+                    Text(
+                        "\(L10n.tr("notch.on_credits")) · "
+                            + QuotaFormatter.formatCreditBalance(
+                                creds,
+                                currency: p.windows.first(where: { $0.key == "ai_credits" })?.currency
+                            )
+                    )
                 }
                 .font(.system(size: 10, weight: .bold))
                 .padding(.horizontal, 10)
@@ -1743,8 +1749,6 @@ extension NotchIslandView {
                 let p = model.providers[idx]
                 let visual = providerVisual(for: p.provider)
                 let stats = model.todayStats[p.provider.lowercased()] ?? ProviderHistoryStats(tokens: 0, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, cost: 0.0)
-                let state = quotaState(for: p)
-                let credits = state.credits
                 let isSub = isSubscription(for: p)
                 let sparkline = tokenSparklineSeries(for: p)
                 let denom = stats.cacheRead + stats.input + stats.cacheCreation
@@ -1760,12 +1764,6 @@ extension NotchIslandView {
                     ? L10n.tr("notch.card.cache_hit")
                     : L10n.tr("notch.card.cache")
                 let valueMetric: (label: String, value: String, accent: Color?) = {
-                    if state.mode == .credits, let creds = credits {
-                        let value = p.provider != "antigravity"
-                            ? String(format: condensedMetrics ? "$%.1f" : "$%.2f", creds)
-                            : "\(Int(creds))"
-                        return (L10n.tr("notch.card.reserve"), value, Color(NSColor.systemGreen))
-                    }
                     if denom == 0 {
                         return (L10n.tr("notch.card.api_value"), "—", nil)
                     }
