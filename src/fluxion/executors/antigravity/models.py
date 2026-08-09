@@ -64,7 +64,11 @@ def _fetch_antigravity_model_catalog(resolved_command: str) -> tuple[list[str], 
 
     names: list[str] = []
     for raw in result.stdout.splitlines():
-        name = raw.strip()
+        # Newer agy releases print a tab-separated display label after the
+        # selectable model id, for example:
+        #   gemini-3.6-flash-high\tGemini 3.6 Flash (High)
+        # Only the first column is accepted by `agy --model`.
+        name = raw.partition("\t")[0].strip()
         if name and name not in names:
             names.append(name)
     if names:
