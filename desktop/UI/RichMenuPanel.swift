@@ -360,7 +360,7 @@ final class RichMenuPanelView: NSView {
                 drawGroupHeader(title: "GEMINI", note: L10n.tr("menu.group.native"), color: NSColor(hex: "#3B82D9"), y: y)
                 y += 18
                 for w in geminiWindows {
-                    drawQuotaRow(w, fetchedAt: p.fetchedAt, y: y, hoverID: "quota-\(p.provider)-gemini-\(w.key ?? w.label ?? "\(y)")", labelOverride: richWindowLabel(w))
+                    drawQuotaRow(w, fetchedAt: p.fetchedAt, limitReached: p.limitReached, y: y, hoverID: "quota-\(p.provider)-gemini-\(w.key ?? w.label ?? "\(y)")", labelOverride: richWindowLabel(w))
                     y += rowH
                 }
             }
@@ -368,7 +368,7 @@ final class RichMenuPanelView: NSView {
                 drawGroupHeader(title: "EXT", note: "Claude / GPT", color: muted, y: y)
                 y += 18
                 for w in externalWindows {
-                    drawQuotaRow(w, fetchedAt: p.fetchedAt, y: y, hoverID: "quota-\(p.provider)-ext-\(w.key ?? w.label ?? "\(y)")", labelOverride: richWindowLabel(w))
+                    drawQuotaRow(w, fetchedAt: p.fetchedAt, limitReached: p.limitReached, y: y, hoverID: "quota-\(p.provider)-ext-\(w.key ?? w.label ?? "\(y)")", labelOverride: richWindowLabel(w))
                     y += rowH
                 }
             }
@@ -378,7 +378,7 @@ final class RichMenuPanelView: NSView {
                 y += rowH
             }
             for w in p.windows {
-                drawQuotaRow(w, fetchedAt: p.fetchedAt, y: y, hoverID: "quota-\(p.provider)-\(w.key ?? w.label ?? "\(y)")", labelOverride: compactQuotaWindowLabel(w))
+                drawQuotaRow(w, fetchedAt: p.fetchedAt, limitReached: p.limitReached, y: y, hoverID: "quota-\(p.provider)-\(w.key ?? w.label ?? "\(y)")", labelOverride: compactQuotaWindowLabel(w))
                 y += rowH
             }
         }
@@ -395,7 +395,7 @@ final class RichMenuPanelView: NSView {
         y += sectionPadBottom
     }
 
-    private func drawQuotaRow(_ w: QuotaWindow, fetchedAt: String?, y: CGFloat, hoverID: String, labelOverride: String? = nil) {
+    private func drawQuotaRow(_ w: QuotaWindow, fetchedAt: String?, limitReached: Bool?, y: CGFloat, hoverID: String, labelOverride: String? = nil) {
         let label = labelOverride ?? richWindowLabel(w)
         let rowX = outerPad + innerPad
         let rowRect = NSRect(x: outerPad + 2, y: y + 1, width: bounds.width - (outerPad + 2) * 2, height: rowH - 2)
@@ -452,7 +452,9 @@ final class RichMenuPanelView: NSView {
             : (remaining < QuotaLevel.cautionRemaining ? amber : green)
         let barRect = NSRect(x: barX, y: y + 12, width: 130, height: 6)
         drawBar(rect: barRect, percent: remaining, color: barColor)
-        let pct = "\(Int(round(remaining)))"
+        let pct = remaining <= 0 && limitReached == false
+            ? "<1"
+            : QuotaFormatter.remainingPercentText(remaining)
         let pctWidth = width(pct, size: 13.0, weight: .semibold, monospaced: true)
         draw(pct, x: pctX + 34 - pctWidth, y: y + 6, size: 13.0, weight: .semibold, color: remaining < QuotaLevel.criticalRemaining ? red : text, monospaced: true)
         draw("%", x: pctX + 37, y: y + 7, size: 11, weight: .regular, color: muted)
@@ -638,8 +640,7 @@ final class RichMenuPanelView: NSView {
         
         let exp = resets.expiries.sorted()
         let nextMs = exp.first ?? 0.0
-        let nextDays = Int(max(0.0, round(nextMs / 86400000.0)))
-        let soon = nextDays <= 7 && !exp.isEmpty
+        let soon = nextMs <= 7 * 86_400_000.0 && !exp.isEmpty
         
         let headerH: CGFloat = 20
         let dividerH: CGFloat = 8
@@ -692,23 +693,22 @@ final class RichMenuPanelView: NSView {
             let label = i == 0 ? L10n.tr("menu.resets.next_expires") : L10n.tr("menu.resets.then")
             let date = Date().addingTimeInterval(ms / 1000.0)
             let dateStr = formatter.string(from: date)
-            let days = Int(max(0.0, round(ms / 86400000.0)))
-            let daysStr = L10n.tr("menu.resets.in_days", days)
+            let countdown = QuotaFormatter.resetExpiryCountdown(ms, includesExpiry: false)
             
             let rowY = divY + 4 + CGFloat(i) * rowH
             
             draw(label, x: rect.minX + 11, y: rowY, size: 10, weight: .medium, color: NSColor(hex: "#60636B"))
             
-            let daysW = width(daysStr, size: 9, weight: .semibold)
+            let countdownW = width(countdown, size: 9, weight: .semibold)
             let dateW = width(dateStr, size: 10.5, weight: .bold)
             
-            let dateX = rect.maxX - 11 - daysW - 6 - dateW
-            let daysX = rect.maxX - 11 - daysW
+            let dateX = rect.maxX - 11 - countdownW - 6 - dateW
+            let countdownX = rect.maxX - 11 - countdownW
             
             draw(dateStr, x: dateX, y: rowY - 0.5, size: 10.5, weight: .bold, color: NSColor(hex: "#2E3440"))
             
             let badgeColor = (i == 0 && soon) ? NSColor(hex: "#D08A00") : NSColor(hex: "#8D8B94")
-            draw(daysStr, x: daysX, y: rowY + 0.5, size: 9, weight: .semibold, color: badgeColor)
+            draw(countdown, x: countdownX, y: rowY + 0.5, size: 9, weight: .semibold, color: badgeColor)
         }
     }
 
@@ -830,8 +830,7 @@ final class RichMenuPanelView: NSView {
         
         let exp = resets.expiries.sorted()
         let nextMs = exp.first ?? 0.0
-        let nextDays = Int(max(0.0, round(nextMs / 86400000.0)))
-        let soon = nextDays <= 7 && !exp.isEmpty
+        let soon = nextMs <= 7 * 86_400_000.0 && !exp.isEmpty
         
         let iconColor = soon ? amber : NSColor(hex: "#8B5CF6")
         

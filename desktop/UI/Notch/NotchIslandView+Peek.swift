@@ -69,7 +69,7 @@ extension NotchIslandView {
     // Remaining % (+ optional pool tag), the headline glance metric.
     @ViewBuilder
     func peekPercent(remaining: Double, tag: String?) -> some View {
-        Text("\(Int(remaining))%")
+        Text("\(QuotaFormatter.remainingPercentText(remaining))%")
             .font(.system(size: 12.5, weight: .bold))
             .monospacedDigit()
             .foregroundColor(.white)
@@ -371,7 +371,8 @@ extension NotchIslandView {
                         mode: .healthy,
                         remaining: state.bindingRemaining,
                         brandColor: visual.brandColor,
-                        label: gaugeNumeralInside ? "\(Int(state.bindingRemaining))" : nil,
+                        label: gaugeNumeralInside
+                            ? QuotaFormatter.remainingPercentText(state.bindingRemaining) : nil,
                         size: gaugeNumeralInside ? 18 : 13
                     )
                     if !gaugeNumeralInside {
@@ -428,13 +429,15 @@ extension NotchIslandView {
                 ? (state.weekly ?? state.fiveHour)
                 : (state.fiveHour ?? state.weekly)
             let remaining = preferred?.remaining ?? state.bindingRemaining
+            let remainingText = preferred?.remainingText
+                ?? QuotaFormatter.remainingPercentText(state.bindingRemaining)
             let timer = timerString(for: preferred)
             return AnyView(HStack(spacing: 6) {
                 peekGauge(
                     mode: .healthy,
                     remaining: remaining,
                     brandColor: visual.brandColor,
-                    label: gaugeNumeralInside ? "\(Int(remaining))" : nil,
+                    label: gaugeNumeralInside ? remainingText : nil,
                     size: gaugeNumeralInside ? 18 : 13
                 )
                 if !gaugeNumeralInside {
@@ -486,7 +489,7 @@ extension NotchIslandView {
         brandColor: NSColor,
         uncapped: Bool = false
     ) -> some View {
-        let locked = !uncapped && snapshot != nil && (snapshot?.remaining ?? 100) <= 0
+        let locked = !uncapped && snapshot?.depleted == true
         let timer = snapshot.map { timerString(for: $0) } ?? ""
         let hasTimer = !timer.isEmpty && timer != "now"
         HStack(alignment: .center, spacing: 7) {
@@ -521,7 +524,7 @@ extension NotchIslandView {
                             )
                     }
                     if !gaugeNumeralInside {
-                        Text(uncapped ? "∞" : "\(Int(snapshot?.remaining ?? 0))%")
+                        Text(uncapped ? "∞" : "\((snapshot?.remainingText ?? "0"))%")
                             .font(.system(size: 11.5, weight: .bold))
                             .monospacedDigit()
                             .foregroundColor(

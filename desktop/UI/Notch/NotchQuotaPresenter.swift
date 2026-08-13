@@ -51,12 +51,26 @@ struct QuotaWindowSnapshot {
     let window: QuotaWindow
     let kind: QuotaWindowKind
     let remaining: Double
+    /// Provider-authoritative state when available. Explicit `false` keeps a
+    /// rounded 100% reading usable; nil falls back to percentage semantics.
+    let limitReached: Bool?
     let tag: String?
     /// True when the window is unanchored: the provider keeps reporting that it
     /// resets a full window-length from "now", so there is no real countdown to
     /// show (e.g. an idle Codex 5h window). Rendered statically instead of as a
     /// live timer that would sawtooth between polls.
     let idle: Bool
+
+    var depleted: Bool {
+        remaining <= 0 && limitReached != false
+    }
+
+    var remainingText: String {
+        if remaining <= 0, limitReached == false {
+            return "<1"
+        }
+        return QuotaFormatter.remainingPercentText(remaining)
+    }
 }
 
 struct ProviderQuotaState {
@@ -125,12 +139,18 @@ struct NotchQuotaPresenter {
         notchWindowTag(window)
     }
 
-    func snapshot(for window: QuotaWindow, kind: QuotaWindowKind, fetchedAt: String?) -> QuotaWindowSnapshot? {
+    func snapshot(
+        for window: QuotaWindow,
+        kind: QuotaWindowKind,
+        fetchedAt: String?,
+        limitReached: Bool? = nil
+    ) -> QuotaWindowSnapshot? {
         guard let used = window.usedPercent else { return nil }
         return QuotaWindowSnapshot(
             window: window,
             kind: kind,
             remaining: max(0.0, 100.0 - used),
+            limitReached: limitReached,
             tag: windowTag(for: window),
             idle: QuotaFormatter.isWindowIdle(window, fetchedAt: fetchedAt)
         )
@@ -154,7 +174,12 @@ struct NotchQuotaPresenter {
         provider.windows
             .compactMap { window -> QuotaWindowSnapshot? in
                 guard windowKind(for: window) == kind else { return nil }
-                return snapshot(for: window, kind: kind, fetchedAt: provider.fetchedAt)
+                return snapshot(
+                    for: window,
+                    kind: kind,
+                    fetchedAt: provider.fetchedAt,
+                    limitReached: provider.limitReached
+                )
             }
             .min(by: { $0.remaining < $1.remaining })
     }
@@ -170,7 +195,14 @@ struct NotchQuotaPresenter {
     func scopedWindows(for provider: ProviderUsage) -> [QuotaWindowSnapshot] {
         provider.windows
             .filter { $0.isScoped }
-            .compactMap { snapshot(for: $0, kind: .weekly, fetchedAt: provider.fetchedAt) }
+            .compactMap {
+                snapshot(
+                    for: $0,
+                    kind: .weekly,
+                    fetchedAt: provider.fetchedAt,
+                    limitReached: provider.limitReached
+                )
+            }
     }
 
     func getActiveWeeklyWindow(for provider: ProviderUsage) -> QuotaWindowSnapshot? {
@@ -208,7 +240,12 @@ struct NotchQuotaPresenter {
         var byTag: [String: (five: QuotaWindowSnapshot?, weekly: QuotaWindowSnapshot?)] = [:]
         for window in provider.windows {
             guard let kind = windowKind(for: window),
-                  let snap = snapshot(for: window, kind: kind, fetchedAt: provider.fetchedAt),
+                  let snap = snapshot(
+                    for: window,
+                    kind: kind,
+                    fetchedAt: provider.fetchedAt,
+                    limitReached: provider.limitReached
+                  ),
                   let tag = snap.tag else { continue }
             var entry = byTag[tag] ?? (nil, nil)
             switch kind {
@@ -256,9 +293,15 @@ struct NotchQuotaPresenter {
         let creditsEnabled = creditsEnabled(for: provider)
         let hasCredits = (credits ?? 0) > 0 && creditsEnabled
         let bindingRemaining = bindingSnapshot?.remaining ?? 100.0
-        let weekZero = weekly.map { $0.remaining <= 0.0 } ?? false
-        let fiveZero = fiveHour.map { $0.remaining <= 0.0 } ?? false
-        let depleted = weekZero || fiveZero
+        let percentWeekZero = weekly?.depleted ?? false
+        let percentFiveZero = fiveHour?.depleted ?? false
+        let percentageDepleted = percentWeekZero || percentFiveZero
+        let roundedAtLimit = (weekly?.remaining ?? 1) <= 0 || (fiveHour?.remaining ?? 1) <= 0
+        let nearLimit = provider.limitReached == false && roundedAtLimit
+        let depleted = provider.limitReached ?? percentageDepleted
+        let officialBindingIsWeekly = bindingLabel == .weekly
+        let weekZero = depleted && (percentWeekZero || (!percentageDepleted && officialBindingIsWeekly))
+        let fiveZero = depleted && (percentFiveZero || (!percentageDepleted && !officialBindingIsWeekly))
         // The window whose reset unblocks the provider (weekly outlasts the 5h).
         let lockCandidate = weekZero ? weekly : fiveHour
         let mode: ProviderDisplayMode
@@ -296,7 +339,7 @@ struct NotchQuotaPresenter {
             }
         } else if mode == .healthy {
             lockReason = ""
-            note = nil
+            note = nearLimit ? L10n.tr("notch.near_limit") : nil
         } else if mode == .credits {
             if weekZero && fiveZero {
                 lockReason = L10n.tr("notch.all_spent")

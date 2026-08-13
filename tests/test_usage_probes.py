@@ -108,6 +108,7 @@ def test_codex_live_maps_payload(monkeypatch):
     assert usage.status == STATUS_OK
     assert usage.account_label == "plus"
     assert usage.detail == "live"
+    assert usage.limit_reached is False
     assert any(call[0] == "https://chatgpt.com/backend-api/wham/usage" for call in captured_calls)
     assert any(
         call[0] == "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
@@ -125,6 +126,56 @@ def test_codex_live_maps_payload(monkeypatch):
     assert by_key["5h"].resets_at == _epoch_to_iso(1780379072)
     assert by_key["7d"].used_percent == 25.0
     assert by_key["7d"].window_minutes == 10080
+
+
+def test_codex_live_preserves_authoritative_limit_state(monkeypatch):
+    payload = {
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": False,
+            "limit_reached": True,
+            "primary_window": {
+                "used_percent": 100,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780379072,
+            },
+        },
+    }
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", None))
+    monkeypatch.setattr(
+        CodexUsageProbe,
+        "_http_get_json",
+        lambda self, url, headers: {} if "rate-limit-reset-credits" in url else payload,
+    )
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.limit_reached is True
+    assert usage.detail == "live · limit reached"
+
+
+def test_codex_live_derives_limit_state_from_allowed_when_needed(monkeypatch):
+    payload = {
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": True,
+            "primary_window": {
+                "used_percent": 100,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780379072,
+            },
+        },
+    }
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", None))
+    monkeypatch.setattr(
+        CodexUsageProbe,
+        "_http_get_json",
+        lambda self, url, headers: {} if "rate-limit-reset-credits" in url else payload,
+    )
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.limit_reached is False
 
 
 def test_codex_live_maps_weekly_primary_by_duration(monkeypatch):

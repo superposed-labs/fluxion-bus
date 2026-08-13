@@ -19,12 +19,16 @@
 "menu.resets.available.count" = "%d 回のリセットが利用可能";
 "menu.resets.full_reset" = "完全リセット · 週次 + 5時間";
 "menu.resets.just_granted" = "付与されました";
-"menu.resets.next_expires_in" = "%d日後に期限切れ";
+"menu.resets.next_expires_in_days" = "%d日後に期限切れ";
+"menu.resets.next_expires_in_hours" = "%d時間後に期限切れ";
+"menu.resets.next_expires_in_minutes" = "%d分後に期限切れ";
 "menu.resets.rate_limit_available" = "利用可能なレート制限リセット";
 "menu.resets.next_expires" = "次に期限切れ";
 "menu.credits.expires" = "期限 %@";
 "menu.resets.then" = "その後";
 "menu.resets.in_days" = "%d日後";
+"menu.resets.in_hours" = "%d時間後";
+"menu.resets.in_minutes" = "%d分後";
 "menu.credits.upper" = "クレジット";
 "menu.today" = "今日";
 "menu.status.running" = "%d 件実行中";
@@ -84,6 +88,7 @@
 "notch.recovering.upper" = "確認中";
 "notch.confirming" = "確認中…";
 "notch.recovering.note" = "リセット時刻に到達 — 確認中…";
+"notch.near_limit" = "上限間近 · プロバイダーでは引き続き利用可能";
 "menu.reset.now" = "今";
 "menu.reset.minutes" = "%d分";
 "menu.reset.hours" = "%d時間%02d分";

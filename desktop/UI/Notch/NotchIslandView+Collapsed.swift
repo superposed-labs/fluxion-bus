@@ -174,13 +174,13 @@ extension NotchIslandView {
             guard numeralAllowed, gaugeNumeralInside else { return label }
             if uncapped { return "∞" }
             guard let snapshot = snapshot else { return label }
-            return "\(max(0, Int(snapshot.remaining)))"
+            return snapshot.remainingText
         }()
         if uncapped || snapshot == nil {
             QuotaGauge(style: model.gaugeStyle, color: brandColor, progress: 1, label: center, size: size)
         } else {
             glanceGauge(
-                mode: (snapshot?.remaining ?? 0) <= 0 ? .locked : .healthy,
+                mode: snapshot?.depleted == true ? .locked : .healthy,
                 remaining: snapshot?.remaining ?? 0,
                 brandColor: brandColor,
                 label: center,
@@ -541,7 +541,7 @@ extension NotchIslandView {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(Color(NSColor.systemGreen).opacity(0.88))
                 }
-            } else if let snapshot = snapshot, snapshot.remaining <= 0 {
+            } else if let snapshot = snapshot, snapshot.depleted {
                 // Exhausted: the reset countdown always surfaces, whatever the
                 // gauge style — it's the one number that matters right now.
                 let timer = compactTimerString(for: snapshot)
@@ -551,7 +551,7 @@ extension NotchIslandView {
                     .foregroundColor(Color(NSColor.systemRed))
                     .minimumScaleFactor(0.85)
             } else if !gaugeHidesSideValue {
-                Text("\(Int(snapshot?.remaining ?? 0))%")
+                Text("\((snapshot?.remainingText ?? "0"))%")
                     .font(.system(size: 11, weight: .bold))
                     .monospacedDigit()
                     .foregroundColor(.white)
@@ -666,7 +666,7 @@ extension NotchIslandView {
                 remaining: state.bindingRemaining,
                 brandColor: visual.brandColor,
                 label: gaugeNumeralInside && state.mode == .healthy
-                    ? "\(Int(state.bindingRemaining))" : nil,
+                    ? QuotaFormatter.remainingPercentText(state.bindingRemaining) : nil,
                 size: gaugeNumeralInside ? 18 : 12
             )
 
@@ -711,7 +711,7 @@ extension NotchIslandView {
                 // for the wider peek/expanded surfaces — in the narrow strip beside
                 // the notch they overflowed into the camera and wrapped vertically.
                 let depletedGlance = state.mode == .locked || state.mode == .recovering
-                Text("\(Int(depletedGlance ? 0 : state.bindingRemaining))%")
+                Text("\(depletedGlance ? "0" : QuotaFormatter.remainingPercentText(state.bindingRemaining))%")
                     .font(.system(size: 11, weight: .bold))
                     // Recovering = predicted reset elapsed, confirming: amber, not
                     // the red of a hard lock, so the glance reads "coming back".
@@ -784,8 +784,8 @@ extension NotchIslandView {
         let hasCredits = (credits ?? 0) > 0 && quota.creditsEnabled(for: p)
         return fivePools.prefix(2).map { five in
             let weekly = weeklyPools.first(where: { $0.tag == five.tag })
-            let fiveZero = five.remaining <= 0
-            let weekZero = (weekly?.remaining ?? 100) <= 0
+            let fiveZero = five.depleted
+            let weekZero = weekly?.depleted == true
             let depleted = fiveZero || weekZero
             let blocking: QuotaWindowSnapshot? = weekZero ? weekly : five
             let mode: ProviderDisplayMode

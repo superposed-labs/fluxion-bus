@@ -111,9 +111,16 @@ class CodexUsageProbe:
             return None, "no rate-limit windows in response"
         plan = data.get("plan_type")
         rate_limit = data.get("rate_limit")
+        limit_reached = None
         detail = "live"
-        if isinstance(rate_limit, dict) and rate_limit.get("limit_reached"):
-            detail = "live · limit reached"
+        if isinstance(rate_limit, dict):
+            if isinstance(rate_limit.get("limit_reached"), bool):
+                limit_reached = rate_limit["limit_reached"]
+            elif isinstance(rate_limit.get("allowed"), bool):
+                # Older payloads may expose only the inverse availability flag.
+                limit_reached = not rate_limit["allowed"]
+            if limit_reached:
+                detail = "live · limit reached"
 
         # Map rate-limit reset credits. A successful empty response is an
         # explicit count of zero; None is reserved for request failure so the
@@ -180,6 +187,7 @@ class CodexUsageProbe:
                 windows=windows,
                 fetched_at=_now_iso(),
                 detail=detail,
+                limit_reached=limit_reached,
                 resets=resets_payload,
                 resets_fetch_failed=resets_fetch_failed,
             ),

@@ -148,6 +148,46 @@ enum SharedDateFormatters {
 }
 
 struct QuotaFormatter {
+    private static let minuteMilliseconds = 60_000.0
+    private static let hourMilliseconds = 60.0 * minuteMilliseconds
+    private static let dayMilliseconds = 24.0 * hourMilliseconds
+
+    /// Formats the reset-credit API's remaining-millisecond value without ever
+    /// collapsing a positive duration to "0 days".
+    static func resetExpiryCountdown(_ milliseconds: Double, includesExpiry: Bool) -> String {
+        let remaining = max(0.0, milliseconds)
+        let value: Int
+        let unit: String
+
+        if remaining >= dayMilliseconds {
+            // Preserve the existing nearest-day behavior for longer spans;
+            // only sub-day values need the finer-grained countdown.
+            value = max(1, Int(round(remaining / dayMilliseconds)))
+            unit = "days"
+        } else if remaining >= hourMilliseconds {
+            value = Int(ceil(remaining / hourMilliseconds))
+            unit = "hours"
+        } else {
+            // Keep a still-valid credit from reading "0 minutes" in its last
+            // minute. Expired credits are removed by the provider refresh.
+            value = max(1, Int(ceil(remaining / minuteMilliseconds)))
+            unit = "minutes"
+        }
+
+        let prefix = includesExpiry ? "menu.resets.next_expires_in" : "menu.resets.in"
+        return L10n.tr("\(prefix)_\(unit)", value)
+    }
+
+    /// Compact remaining-quota text. A positive sub-percent value must not
+    /// collapse to "0", which users reasonably read as exhausted.
+    static func remainingPercentText(_ remaining: Double) -> String {
+        let clamped = max(0.0, min(100.0, remaining))
+        if clamped > 0, clamped < 1 {
+            return "<1"
+        }
+        return "\(Int(clamped.rounded(.down)))"
+    }
+
     /// Strict ISO8601 parse that returns nil on failure.
     static func parseISODate(_ isoString: String?) -> Date? {
         guard let isoString = isoString else { return nil }

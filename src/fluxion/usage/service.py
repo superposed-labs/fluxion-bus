@@ -102,6 +102,7 @@ class UsageService:
                     windows=windows,
                     fetched_at=p_dict.get("fetched_at", ""),
                     detail=p_dict.get("detail", ""),
+                    limit_reached=p_dict.get("limit_reached"),
                     resets=p_dict.get("resets") if isinstance(p_dict.get("resets"), dict) else None,
                 )
 

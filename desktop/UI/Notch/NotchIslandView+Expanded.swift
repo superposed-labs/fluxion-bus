@@ -484,7 +484,7 @@ extension NotchIslandView {
                     title: L10n.tr("notch.row.5h"),
                     snapshot: state.fiveHour,
                     showPercent: false,
-                    color: state.fiveHour?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.48)
+                    color: state.fiveHour?.depleted == true ? Color(NSColor.systemRed) : Color.white.opacity(0.48)
                 )
             } else if isCodexFiveHourTemporarilyUncapped(provider) {
                 quotaStatusLine(
@@ -497,7 +497,7 @@ extension NotchIslandView {
                     title: L10n.tr("notch.row.weekly"),
                     snapshot: state.weekly,
                     showPercent: true,
-                    color: state.weekly?.remaining ?? 100 <= 0 ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
+                    color: state.weekly?.depleted == true ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
                 )
                 // The weekly bar visualizes the *long* window as a complement to
                 // the ring's *short* (5h) window. When 5h is absent/uncapped
@@ -553,7 +553,7 @@ extension NotchIslandView {
 
     @ViewBuilder
     func quotaInfoLine(title: String, snapshot: QuotaWindowSnapshot?, showPercent: Bool, color: Color) -> some View {
-        let depleted = (snapshot?.remaining ?? 100) <= 0
+        let depleted = snapshot?.depleted == true
         HStack(alignment: .firstTextBaseline) {
             Text(title)
                 // 9.5pt / semibold matches the design's muted row caption
@@ -565,7 +565,7 @@ extension NotchIslandView {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if showPercent, let snapshot = snapshot {
-                Text("\(Int(snapshot.remaining))%")
+                Text("\(snapshot.remainingText)%")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(depleted ? Color(NSColor.systemRed) : .white)
                     // Keep its intrinsic single-line width so the fixed-width
@@ -597,7 +597,7 @@ extension NotchIslandView {
 
     @ViewBuilder
     func antigravityWeeklyRow(_ snapshot: QuotaWindowSnapshot, lock: PoolLockInfo?, visual: ProviderVisual) -> some View {
-        let depleted = snapshot.remaining <= 0
+        let depleted = snapshot.depleted
         // `lock` marks the pool unusable (its 5h OR weekly is spent) even when
         // this weekly bar itself still has room: the row reads red and the
         // timer counts down the blocking window's reset behind a lock glyph,
@@ -630,7 +630,7 @@ extension NotchIslandView {
                 }
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                Text("\(Int(snapshot.remaining))%")
+                Text("\(snapshot.remainingText)%")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(blocked ? Color(NSColor.systemRed) : Color.white.opacity(0.9))
                     .lineLimit(1)
@@ -669,7 +669,7 @@ extension NotchIslandView {
     /// scoped windows never enter the 5h/weekly classification.
     @ViewBuilder
     func scopedQuotaRow(_ snapshot: QuotaWindowSnapshot, visual: ProviderVisual) -> some View {
-        let depleted = snapshot.remaining <= 0
+        let depleted = snapshot.depleted
         let barColor = quotaBarColor(remaining: snapshot.remaining, brand: Color(visual.brandColor))
         let chipColor = depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.54)
         VStack(spacing: 5) {
@@ -690,7 +690,7 @@ extension NotchIslandView {
                 }
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                Text("\(Int(snapshot.remaining))%")
+                Text("\(snapshot.remainingText)%")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.9))
                     .lineLimit(1)
@@ -1102,8 +1102,8 @@ extension NotchIslandView {
         let depleted = state.mode == .credits || state.mode == .locked
         let snapshot = depleted ? state.lockSnapshot : (state.fiveHour ?? state.weekly)
         let idle = snapshot?.idle ?? false
-        let fiveZero = (state.fiveHour?.remaining ?? 100) <= 0
-        let weekZero = (state.weekly?.remaining ?? 100) <= 0
+        let fiveZero = state.fiveHour?.depleted == true
+        let weekZero = state.weekly?.depleted == true
         let title: String = depleted
             ? (fiveZero && weekZero
                 ? L10n.tr("notch.card.all_spent")
@@ -1188,7 +1188,7 @@ extension NotchIslandView {
                     )
                 }
             } else if let weekly = state.weekly {
-                let depleted = weekly.remaining <= 0
+                let depleted = weekly.depleted
                 quotaInfoLine(
                     title: L10n.tr("notch.row.weekly"),
                     snapshot: weekly,
@@ -2020,8 +2020,7 @@ struct ResetChipView: View {
     var body: some View {
         let exp = resets.expiries.sorted()
         let nextMs = exp.first ?? 0.0
-        let nextDays = Int(max(0.0, round(nextMs / 86400000.0)))
-        let soon = nextDays <= 7 && !exp.isEmpty
+        let soon = nextMs <= 7 * 86_400_000.0 && !exp.isEmpty
         
         VStack(spacing: 4) {
             HStack(alignment: .lastTextBaseline, spacing: 0) {
@@ -2068,7 +2067,7 @@ struct ResetChipView: View {
             if soon {
                 HStack {
                     Spacer()
-                    Text(L10n.tr("menu.resets.next_expires_in", nextDays))
+                    Text(QuotaFormatter.resetExpiryCountdown(nextMs, includesExpiry: true))
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(Color(NSColor.systemOrange))
                 }
@@ -2119,7 +2118,6 @@ struct ResetTooltipView: View {
             
             let exp = resets.expiries.sorted()
             ForEach(Array(exp.enumerated()), id: \.offset) { i, ms in
-                let d = Int(max(0.0, round(ms / 86400000.0)))
                 let dateStr = formatDate(offsetMs: ms)
                 HStack(spacing: 14) {
                     Text(i == 0 ? L10n.tr("menu.resets.next_expires") : L10n.tr("menu.resets.then"))
@@ -2137,7 +2135,7 @@ struct ResetTooltipView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                         
-                        Text(L10n.tr("menu.resets.in_days", d))
+                        Text(QuotaFormatter.resetExpiryCountdown(ms, includesExpiry: false))
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundColor(i == 0 && soon ? Color(NSColor.systemOrange) : .white.opacity(0.4))
                             .lineLimit(1)
