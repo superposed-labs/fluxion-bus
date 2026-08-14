@@ -413,6 +413,31 @@ def test_ping_catalog_failure_uses_codex_cli_default(tmp_path: Path):
     assert not any(arg.startswith("model_reasoning_effort=") for arg in command)
 
 
+def test_ping_effective_model_is_cached_for_the_launch_command(tmp_path: Path):
+    executor = _executor(tmp_path)
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="hi",
+        workspace=tmp_path,
+        metadata={"subagent": {"task_name": "ping-codex"}},
+    )
+
+    with patch.object(
+        executor,
+        "_resolve_cheapest_model_and_effort",
+        return_value=("gpt-5.4-mini", "low"),
+    ) as resolve:
+        effective, source = executor.resolve_effective_model(task)
+        task.metadata["effective_model"] = effective
+        command = executor._build_command(task)
+
+    assert source == "fluxion_ping_policy"
+    assert command[command.index("-m") + 1] == "gpt-5.4-mini"
+    assert "model_reasoning_effort=low" in command
+    resolve.assert_called_once()
+
+
 def _write_codex_config(body: str) -> None:
     (Path(os.environ["CODEX_HOME"]) / "config.toml").write_text(body, encoding="utf-8")
 

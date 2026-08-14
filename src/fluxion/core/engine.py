@@ -225,7 +225,7 @@ class GatewayCore:
         channel_context: dict[str, Any],
     ) -> tuple[bool, str]:
         conversation_key = self._conversation_key(task)
-        executor_name, _ = self._router.select_executor_with_name(task)
+        executor_name, executor = self._router.select_executor_with_name(task)
         executor_session_id = self._sessions.get_executor_session_id(
             conversation_key=conversation_key,
             channel=task.channel,
@@ -246,6 +246,22 @@ class GatewayCore:
         # its run silently lands in a different quota pool than it asked for.
         if model_override and not str(task.metadata.get("model") or "").strip():
             task.metadata["model"] = model_override
+            task.metadata["model_resolution_source"] = "conversation_override"
+        effective_model = str(task.metadata.get("model") or "").strip()
+        if not effective_model:
+            resolve_effective_model = getattr(executor, "resolve_effective_model", None)
+            if resolve_effective_model is not None:
+                effective_model, resolution_source = resolve_effective_model(task)
+                effective_model = str(effective_model or "").strip()
+                if effective_model:
+                    task.metadata["model_resolution_source"] = str(
+                        resolution_source or "fluxion_prelaunch"
+                    )
+        task.metadata["effective_model"] = effective_model
+        if effective_model and not str(task.metadata.get("model_resolution_source") or "").strip():
+            task.metadata["model_resolution_source"] = "requested_override"
+        elif not effective_model:
+            task.metadata["model_resolution_source"] = "executor_runtime"
 
         with self._records_lock:
             pending_for_user = sum(
@@ -1006,6 +1022,10 @@ class GatewayCore:
                 waiter = getattr(executor, "wait_for_finalization", None)
                 if waiter is not None:
                     waiter(task.id, timeout=_PENDING_FINALIZE_TIMEOUT_SEC)
+            refresh_model_resolution = getattr(executor, "refresh_model_resolution", None)
+            if refresh_model_resolution is not None:
+                refresh_model_resolution(task, result)
+            self._attach_model_resolution(task=task, result=result)
             self._attach_workspace_delta(
                 task=task,
                 result=result,
@@ -1087,6 +1107,22 @@ class GatewayCore:
             )
             self._registry.untrack(task.id)
             self._release_workspace_locks(workspace_lock, workspace_file_lock)
+
+    @staticmethod
+    def _attach_model_resolution(*, task: Task, result: ExecutionResult) -> None:
+        effective = str(task.metadata.get("effective_model") or task.metadata.get("model") or "")
+        source = str(task.metadata.get("model_resolution_source") or "")
+        if not result.effective_model:
+            result.effective_model = effective
+        # A model explicitly passed to the executor is resolved unless the
+        # runtime reported a more authoritative value (notably resumed CLI
+        # sessions). CLI-owned defaults remain empty until observed.
+        if not result.resolved_model and effective:
+            result.resolved_model = effective
+        if not result.model_resolution_source:
+            result.model_resolution_source = source or (
+                "fluxion_prelaunch" if effective else "executor_runtime"
+            )
 
     def _should_retry(self, *, result: ExecutionResult, attempt: int) -> bool:
         if attempt > self._max_retries:

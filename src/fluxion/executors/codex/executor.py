@@ -554,7 +554,7 @@ class CodexExecutor:
                 # Skip ~/.codex/config.toml so the keep-alive ping doesn't load
                 # the user's MCP servers + plugins into context (~21% fewer
                 # tokens, measured). Auth still resolves via CODEX_HOME.
-                self._append_ping_model_args(command)
+                self._append_ping_model_args(command, task=task)
             command.extend(guard)
             for attachment in task.image_attachments:
                 command.extend(["--image", str(attachment.path)])
@@ -573,15 +573,31 @@ class CodexExecutor:
             command.extend(["-m", model_override])
         elif ignores_user_config:
             # See resume branch above: trim MCP/plugin context for the ping.
-            self._append_ping_model_args(command)
+            self._append_ping_model_args(command, task=task)
         command.extend(guard)
         for attachment in task.image_attachments:
             command.extend(["--image", str(attachment.path)])
         return command
 
-    def _append_ping_model_args(self, command: list[str]) -> None:
-        command.append("--ignore-user-config")
+    def resolve_effective_model(self, task: Task) -> tuple[str, str]:
+        """Resolve and cache the keep-alive model before the run is accepted."""
+        explicit = str(task.metadata.get("model") or "").strip()
+        if explicit:
+            return explicit, "requested_override"
+        subagent = task.metadata.get("subagent")
+        task_name = str(subagent.get("task_name") or "") if isinstance(subagent, dict) else ""
+        if not (task_name.startswith("ping-") or "ping" in task_name.lower()):
+            return "", "executor_runtime"
         model, effort = self._resolve_cheapest_model_and_effort()
+        task.metadata["_effective_reasoning_effort"] = effort
+        return model, "fluxion_ping_policy" if model else "executor_runtime"
+
+    def _append_ping_model_args(self, command: list[str], *, task: Task) -> None:
+        command.append("--ignore-user-config")
+        model = str(task.metadata.get("effective_model") or "").strip()
+        effort = str(task.metadata.get("_effective_reasoning_effort") or "").strip()
+        if not model:
+            model, effort = self._resolve_cheapest_model_and_effort()
         if not model:
             # The live catalog is unavailable. Let the Codex CLI choose its
             # built-in current default instead of pinning a version that may

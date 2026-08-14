@@ -7,6 +7,7 @@ from typing import Any
 from fluxion.config.settings import Settings
 from fluxion.core.runtime_registry import TERMINAL_STATUSES, owner_is_alive
 from fluxion.executors.antigravity.trajectory_stream import read_max_step_idx
+from fluxion.executors.model_resolution import extract_antigravity_resolved_model
 from fluxion.mcp_server.logs import _log_progress
 from fluxion.subagent import SubagentRunner, compact_tail
 from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
@@ -54,6 +55,7 @@ def _status_view(
     task: dict[str, Any], *, settings: Settings, runner: SubagentRunner
 ) -> dict[str, Any]:
     slim = _slim_task(task)
+    _attach_live_model_resolution(slim, settings=settings)
     status = str(slim.get("status") or "")
     terminal = _is_terminal_status(status)
     # While a run is in flight `summary` holds the rendered prompt + sub-agent
@@ -95,6 +97,21 @@ def _status_view(
     return slim
 
 
+def _attach_live_model_resolution(task: dict[str, Any], *, settings: Settings) -> None:
+    """Expose agy's selected CLI default as soon as its live log reports it."""
+    if task.get("resolved_model") or task.get("executor") != "antigravity":
+        return
+    task_id = str(task.get("task_id") or "")
+    if not task_id:
+        return
+    resolved = extract_antigravity_resolved_model(
+        settings.data_dir / "logs" / f"task-{task_id}.agy.log"
+    )
+    if resolved:
+        task["resolved_model"] = resolved
+        task["model_resolution_source"] = "executor_runtime"
+
+
 def _status_poll_view(
     task: dict[str, Any], *, settings: Settings, runner: SubagentRunner
 ) -> dict[str, Any]:
@@ -116,6 +133,10 @@ def _status_poll_view(
         "success": detail.get("success"),
         "summary": detail.get("summary", ""),
         "executor": detail.get("executor", ""),
+        "requested_model": detail.get("requested_model", ""),
+        "effective_model": detail.get("effective_model", "(executor default)"),
+        "resolved_model": detail.get("resolved_model", ""),
+        "model_resolution_source": detail.get("model_resolution_source", ""),
         "is_terminal": detail.get("is_terminal", False),
         "result_available": detail.get("result_available", False),
         "changed_files_available": detail.get("changed_files_available", False),
@@ -362,6 +383,10 @@ def _result_view(task: dict[str, Any]) -> dict[str, Any]:
         "final_summary": task.get("summary", ""),
         "summary": task.get("summary", ""),
         "executor": task.get("executor", ""),
+        "requested_model": task.get("requested_model", ""),
+        "effective_model": task.get("effective_model") or "(executor default)",
+        "resolved_model": task.get("resolved_model", ""),
+        "model_resolution_source": task.get("model_resolution_source", ""),
         "executor_session_id": task.get("executor_session_id"),
         "conversation_key": task.get("conversation_key", ""),
         "subagent": subagent,
@@ -556,6 +581,10 @@ def _slim_task(task: dict[str, Any]) -> dict[str, Any]:
         "run_id": task.get("task_id", ""),
         "task_id": task.get("task_id", ""),
         "executor": task.get("executor", ""),
+        "requested_model": task.get("requested_model", ""),
+        "effective_model": task.get("effective_model") or "(executor default)",
+        "resolved_model": task.get("resolved_model", ""),
+        "model_resolution_source": task.get("model_resolution_source", ""),
         "status": task.get("status", ""),
         "success": task.get("success"),
         "exit_code": task.get("exit_code"),

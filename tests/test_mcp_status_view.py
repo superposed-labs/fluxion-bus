@@ -108,6 +108,25 @@ def test_status_view_replaces_prompt_echo_while_running(tmp_path):
     assert len(view["summary"]) < 60  # no longer carries the whole prompt
 
 
+def test_status_view_captures_antigravity_cli_default_while_running(tmp_path):
+    class _S:
+        data_dir = tmp_path
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "task-t1.agy.log").write_text(
+        'Propagating selected model override to backend: label="Gemini 3.7 Flash (High)"\n',
+        encoding="utf-8",
+    )
+    task = {**_task("RUNNING", "prompt"), "executor": "antigravity"}
+
+    view = _status_view(task, settings=_S(), runner=_NoLiveRunner())
+
+    assert view["effective_model"] == "(executor default)"
+    assert view["resolved_model"] == "gemini-3.7-flash-high"
+    assert view["model_resolution_source"] == "executor_runtime"
+
+
 def test_status_poll_view_omits_repeated_detail_fields(tmp_path):
     class _S:
         data_dir = tmp_path

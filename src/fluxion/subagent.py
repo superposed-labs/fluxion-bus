@@ -129,6 +129,9 @@ class SubagentRunResult:
             "summary": self.summary,
             "exit_code": self.exit_code,
             "executor_session_id": self.executor_session_id,
+            "effective_model": self.result.effective_model or "(executor default)",
+            "resolved_model": self.result.resolved_model,
+            "model_resolution_source": self.result.model_resolution_source,
             "changed_files": self.changed_files,
             "risk_flags": self.result.risk_flags,
             "change_set_file": self.result.change_set_file,
@@ -160,6 +163,7 @@ class SubagentRunHandle:
     adapter: LocalChannelAdapter
     requested_model: str = ""
     effective_model: str = ""
+    model_resolution_source: str = ""
     resumed_session_model: str = ""
 
     def to_payload(self) -> dict[str, Any]:
@@ -183,6 +187,8 @@ class SubagentRunHandle:
             # pool than the one it picked.
             "requested_model": self.requested_model,
             "effective_model": self.effective_model or "(executor default)",
+            "resolved_model": "",
+            "model_resolution_source": self.model_resolution_source,
         }
         if self.resumed_session_model and self.effective_model:
             if self.resumed_session_model != self.effective_model:
@@ -358,6 +364,16 @@ class SubagentRunner:
                 "executor": agent,
                 "conversation_key": conversation_key,
                 "model": request.model or "",
+                "requested_model": request.model or "",
+                "model_resolution_source": (
+                    "fluxion_ping_policy"
+                    if request.model
+                    and request.task_name
+                    and (
+                        request.task_name.startswith("ping-") or "ping" in request.task_name.lower()
+                    )
+                    else ("requested_override" if request.model else "executor_runtime")
+                ),
                 "prompt": " ".join(request.prompt).strip(),
                 "subagent": {
                     "agent": agent,
@@ -384,7 +400,12 @@ class SubagentRunner:
             self._adapters[task.id] = adapter
         # Read back after submit: the gateway fills in a conversation-level
         # default when the caller didn't name a model.
-        effective_model = str(task.metadata.get("model") or "")
+        effective_model = str(
+            task.metadata.get("effective_model") or task.metadata.get("model") or ""
+        )
+        model_resolution_source = str(
+            task.metadata.get("model_resolution_source") or "executor_runtime"
+        )
         resumed_session_model = (
             self._gateway._sessions.get_session_model(
                 conversation_key=conversation_key,
@@ -411,6 +432,7 @@ class SubagentRunner:
             adapter=adapter,
             requested_model=request.model or "",
             effective_model=effective_model,
+            model_resolution_source=model_resolution_source,
             resumed_session_model=resumed_session_model,
         )
 

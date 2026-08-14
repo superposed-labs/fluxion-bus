@@ -362,6 +362,10 @@ class ClaudeExecutor:
                 if event_capture and event_capture.session_id
                 else self._extract_session_id(payload)
             ),
+            resolved_model=event_capture.resolved_model if event_capture else "",
+            model_resolution_source=(
+                "executor_runtime" if event_capture and event_capture.resolved_model else ""
+            ),
             duration_sec=duration_sec,
         )
 
@@ -443,6 +447,17 @@ class ClaudeExecutor:
             task_name = str(subagent.get("task_name", ""))
             return task_name.startswith("ping-") or "ping" in task_name.lower()
         return False
+
+    def resolve_effective_model(self, task: Task) -> tuple[str, str]:
+        """Return the model this executor can determine before launching Claude."""
+        explicit = str(task.metadata.get("model") or "").strip()
+        if explicit:
+            return explicit, "requested_override"
+        if self._is_ping_task(task):
+            return _PING_MODEL, "fluxion_ping_policy"
+        if self._model:
+            return self._model, "executor_config"
+        return "", "executor_runtime"
 
     def _build_command(self, task: Task, prompt: str, resolved_command: str) -> list[str]:
         command = [resolved_command]

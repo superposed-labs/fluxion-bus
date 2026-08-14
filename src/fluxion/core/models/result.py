@@ -22,6 +22,14 @@ class ExecutionResult:
     change_set_file: str = ""
     log_file: str = ""
     executor_session_id: str = ""
+    # Model provenance is intentionally split in three. ``effective_model`` is
+    # what Fluxion decided before launch; ``resolved_model`` is what the
+    # executor runtime actually reported. They differ when a CLI owns its
+    # default selection, and keeping both is the only way an MCP caller can
+    # explain which quota pool was really billed.
+    effective_model: str = ""
+    resolved_model: str = ""
+    model_resolution_source: str = ""
     # Token usage the executor's own stream reported for this run, keyed with the
     # same names as `fluxion.usage` (input_tokens, output_tokens,
     # cache_creation_tokens, cache_read_tokens). Empty when the executor does not
