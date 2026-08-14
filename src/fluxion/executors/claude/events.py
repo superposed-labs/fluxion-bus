@@ -15,6 +15,7 @@ class ClaudeEventCapture:
     is_stream_json: bool = False
     final_message: str = ""
     session_id: str = ""
+    resolved_model: str = ""
     changed_files: list[str] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     operations: list[dict[str, Any]] = field(default_factory=list)
@@ -197,6 +198,7 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
     changed_files: OrderedDict[str, None] = OrderedDict()
     final_message = ""
     session_id = ""
+    resolved_model = ""
     token_usage: dict[str, int] = {}
     shell_mutation_without_paths = False
     # Edits/creates are recorded as they stream; Write is deferred until its
@@ -211,6 +213,9 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
         current_session = str(event.get("session_id") or "").strip()
         if current_session:
             session_id = current_session
+        current_model = str(event.get("model") or "").strip()
+        if current_model:
+            resolved_model = current_model
 
         result = event.get("result")
         if isinstance(result, str) and result.strip():
@@ -297,6 +302,7 @@ def parse_claude_stream_events(stdout: str, *, workspace: Path) -> ClaudeEventCa
         is_stream_json=True,
         final_message=final_message,
         session_id=session_id,
+        resolved_model=resolved_model,
         changed_files=list(changed_files.keys()),
         risk_flags=risk_flags,
         operations=operations,

@@ -125,6 +125,10 @@ def _initial_task(task_id: str, event: dict[str, Any]) -> dict[str, Any]:
         "task_id": task_id,
         "executor": executor,
         "model": str(metadata.get("model") or ""),
+        "requested_model": str(metadata.get("requested_model") or ""),
+        "effective_model": str(metadata.get("effective_model") or metadata.get("model") or ""),
+        "resolved_model": "",
+        "model_resolution_source": str(metadata.get("model_resolution_source") or ""),
         "subagent": {
             "agent": subagent.get("agent", executor),
             "thread": subagent.get("thread", ""),
@@ -210,6 +214,11 @@ def _apply_event(task_obj: dict[str, Any], event: dict[str, Any]) -> None:
     task_obj["exit_code"] = result_data.get("exit_code")
     task_obj["executor_session_id"] = (
         result_data.get("executor_session_id") or task_obj["executor_session_id"]
+    )
+    task_obj["effective_model"] = result_data.get("effective_model") or task_obj["effective_model"]
+    task_obj["resolved_model"] = result_data.get("resolved_model") or task_obj["resolved_model"]
+    task_obj["model_resolution_source"] = (
+        result_data.get("model_resolution_source") or task_obj["model_resolution_source"]
     )
 
     changed_files = [

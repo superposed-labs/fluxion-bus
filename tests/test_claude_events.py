@@ -29,7 +29,12 @@ def _assistant_tool(session_id: str, name: str, tool_input: dict) -> dict:
 
 def test_parse_claude_stream_tool_changes(tmp_path: Path) -> None:
     stdout = _jsonl(
-        {"type": "system", "subtype": "init", "session_id": "session-1"},
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "session-1",
+            "model": "claude-sonnet-4-6",
+        },
         _assistant_tool(
             "session-1",
             "Write",
@@ -53,6 +58,7 @@ def test_parse_claude_stream_tool_changes(tmp_path: Path) -> None:
 
     assert capture.is_stream_json is True
     assert capture.session_id == "session-1"
+    assert capture.resolved_model == "claude-sonnet-4-6"
     assert capture.final_message == "FINAL_ANSWER\nDone\nACTIONS_JSON\n{}"
     assert capture.changed_files == ["new.json", "existing.txt", "delete_me.txt"]
     assert capture.risk_flags == []

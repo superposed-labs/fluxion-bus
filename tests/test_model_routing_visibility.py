@@ -41,17 +41,43 @@ def _handle(**kwargs) -> SubagentRunHandle:
 
 def test_the_run_payload_states_which_model_it_will_use() -> None:
     payload = _handle(
-        requested_model="gemini-3.6-flash-high", effective_model="gemini-3.6-flash-high"
+        requested_model="gemini-3.6-flash-high",
+        effective_model="gemini-3.6-flash-high",
+        model_resolution_source="requested_override",
     ).to_payload()
 
     assert payload["requested_model"] == "gemini-3.6-flash-high"
     assert payload["effective_model"] == "gemini-3.6-flash-high"
+    assert payload["resolved_model"] == ""
+    assert payload["model_resolution_source"] == "requested_override"
     assert "model_binding_warning" not in payload
 
 
 def test_no_model_named_is_reported_as_the_executor_default() -> None:
     payload = _handle().to_payload()
     assert payload["effective_model"] == "(executor default)"
+    assert payload["resolved_model"] == ""
+
+
+def test_explicit_effective_model_becomes_the_resolved_fallback() -> None:
+    task = Task.create(
+        channel="local",
+        user_id="local",
+        text="go",
+        workspace=Path("/repo"),
+        metadata={
+            "model": "gemini-3.7-flash-low",
+            "effective_model": "gemini-3.7-flash-low",
+            "model_resolution_source": "fluxion_ping_policy",
+        },
+    )
+    result = ExecutionResult(success=True, summary="ok", stdout="", stderr="", exit_code=0)
+
+    GatewayCore._attach_model_resolution(task=task, result=result)
+
+    assert result.effective_model == "gemini-3.7-flash-low"
+    assert result.resolved_model == "gemini-3.7-flash-low"
+    assert result.model_resolution_source == "fluxion_ping_policy"
 
 
 def test_resuming_a_conversation_built_on_another_model_is_flagged() -> None:

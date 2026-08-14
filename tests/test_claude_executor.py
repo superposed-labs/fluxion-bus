@@ -89,6 +89,23 @@ def test_non_ping_without_model_omits_model_flag(tmp_path):
     assert "--effort" not in cmd
 
 
+def test_effective_model_reports_fluxion_owned_claude_choices(tmp_path):
+    configured = _executor(tmp_path, model="claude-opus-4-8")
+
+    assert configured.resolve_effective_model(_task(tmp_path, "scheduled")) == (
+        "claude-opus-4-8",
+        "executor_config",
+    )
+    assert configured.resolve_effective_model(_task(tmp_path, "ping-keepalive")) == (
+        "haiku",
+        "fluxion_ping_policy",
+    )
+    assert _executor(tmp_path).resolve_effective_model(_task(tmp_path, "scheduled")) == (
+        "",
+        "executor_runtime",
+    )
+
+
 def test_build_command_uses_stream_json(tmp_path):
     ex = _executor(tmp_path)
     cmd = ex._build_command(_task(tmp_path, None), "hi", "claude")

@@ -99,6 +99,9 @@ def run_subagent_tool(
                 "summary": result.summary,
                 "exit_code": result.exit_code,
                 "executor_session_id": result.executor_session_id,
+                "effective_model": result.effective_model or "(executor default)",
+                "resolved_model": result.resolved_model,
+                "model_resolution_source": result.model_resolution_source,
                 "changed_files": visible_changed_files(
                     workspace=settings.resolve_run_workspace(
                         raw_workspace=workspace,

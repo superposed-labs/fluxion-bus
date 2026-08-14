@@ -26,6 +26,7 @@ from fluxion.executors.common.process import (
     start_process,
     terminate_process_tree,
 )
+from fluxion.executors.model_resolution import extract_antigravity_resolved_model
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
 from fluxion.workspace.antigravity_trajectory import (
@@ -82,6 +83,17 @@ class AntiGravityExecutor:
 
     def supports(self, task: Task) -> bool:
         return True
+
+    def refresh_model_resolution(self, task: Task, result: ExecutionResult) -> None:
+        """Fill the runtime-selected model after agy's log has finished flushing."""
+        resolved = extract_antigravity_resolved_model(
+            self._logs_dir / f"task-{task.id}.agy.log",
+            result.stdout,
+            result.stderr,
+        )
+        if resolved:
+            result.resolved_model = resolved
+            result.model_resolution_source = "executor_runtime"
 
     def execute(
         self,
@@ -259,6 +271,7 @@ class AntiGravityExecutor:
                     if cancelled
                     else f"AntiGravity timed out after {self._timeout_sec}s"
                 )
+                resolved_model = extract_antigravity_resolved_model(agy_log_file, stdout, stderr)
                 return ExecutionResult(
                     success=False,
                     summary=summary,
@@ -273,6 +286,8 @@ class AntiGravityExecutor:
                         agy_log_file=agy_log_file,
                     ),
                     executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                    resolved_model=resolved_model,
+                    model_resolution_source="executor_runtime" if resolved_model else "",
                     duration_sec=duration,
                     process_cleanup=cleanup.to_payload(),
                 )
@@ -296,6 +311,7 @@ class AntiGravityExecutor:
                 finalize_event = threading.Event()
                 with self._finalization_lock:
                     self._finalization_events[task.id] = finalize_event
+                resolved_model = extract_antigravity_resolved_model(agy_log_file, stdout, stderr)
                 result = ExecutionResult(
                     success=success,
                     summary=self._extract_user_answer(stdout)
@@ -312,6 +328,8 @@ class AntiGravityExecutor:
                         agy_log_file=agy_log_file,
                     ),
                     executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                    resolved_model=resolved_model,
+                    model_resolution_source="executor_runtime" if resolved_model else "",
                     duration_sec=duration,
                     pending_finalization=True,
                     artifacts=self._resolve_action_uploads(stdout=stdout, workspace=task.workspace),
@@ -341,6 +359,7 @@ class AntiGravityExecutor:
                 agy_log_file, stderr
             ) or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
             success = returncode == 0 and not execution_error
+            resolved_model = extract_antigravity_resolved_model(agy_log_file, stdout, stderr)
             return ExecutionResult(
                 success=success,
                 summary=self._extract_user_answer(stdout)
@@ -357,6 +376,8 @@ class AntiGravityExecutor:
                     agy_log_file=agy_log_file,
                 ),
                 executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                resolved_model=resolved_model,
+                model_resolution_source="executor_runtime" if resolved_model else "",
                 duration_sec=duration,
                 artifacts=self._resolve_action_uploads(stdout=stdout, workspace=task.workspace),
             )
