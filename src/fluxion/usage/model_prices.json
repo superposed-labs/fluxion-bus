@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-31",
+  "updated_at": "2026-08-14",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for GPT-5.4/5.5/5.6 family, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
     "claude-fable-5": {
@@ -299,8 +299,7 @@
       { "effective_date": "2026-06-10", "observed": "2026-07-25", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.6-4.8 and Opus 5, all flat $5/$25); deprecated Opus 4/4.1 ($15/$75) pinned in models" }
     ],
     "sonnet-5": [
-      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic docs (Sonnet 5 introductory pricing through August 31, 2026); checked before generic 'sonnet' so dated build ids don't inherit Sonnet 4.5/4.6 pricing" },
-      { "effective_date": "2026-09-01", "observed": "2026-07-01", "in": 3.0, "out": 15.0, "cw": 3.75, "cw1h": 6.0, "cr": 0.3, "source": "Anthropic docs (Sonnet 5 standard pricing starting September 1, 2026)" }
+      { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic docs (Sonnet 5; launched at an introductory $2/$10 rate, subsequently confirmed as the permanent standard price); checked before generic 'sonnet' so dated build ids don't inherit Sonnet 4.5/4.6 pricing" }
     ],
     "sonnet": [
       { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 3.0, "out": 15.0, "cw": 3.75, "cw1h": 6.0, "cr": 0.3, "source": "Anthropic docs (Sonnet 4.5/4.6; Sonnet 5 is pinned separately at the more specific 'sonnet-5' family)" }
@@ -320,7 +319,9 @@
     ],
     "flash": [
       { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.5, "out": 9.0, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.5 Flash, current); Flash is repriced per version (3 Flash was $0.50/$3, 2.5 Flash $0.30/$2.50), so this tracks the latest and older versions are pinned in 'models'. Checked before 'gemini'." },
-      { "effective_date": "2026-07-21", "observed": "2026-07-22", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.6 Flash); Gemini 3.5, 3, and 2.5 Flash remain pinned in models. Checked before 'gemini'." }
+      { "effective_date": "2026-07-21", "observed": "2026-07-22", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.6 Flash); Gemini 3.5, 3, and 2.5 Flash remain pinned in models. Checked before 'gemini'." },
+      { "effective_date": "2026-08-13", "observed": "2026-08-14", "in": 0.75, "out": 3.75, "cw": 0.75, "cr": 0.075, "source": "Gemini docs + release notes (Gemini 3.7 Flash GA introductory pricing through December 31, 2026; Gemini 3.6 Flash currently shares the same promotional rate). Older Flash versions remain pinned in models." },
+      { "effective_date": "2027-01-01", "observed": "2026-08-14", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.7 and 3.6 Flash standard pricing starting January 1, 2027). Older Flash versions remain pinned in models." }
     ],
     "gemini": [
       {
