@@ -401,7 +401,10 @@ extension AppDelegate {
                 valueColor = NSColor.secondaryLabelColor
             } else if p.status == "ok", let used = headline(p) {
                 let remaining = max(0.0, round(100.0 - used))
-                valueText = " \(Int(remaining))%"
+                let text = remaining <= 0 && p.limitReached == false
+                    ? "<1"
+                    : QuotaFormatter.remainingPercentText(remaining)
+                valueText = " \(text)%"
                 valueColor = usageColor(used: used)
             } else if p.status == "ok" {
                 valueText = " --"
@@ -659,7 +662,16 @@ extension AppDelegate {
                     }
                     rowStr = "  \(displayName)\t\t\(amount)"
                 } else {
-                    let leftPct = u == nil ? "—" : "\(Int(round(100.0 - u!)))% left"
+                    let leftPct: String
+                    if let used = u {
+                        let remaining = max(0.0, 100.0 - used)
+                        let remainingText = remaining <= 0 && p.limitReached == false
+                            ? "<1"
+                            : QuotaFormatter.remainingPercentText(remaining)
+                        leftPct = "\(remainingText)% left"
+                    } else {
+                        leftPct = "—"
+                    }
                     let reset = self.resetPhrase(window: w, fetchedAt: p.fetchedAt)
                     let bar = self.barStr(used: u, width: barWidth)
                     rowStr = "  \(displayName)\t\(bar)\t\(leftPct)\t\(reset)"
@@ -726,15 +738,14 @@ extension AppDelegate {
                     
                     let exp = resets.expiries.sorted()
                     let nextMs = exp.first ?? 0.0
-                    let nextDays = Int(max(0.0, round(nextMs / 86400000.0)))
-                    let soon = nextDays <= 7 && !exp.isEmpty
+                    let soon = nextMs <= 7 * 86_400_000.0 && !exp.isEmpty
                     
                     let itemColor = soon ? NSColor.systemOrange : NSColor.secondaryLabelColor
                     resetsItem.image = self.imageForSymbol("arrow.counterclockwise", color: itemColor)
                     
                     let availableText = L10n.tr("menu.resets.available.compact", resets.count)
                     let infoPart = soon
-                        ? "\(availableText) (\(L10n.tr("menu.resets.next_expires_in", nextDays)))"
+                        ? "\(availableText) (\(QuotaFormatter.resetExpiryCountdown(nextMs, includesExpiry: true)))"
                         : availableText
                     let rowStr = "  \(L10n.tr("menu.resets"))\t\t\(infoPart)"
                     resetsItem.attributedTitle = NSAttributedString(string: rowStr, attributes: rowAttributes(itemColor))

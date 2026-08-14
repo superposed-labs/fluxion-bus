@@ -726,14 +726,14 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                     // text lane.
                     let state = presenter.quotaState(for: provider)
                     let ring: CGFloat = model.gaugeValue == "inside" ? 18 : 17
-                    if (state.fiveHour?.remaining ?? 100) <= 0 {
+                    if state.fiveHour?.depleted == true {
                         leftW = 58
                     } else if isCodexFiveHourTemporarilyUncapped(provider) && model.gaugeValue == "hidden" {
                         leftW = 34
                     } else {
                         leftW = ring
                     }
-                    rightW = (state.weekly?.remaining ?? 100) <= 0 ? 58 : ring
+                    rightW = state.weekly?.depleted == true ? 58 : ring
                 } else {
                     // `5H 100%` / `WK 100%` normally fit well inside 48pt, but a
                     // depleted window swaps the value for a timer (`4d 17h`). Give

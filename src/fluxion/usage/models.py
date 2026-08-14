@@ -57,6 +57,9 @@ class ProviderUsage:
     windows: list[UsageWindow] = field(default_factory=list)
     fetched_at: str = ""  # ISO8601, when this snapshot was produced
     detail: str = ""  # human note: error reason or why unavailable
+    # Provider-authoritative exhaustion signal when exposed independently from
+    # the rounded usage percentage. None means the provider did not report one.
+    limit_reached: bool | None = None
     resets: dict[str, Any] | None = None
     # Internal probe signal: the main quota request succeeded but the optional
     # reset-credit request did not. Omitted from to_dict(); UsageService uses it
@@ -75,6 +78,7 @@ class ProviderUsage:
             "windows": [w.to_dict() for w in self.windows],
             "fetched_at": self.fetched_at,
             "detail": self.detail,
+            "limit_reached": self.limit_reached,
         }
         if self.resets is not None:
             d["resets"] = self.resets

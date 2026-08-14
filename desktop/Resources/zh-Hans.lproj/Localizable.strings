@@ -19,12 +19,16 @@
 "menu.resets.available.count" = "%d 次重置可用";
 "menu.resets.full_reset" = "完整重置 · 每周 + 5 小时";
 "menu.resets.just_granted" = "刚刚发放";
-"menu.resets.next_expires_in" = "%d 天后过期";
+"menu.resets.next_expires_in_days" = "%d 天后过期";
+"menu.resets.next_expires_in_hours" = "%d 小时后过期";
+"menu.resets.next_expires_in_minutes" = "%d 分钟后过期";
 "menu.resets.rate_limit_available" = "可用的限速重置";
 "menu.resets.next_expires" = "下次过期";
 "menu.credits.expires" = "%@ 到期";
 "menu.resets.then" = "之后";
 "menu.resets.in_days" = "%d 天后";
+"menu.resets.in_hours" = "%d 小时后";
+"menu.resets.in_minutes" = "%d 分钟后";
 "menu.credits.upper" = "点数";
 "menu.today" = "今天";
 "menu.status.running" = "%d 个运行中";
@@ -84,6 +88,7 @@
 "notch.recovering.upper" = "确认中";
 "notch.confirming" = "确认中…";
 "notch.recovering.note" = "已到重置时间 — 正在确认…";
+"notch.near_limit" = "接近上限 · 服务仍允许请求";
 "menu.reset.now" = "现在";
 "menu.reset.minutes" = "%d分钟";
 "menu.reset.hours" = "%d小时%02d分钟";

@@ -33,12 +33,16 @@ struct ProviderUsage: Codable, Equatable {
     let windows: [QuotaWindow]
     let fetchedAt: String?
     let detail: String?
+    /// Provider-authoritative exhaustion state. Nil means unavailable, so the
+    /// UI falls back to the reported percentage (Claude's current behavior).
+    let limitReached: Bool?
     let resets: ResetCredits?
 
     enum CodingKeys: String, CodingKey {
         case provider, status, windows, detail, resets
         case accountLabel = "account_label"
         case fetchedAt = "fetched_at"
+        case limitReached = "limit_reached"
     }
 }
 
@@ -708,6 +712,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
                     windows: [],
                     fetchedAt: nil,
                     detail: L10n.tr("menu.loading_quota"),
+                    limitReached: nil,
                     resets: nil
                 ))
             }

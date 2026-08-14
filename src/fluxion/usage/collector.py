@@ -84,6 +84,7 @@ def payload_to_usage(payload: dict[str, Any] | None) -> list[ProviderUsage]:
                 windows=windows,
                 fetched_at=provider.get("fetched_at", ""),
                 detail=provider.get("detail", ""),
+                limit_reached=provider.get("limit_reached"),
                 resets=provider.get("resets"),
             )
         )

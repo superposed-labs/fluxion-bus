@@ -19,12 +19,16 @@
 "menu.resets.available.count" = "%d reset(s) available";
 "menu.resets.full_reset" = "Full reset · Weekly + 5h";
 "menu.resets.just_granted" = "just granted";
-"menu.resets.next_expires_in" = "Next expires in %dd";
+"menu.resets.next_expires_in_days" = "Next expires in %dd";
+"menu.resets.next_expires_in_hours" = "Next expires in %dh";
+"menu.resets.next_expires_in_minutes" = "Next expires in %dm";
 "menu.resets.rate_limit_available" = "Rate-limit resets available";
 "menu.resets.next_expires" = "Next expires";
 "menu.credits.expires" = "Expires %@";
 "menu.resets.then" = "Then";
 "menu.resets.in_days" = "in %dd";
+"menu.resets.in_hours" = "in %dh";
+"menu.resets.in_minutes" = "in %dm";
 "menu.credits.upper" = "CREDITS";
 "menu.today" = "Today";
 "menu.status.running" = "%d running";
@@ -84,6 +88,7 @@
 "notch.recovering.upper" = "CONFIRMING";
 "notch.confirming" = "Confirming…";
 "notch.recovering.note" = "Reset time reached — confirming…";
+"notch.near_limit" = "Near limit · provider still allows requests";
 "menu.reset.now" = "now";
 "menu.reset.minutes" = "%dm";
 "menu.reset.hours" = "%dh%02dm";
