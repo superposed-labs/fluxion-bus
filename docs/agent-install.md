@@ -168,6 +168,15 @@ absolute paths:
 When editing an existing config file, add the `fluxion` entry without
 disturbing other servers.
 
+This step registers the Fluxion MCP server only. It does not install Fluxion's
+native Codex roles. A Codex user who also wants Codex's own `spawn_agent` to
+route `fluxion_worker`, `fluxion_explorer`, `fluxion_reviewer`, or
+`fluxion_auto` through the Provider Gateway should complete the separate
+[Codex Integration installation](provider-gateway.md#client-codex). In the
+macOS app, that is **Preferences → Provider Routing → Codex Integration →
+Install / Repair**. The two integrations are optional and can be used
+independently.
+
 MCP tools load when the client starts a session, so the registration cannot be
 exercised from the current session. Verification of the registration itself
 happens in Step 7.

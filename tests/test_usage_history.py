@@ -677,6 +677,14 @@ def test_pick_rate_by_effective_date():
     assert _pick_rate(rates, "2024-06-01")["in"] == 15.0  # before earliest → oldest rate
     assert _pick_rate([], "2026-01-01") is None
 
+    # Future-dated rate should not be picked for current (at_date=None) lookup
+    future_rates = [
+        {"effective_date": "2026-08-13", "in": 0.75},
+        {"effective_date": "2099-01-01", "in": 1.5},
+    ]
+    assert _pick_rate(future_rates, None)["in"] == 0.75
+    assert _pick_rate(future_rates, "2099-01-01")["in"] == 1.5
+
 
 def test_unknown_provider_costs_zero():
     # A provider with no rate entry (e.g. a local model) contributes no cost.

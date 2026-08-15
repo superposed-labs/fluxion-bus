@@ -379,11 +379,31 @@ fluxion-provider serve
 
 To configure Codex to route sub-agents to Fluxion:
 
+1. Open **Fluxion Preferences → Provider Routing**.
+2. Confirm that **Provider Gateway** is running.
+3. Under **Codex Integration**, click **Install / Repair**.
+4. Choose the Codex model used for role capabilities and usage attribution,
+   then install.
+5. Restart Codex so it loads the new role files.
+
+This installs `fluxion_auto`, `fluxion_worker`, `fluxion_explorer`, and
+`fluxion_reviewer`. Name the role explicitly when delegating, for example:
+**“Use the `fluxion_worker` role to inspect this change.”**
+
+This native Codex integration is separate from registering the Fluxion MCP
+server. MCP registration exposes `mcp__fluxion__*` tools; Codex Integration
+routes Codex's own `spawn_agent` roles through the Provider Gateway. You can
+use either integration independently.
+
+For a CLI-only install:
+
 ```bash
-fluxion-provider install-codex-config
+fluxion-provider install-codex-config --model gpt-5.6-terra
 ```
 
-See [Provider Gateway](docs/provider-gateway.md) for details, security token setup, and diagnostic commands.
+See [Provider Gateway](docs/provider-gateway.md#client-codex) for model
+selection, verification, read-only routing constraints, security token setup,
+and diagnostic commands.
 
 ## Documentation
 

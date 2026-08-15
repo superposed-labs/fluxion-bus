@@ -204,6 +204,17 @@ swiftc -O \
     desktop/UI/MainWindow.swift \
     desktop/UI/Preferences/PreferencesWindow.swift \
     desktop/UI/Preferences/PreferencesWindow+Sections.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderRoutingModels.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderRoutingComponents.swift \
+    desktop/UI/Preferences/ProviderRouting/PreferencesWindow+ProviderRouting.swift \
+    desktop/UI/Preferences/ProviderRouting/PreferencesWindow+ProviderCards.swift \
+    desktop/UI/Preferences/ProviderRouting/PreferencesWindow+ProviderSections.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderRouteEditorRows.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderRouteEditorSheet.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderCodexModels.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderCodexRowViews.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderCodexConfigSheet.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderInstallRepairSheet.swift \
     desktop/UI/Preferences/PreferencesWindow+Integrations.swift \
     desktop/UI/Preferences/PreferencesWindow+PendingUsers.swift \
     desktop/UI/WeChatLoginWindow.swift \

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import Any
 
 from fluxion.usage.model_identity import billing_model_id
@@ -8,16 +9,15 @@ _UNKNOWN_PRICE = float("inf")
 
 
 def pick_rate(rate_list: Any, at_date: str | None) -> dict[str, Any] | None:
-    """Choose the latest rate, or the latest rate effective by ``at_date``."""
+    """Choose the latest rate effective by ``at_date`` (or today if unspecified)."""
     if not isinstance(rate_list, list) or not rate_list:
         return None
     entries = [item for item in rate_list if isinstance(item, dict)]
     if not entries:
         return None
     ordered = sorted(entries, key=lambda rate: str(rate.get("effective_date", "")))
-    if at_date is None:
-        return ordered[-1]
-    eligible = [rate for rate in ordered if str(rate.get("effective_date", "")) <= at_date]
+    effective_cutoff = at_date if at_date is not None else datetime.date.today().isoformat()
+    eligible = [rate for rate in ordered if str(rate.get("effective_date", "")) <= effective_cutoff]
     return eligible[-1] if eligible else ordered[0]
 
 

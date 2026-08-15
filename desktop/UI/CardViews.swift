@@ -48,6 +48,35 @@ class CardView: NSView {
     }
 }
 
+// MARK: - Accent Banner Card View (Left accent border)
+class AccentBannerCardView: CardView {
+    private let accentLayer = CALayer()
+    var accentColor: NSColor = NSColor.controlAccentColor {
+        didSet { updateColors() }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        accentLayer.zPosition = 10
+        layer?.addSublayer(accentLayer)
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateColors() {
+        super.updateColors()
+        accentLayer.backgroundColor = accentColor.cgColor
+    }
+
+    override func layout() {
+        super.layout()
+        accentLayer.frame = CGRect(x: 0, y: 0, width: 3.5, height: bounds.height)
+    }
+}
+
 // MARK: - Card Row Base
 /// Shared scaffolding for a settings row: a top separator plus a leading label
 /// stack (title + optional description). Subclasses add their control layout.

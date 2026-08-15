@@ -517,6 +517,7 @@ class CodexExecutor:
         resolved_command = self._resolve_command()
         session_id = str(task.metadata.get("executor_session_id", "")).strip()
         model_override = str(task.metadata.get("model") or "").strip()
+        effort_override = str(task.metadata.get("reasoning_effort") or "").strip().lower()
         read_only = bool(task.metadata.get("read_only"))
         # A read-only run must not be handed the bypass flag, whatever the
         # instance was configured with — that flag turns the sandbox off wholesale
@@ -555,6 +556,8 @@ class CodexExecutor:
                 # the user's MCP servers + plugins into context (~21% fewer
                 # tokens, measured). Auth still resolves via CODEX_HOME.
                 self._append_ping_model_args(command, task=task)
+            if effort_override:
+                command.extend(["-c", f"model_reasoning_effort={effort_override}"])
             command.extend(guard)
             for attachment in task.image_attachments:
                 command.extend(["--image", str(attachment.path)])
@@ -574,6 +577,8 @@ class CodexExecutor:
         elif ignores_user_config:
             # See resume branch above: trim MCP/plugin context for the ping.
             self._append_ping_model_args(command, task=task)
+        if effort_override:
+            command.extend(["-c", f"model_reasoning_effort={effort_override}"])
         command.extend(guard)
         for attachment in task.image_attachments:
             command.extend(["--image", str(attachment.path)])

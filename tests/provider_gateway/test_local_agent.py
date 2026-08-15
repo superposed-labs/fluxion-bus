@@ -503,12 +503,13 @@ def test_is_cancelled_callback_stops_the_run():
 # ── task construction ────────────────────────────────────────────────
 def test_task_carries_workspace_model_and_session():
     executor = FakeExecutor()
-    run_stream(build(executor), session_id="prev-session")
+    run_stream(build(executor), session_id="prev-session", reasoning_effort="high")
     task = executor.seen_task
     assert task.workspace == Path("/tmp/ws")
     assert task.text == "do the thing"
     assert task.metadata["model"] == "opus"
     assert task.metadata["executor_session_id"] == "prev-session"
+    assert task.metadata["reasoning_effort"] == "high"
 
 
 def test_task_asks_for_a_raw_prompt():

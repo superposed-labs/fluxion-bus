@@ -113,6 +113,10 @@ def test_claude_models_are_selectable_aliases_with_price_references(monkeypatch)
     assert view["source"] == "executor_aliases+local_prices"
     assert view["sort"] == "price_high_to_low"
     assert view["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+    assert all(
+        model["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+        for model in view["models"]
+    )
     assert view["reasoning_effort_source"] == "claude_cli_help_global"
     assert view["warnings"]
 
