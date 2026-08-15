@@ -9,6 +9,27 @@ milestones.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-16
+
+### Added
+
+- **Provider Routing preferences** — added a Provider Routing preferences
+  sheet and Codex integration options for configuring model routing and
+  provider fallback behavior.
+- **Subagent model resolution visibility** — the web console and API now
+  expose both the effective and resolved model for each subagent run, making
+  it clear which model was actually used after resolution.
+
+### Fixed
+
+- **Quota limit countdowns** — refined quota limit state displays and
+  countdown timers for clearer remaining-time information.
+
+### Changed
+
+- **Model prices** — refreshed the bundled model price snapshot with current
+  provider pricing.
+
 ## [1.2.2] - 2026-08-09
 
 ### Fixed
@@ -331,7 +352,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.1.0...v1.2.0
