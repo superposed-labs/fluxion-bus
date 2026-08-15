@@ -30,9 +30,16 @@ rejected key costs the user their editor.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from fluxion.codex_command import resolve_codex_command
 
 # v2 moved the multi-agent switch out of `[agents]`, which older Codex builds
 # reject outright. Installs find and replace any earlier version's block.
@@ -200,6 +207,62 @@ class CodexConfigPlan:
     replaced_existing: bool
 
 
+@dataclass(frozen=True)
+class CodexIntegrationFile:
+    """One file shown in, and optionally written by, the Preferences workflow."""
+
+    path: Path
+    action: str
+    content: str
+    role: str | None = None
+    problem: str | None = None
+
+
+@dataclass(frozen=True)
+class CodexIntegrationPlan:
+    """A selective, transactional install or repair plan."""
+
+    mode: str
+    model: str
+    config: CodexConfigPlan
+    files: tuple[CodexIntegrationFile, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "model": self.model,
+            "config_path": str(self.config.config_path),
+            "agents_dir": str(self.config.agents_dir),
+            "files": [
+                {
+                    "path": str(item.path),
+                    "name": item.path.name,
+                    "role": item.role,
+                    "action": item.action,
+                    "problem": item.problem,
+                    "content": item.content,
+                }
+                for item in self.files
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class CodexIntegrationResult:
+    """Outcome of a completed transaction."""
+
+    changed_files: tuple[Path, ...]
+    backups: tuple[Path, ...]
+    validation_output: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "changed_files": [str(path) for path in self.changed_files],
+            "backups": [str(path) for path in self.backups],
+            "validation_output": self.validation_output,
+        }
+
+
 def render_provider_block(
     *,
     base_url: str,
@@ -345,6 +408,222 @@ def plan_install(
         merged_config=merged,
         replaced_existing=replaced,
     )
+
+
+def plan_integration(
+    *,
+    config_path: Path,
+    agents_dir: Path,
+    base_url: str,
+    token_command: str,
+    model: str,
+    token_args: tuple[str, ...] = (),
+    roles: tuple[str, ...] = DEFAULT_ROLES,
+    mode: str = "auto",
+) -> CodexIntegrationPlan:
+    """Plan the Preferences install/repair workflow without changing disk.
+
+    ``repair`` writes only missing or unreadable role files. ``install`` and
+    ``reinstall`` reconcile every generated file. The config is always shown in
+    the preview, but is written only when its managed block differs.
+    """
+    if mode not in {"auto", "install", "repair", "reinstall"}:
+        raise CodexConfigError(f"unknown Codex integration mode: {mode}")
+    plan = plan_install(
+        config_path=config_path,
+        agents_dir=agents_dir,
+        base_url=base_url,
+        token_command=token_command,
+        token_args=token_args,
+        model=model,
+        roles=roles,
+    )
+
+    role_statuses: dict[Path, tuple[str, str | None]] = {}
+    for path in plan.role_files:
+        if not path.exists():
+            role_statuses[path] = ("missing", "File is missing.")
+            continue
+        try:
+            tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+            role_statuses[path] = ("corrupt", f"File cannot be read as TOML: {error}")
+        else:
+            role_statuses[path] = ("healthy", None)
+
+    if mode == "auto":
+        existing_config = (
+            config_path.read_text(encoding="utf-8", errors="replace")
+            if config_path.exists()
+            else ""
+        )
+        has_managed_block = _ANY_BEGIN in existing_config
+        if not has_managed_block:
+            resolved_mode = "install"
+        elif any(status == "corrupt" for status, _ in role_statuses.values()):
+            resolved_mode = "corrupt"
+        elif any(status == "missing" for status, _ in role_statuses.values()):
+            resolved_mode = "missing"
+        else:
+            resolved_mode = "reinstall"
+    elif mode == "repair":
+        resolved_mode = (
+            "corrupt"
+            if any(status == "corrupt" for status, _ in role_statuses.values())
+            else "missing"
+        )
+    else:
+        resolved_mode = mode
+
+    current_config = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    files = [
+        CodexIntegrationFile(
+            path=config_path,
+            action=("rewrite" if config_path.exists() else "write")
+            if current_config != plan.merged_config
+            else "verify",
+            content=plan.merged_config,
+        )
+    ]
+    for role, path in ((role, agents_dir / f"{role}.toml") for role in roles):
+        content = plan.role_files[path]
+        status, problem = role_statuses[path]
+        should_write = resolved_mode in {"install", "reinstall"} or status != "healthy"
+        action = "keep"
+        if should_write:
+            action = "rewrite" if path.exists() else "write"
+        files.append(
+            CodexIntegrationFile(
+                path=path,
+                role=role,
+                action=action,
+                content=content,
+                problem=problem,
+            )
+        )
+    return CodexIntegrationPlan(
+        mode=resolved_mode,
+        model=model,
+        config=plan,
+        files=tuple(files),
+    )
+
+
+def validate_integration_plan(
+    plan: CodexIntegrationPlan,
+    *,
+    codex_command: str | None = None,
+    timeout_seconds: float = 20,
+) -> str:
+    """Validate the exact planned tree with a real Codex binary."""
+    command = codex_command or resolve_codex_command()
+    if not command:
+        raise CodexConfigError(
+            "Codex CLI was not found. Install or open Codex once, then try again."
+        )
+    with tempfile.TemporaryDirectory(prefix="fluxion-codex-validate-") as raw_home:
+        home = Path(raw_home)
+        target_config = home / "config.toml"
+        target_agents = home / "agents"
+        target_agents.mkdir(parents=True)
+        target_config.write_text(plan.config.merged_config, encoding="utf-8")
+        for item in plan.files:
+            if item.role is None:
+                continue
+            source = item.path
+            content = item.content
+            if item.action == "keep" and source.exists():
+                content = source.read_text(encoding="utf-8")
+            (target_agents / source.name).write_text(content, encoding="utf-8")
+
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(home)
+        try:
+            completed = subprocess.run(
+                [command, "mcp", "list"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                env=env,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise CodexConfigError(f"Codex CLI validation could not run: {error}") from error
+        output = "\n".join(
+            part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+        )
+        if completed.returncode != 0:
+            raise CodexConfigError(
+                "Codex CLI rejected the generated configuration"
+                + (f":\n{output}" if output else ".")
+            )
+        return output
+
+
+def apply_integration_plan(
+    plan: CodexIntegrationPlan,
+    *,
+    validate_with_codex: bool = True,
+    codex_command: str | None = None,
+) -> CodexIntegrationResult:
+    """Apply a Preferences plan atomically and roll every changed file back."""
+    validation_output = (
+        validate_integration_plan(plan, codex_command=codex_command) if validate_with_codex else ""
+    )
+    targets = [item for item in plan.files if item.action in {"write", "rewrite"}]
+    originals: dict[Path, bytes | None] = {}
+    backups: list[Path] = []
+    changed: list[Path] = []
+    stamp = time.time_ns()
+    try:
+        for item in targets:
+            path = item.path
+            original = path.read_bytes() if path.exists() else None
+            originals[path] = original
+            if original is not None:
+                backup = path.with_name(f"{path.name}.fluxion-backup-{stamp}")
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_bytes(original)
+                backups.append(backup)
+            _atomic_write(path, item.content)
+            changed.append(path)
+    except Exception as error:
+        rollback_errors: list[str] = []
+        for path, original in reversed(tuple(originals.items())):
+            try:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _atomic_write_bytes(path, original)
+            except OSError as rollback_error:
+                rollback_errors.append(f"{path}: {rollback_error}")
+        detail = f"; rollback problems: {'; '.join(rollback_errors)}" if rollback_errors else ""
+        raise CodexConfigError(
+            f"Codex integration failed and was rolled back: {error}{detail}"
+        ) from error
+    return CodexIntegrationResult(
+        changed_files=tuple(changed),
+        backups=tuple(backups),
+        validation_output=validation_output,
+    )
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    _atomic_write_bytes(path, content.encode("utf-8"))
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _strip_managed_block(text: str) -> tuple[str, bool]:

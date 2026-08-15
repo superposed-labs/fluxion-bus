@@ -289,6 +289,7 @@ class LocalAgentUpstream:
         request_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         read_only: bool = False,
+        reasoning_effort: str = "",
     ) -> AsyncIterator[Mapping[str, Any]]:
         """Run the agent and yield Responses events as its output arrives."""
         response_id = request_id or f"resp_{uuid.uuid4().hex[:24]}"
@@ -366,6 +367,7 @@ class LocalAgentUpstream:
                 is_cancelled,
                 read_only,
                 image_attachments,
+                reasoning_effort,
             ):
                 if channel is _HEARTBEAT:
                     # Checked before the `chunk is None` branch below, which
@@ -423,6 +425,7 @@ class LocalAgentUpstream:
         request_id: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         read_only: bool = False,
+        reasoning_effort: str = "",
     ) -> AsyncIterator[Mapping[str, Any]]:
         """Run the agent and yield Anthropic Messages events as output arrives.
 
@@ -476,6 +479,7 @@ class LocalAgentUpstream:
                 is_cancelled,
                 read_only,
                 image_attachments,
+                reasoning_effort,
             ):
                 if channel is _HEARTBEAT:
                     # Same ordering rule as the Responses renderer: a heartbeat
@@ -523,6 +527,7 @@ class LocalAgentUpstream:
         is_cancelled: Callable[[], bool] | None,
         read_only: bool,
         image_attachments: Sequence[Attachment],
+        reasoning_effort: str,
     ) -> AsyncIterator[tuple[str | None, str | None, LocalAgentRun | None]]:
         """Bridge the blocking executor onto the event loop.
 
@@ -553,6 +558,7 @@ class LocalAgentUpstream:
             metadata={
                 "source": "provider_gateway",
                 "model": model,
+                "reasoning_effort": reasoning_effort,
                 # `prepare_image_prompt` already split native image delivery
                 # from workspace-file bridging before this Task was built.
                 "attachment_prompt_prepared": True,

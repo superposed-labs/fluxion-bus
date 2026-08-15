@@ -89,6 +89,15 @@ def test_non_ping_without_model_omits_model_flag(tmp_path):
     assert "--effort" not in cmd
 
 
+def test_non_ping_applies_route_reasoning_effort(tmp_path):
+    task = _task(tmp_path, None)
+    task.metadata["reasoning_effort"] = "xhigh"
+
+    cmd = _executor(tmp_path, model="opus")._build_command(task, "hi", "claude")
+
+    assert cmd[cmd.index("--effort") + 1] == "xhigh"
+
+
 def test_effective_model_reports_fluxion_owned_claude_choices(tmp_path):
     configured = _executor(tmp_path, model="claude-opus-4-8")
 

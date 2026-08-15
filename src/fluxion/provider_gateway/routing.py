@@ -79,6 +79,7 @@ class PolicySpec:
     candidates: tuple[str, ...]
     fallback: tuple[str, ...] = ()
     weights: Mapping[str, float] = field(default_factory=dict)
+    efforts: Mapping[str, str] = field(default_factory=dict)
 
     def ordered_candidates(self) -> tuple[str, ...]:
         """Primary candidates first, then fallbacks, with duplicates removed.
@@ -103,6 +104,7 @@ class RouteDecision:
     upstream_model: str
     policy_id: str
     routing_reason: tuple[str, ...]
+    reasoning_effort: str = ""
     from_sticky: bool = False
 
     @property
@@ -178,6 +180,7 @@ class Router:
                         f"role={identity.route_hint}",
                         f"kind={identity.request_kind}",
                     ),
+                    reasoning_effort=policy.efforts.get(sticky_candidate, ""),
                     from_sticky=True,
                 )
 
@@ -305,6 +308,7 @@ class Router:
             upstream_model=model,
             policy_id=policy.policy_id,
             routing_reason=tuple(reason),
+            reasoning_effort=policy.efforts.get(best, ""),
         )
 
     @staticmethod

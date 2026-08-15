@@ -128,6 +128,43 @@ def test_valid_config_parses():
     assert config.routes == {"auto": "balanced"}
 
 
+def test_policy_reasoning_efforts_parse_and_normalize():
+    config = parse(
+        policies={
+            "balanced": {
+                "candidates": ["local_primary:fast"],
+                "efforts": {"local_primary:fast": " HIGH "},
+            }
+        }
+    )
+
+    assert config.policies["balanced"].efforts == {"local_primary:fast": "high"}
+
+
+def test_policy_effort_must_reference_a_selected_candidate():
+    with pytest.raises(ConfigError, match="candidates it does not use"):
+        parse(
+            policies={
+                "balanced": {
+                    "candidates": ["local_primary:fast"],
+                    "efforts": {"local_primary:other": "high"},
+                }
+            }
+        )
+
+
+def test_policy_effort_level_must_be_supported():
+    with pytest.raises(ConfigError, match="unsupported effort"):
+        parse(
+            policies={
+                "balanced": {
+                    "candidates": ["local_primary:fast"],
+                    "efforts": {"local_primary:fast": "extreme"},
+                }
+            }
+        )
+
+
 def test_reserved_provider_ids_are_refused():
     providers = routing_dict()["providers"]
     providers[0]["id"] = "openai"

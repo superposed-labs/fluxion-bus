@@ -278,6 +278,26 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var settingsScrollView: NSScrollView!
     var initialAppLanguage: String = L10n.appLanguage
 
+    // Provider Routing is backed by the validated provider_routes.json model,
+    // loaded asynchronously through fluxion-provider rather than decoded and
+    // rewritten independently by the desktop app.
+    var providerRoutingDynamicStack: NSStackView!
+    var providerRoutingState: ProviderRoutingState?
+    var providerGatewayRunning = false
+    var providerRoutingLoading = false
+    var providerCatalogsLoading = false
+    var providerCatalogsLoaded = false
+    var providerCatalogsUnavailable = false
+    var providerCatalogRefreshRequested = false
+    var pendingProviderRouteEditRole: String?
+    var providerRoutingNeedsBackendUpdate = false
+    var providerConnectionDetailsOpen = false
+    var providerAdvancedRoutesOpen = false
+    var providerCodexIntegrationOpen = false
+    var activeRouteEditorSheetController: ProviderRouteEditorSheetController?
+    var activeCodexConfigSheetController: ProviderCodexConfigSheetController?
+    var activeInstallRepairSheetController: ProviderInstallRepairSheetController?
+
     // Coalesces rapid setting changes into a single forced refresh.
     private var refreshWorkItem: DispatchWorkItem?
 
@@ -374,6 +394,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         if let servicesStack = pageStackViews["services"] {
             buildCompanionServicesSection(into: servicesStack)
         }
+        if let providerStack = pageStackViews["provider-routing"] {
+            buildProviderRoutingSection(into: providerStack)
+        }
 
         // Default select the first page
         switchPage(to: "general")
@@ -404,8 +427,29 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             win.makeKeyAndOrderFront(nil)
             win.makeFirstResponder(nil)
             NSApp.activate(ignoringOtherApps: true)
+            if currentPageId == "provider-routing" {
+                renderProviderRouting()
+            } else {
+                scheduleProviderRoutingPrefetch(for: win)
+            }
         }
         startPendingUsersWatcher()
+    }
+
+    private func scheduleProviderRoutingPrefetch(for expectedWindow: NSWindow) {
+        // Let the window finish its presentation and first layout pass before
+        // starting the short-lived Python process. The prefetch only updates
+        // data; hidden Provider Routing views are not rebuilt.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self, weak expectedWindow] in
+            guard
+                let self = self,
+                let expectedWindow = expectedWindow,
+                self.window === expectedWindow,
+                expectedWindow.isVisible,
+                self.currentPageId != "provider-routing"
+            else { return }
+            self.prefetchProviderRoutingState()
+        }
     }
 
     /// Open Preferences on the Messaging page with the given channel's
@@ -1179,6 +1223,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     }
 
     func switchPage(to pageId: String) {
+        let stableWindowFrame = window?.isVisible == true ? window?.frame : nil
         currentPageId = pageId
         applyPageSelection()
 
@@ -1189,6 +1234,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
                 rebuildPendingUsersStack(channel)
             }
         }
+        if pageId == "provider-routing" {
+            prepareProviderRoutingForDisplay()
+        }
 
         if let search = searchField {
             filterSettings(query: search.stringValue)
@@ -1197,7 +1245,24 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         // Flush layout so controls (especially NSSwitch) that just became
         // visible get correct frames before their first draw.
         window?.contentView?.layoutSubtreeIfNeeded()
+        restorePreferencesWindowFrame(stableWindowFrame)
+        DispatchQueue.main.async { [weak self] in
+            guard self?.currentPageId == pageId else { return }
+            self?.restorePreferencesWindowFrame(stableWindowFrame)
+        }
         scheduleScrollSettingsToTop()
+    }
+
+    func restorePreferencesWindowFrame(_ stableFrame: NSRect?) {
+        guard
+            let win = window,
+            let stableFrame = stableFrame,
+            !win.inLiveResize
+        else { return }
+        if abs(win.frame.width - stableFrame.width) > 0.5
+            || abs(win.frame.height - stableFrame.height) > 0.5 {
+            win.setFrame(stableFrame, display: true, animate: false)
+        }
     }
 
     func scheduleScrollSettingsToTop() {
@@ -1416,12 +1481,14 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     func updateSidebarDots() {
         let hasAgents = (checkClaude?.state == .on) || (checkCodex?.state == .on) || (checkAntigravity?.state == .on)
         let hasMessaging = (checkSlackEnabled?.state == .on) || (checkTelegram?.state == .on) || (checkWeChat?.state == .on) || (checkLine?.state == .on) || (checkQQBot?.state == .on) || (checkFeishu?.state == .on)
-        let hasServices = (checkWeb?.state == .on) || (checkScheduler?.state == .on) || (checkSlack?.state == .on)
+        let hasProvider = (checkProvider?.state == .on) || providerGatewayRunning
+        let hasServices = (checkWeb?.state == .on) || (checkScheduler?.state == .on) || (checkSlack?.state == .on) || (checkProvider?.state == .on)
         
         for item in sidebarNavItems {
             switch item.id {
             case "agents": item.showDot = hasAgents
             case "messaging": item.showDot = hasMessaging
+            case "provider-routing": item.showDot = hasProvider
             case "services": item.showDot = hasServices
             default: item.showDot = false
             }

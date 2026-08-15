@@ -89,25 +89,56 @@ extension PreferencesWindow {
         sidebar.addArrangedSubview(searchSpacer)
         
         // Build navigation items
-        let navData = [
-            ("general", L10n.tr("preferences.nav.general"), "slider.horizontal.3", NSColor.systemGray),
-            ("agents", L10n.tr("preferences.nav.agents"), "cpu", NSColor.systemIndigo),
-            ("automation", L10n.tr("preferences.nav.automation"), "clock", NSColor.systemOrange),
-            ("messaging", L10n.tr("preferences.nav.messaging"), "message", NSColor.systemGreen),
-            ("services", L10n.tr("preferences.nav.services"), "server.rack", NSColor.systemTeal)
+        enum SidebarNavEntry {
+            case item(id: String, label: String, icon: String, color: NSColor)
+            case header(title: String)
+        }
+
+        let navEntries: [SidebarNavEntry] = [
+            .item(id: "general", label: L10n.tr("preferences.nav.general"), icon: "slider.horizontal.3", color: NSColor.systemGray),
+            .item(id: "agents", label: L10n.tr("preferences.nav.agents"), icon: "cpu", color: NSColor.systemIndigo),
+            .item(id: "automation", label: L10n.tr("preferences.nav.automation"), icon: "clock", color: NSColor.systemOrange),
+            .header(title: L10n.tr("preferences.nav.group.gateways")),
+            .item(id: "messaging", label: L10n.tr("preferences.nav.messaging"), icon: "message", color: NSColor.systemGreen),
+            .item(id: "provider-routing", label: L10n.tr("preferences.nav.provider_routing"), icon: "arrow.triangle.branch", color: NSColor.systemPurple),
+            .header(title: L10n.tr("preferences.nav.group.system")),
+            .item(id: "services", label: L10n.tr("preferences.nav.services"), icon: "server.rack", color: NSColor.systemTeal)
         ]
         
-        for (id, label, icon, color) in navData {
-            let item = SidebarNavItem(id: id, title: label, iconSymbol: icon, iconBgColor: color)
-            item.onClick = { [weak self] pageId in
-                self?.switchPage(to: pageId)
+        for entry in navEntries {
+            switch entry {
+            case .item(let id, let label, let icon, let color):
+                let item = SidebarNavItem(id: id, title: label, iconSymbol: icon, iconBgColor: color)
+                item.onClick = { [weak self] pageId in
+                    self?.switchPage(to: pageId)
+                }
+                sidebar.addArrangedSubview(item)
+                sidebarNavItems.append(item)
+
+                NSLayoutConstraint.activate([
+                    item.widthAnchor.constraint(equalTo: sidebar.widthAnchor, constant: -20)
+                ])
+            case .header(let title):
+                let headerContainer = NSView()
+                headerContainer.translatesAutoresizingMaskIntoConstraints = false
+                let headerLabel = NSTextField(labelWithString: title.uppercased())
+                headerLabel.font = NSFont.systemFont(ofSize: 10, weight: .bold)
+                headerLabel.textColor = Palette.sectionHeader
+                headerLabel.isEditable = false
+                headerLabel.isSelectable = false
+                headerLabel.isBordered = false
+                headerLabel.drawsBackground = false
+                headerLabel.translatesAutoresizingMaskIntoConstraints = false
+                headerContainer.addSubview(headerLabel)
+                sidebar.addArrangedSubview(headerContainer)
+
+                NSLayoutConstraint.activate([
+                    headerContainer.widthAnchor.constraint(equalTo: sidebar.widthAnchor, constant: -20),
+                    headerContainer.heightAnchor.constraint(equalToConstant: 24),
+                    headerLabel.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 8),
+                    headerLabel.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: -2)
+                ])
             }
-            sidebar.addArrangedSubview(item)
-            sidebarNavItems.append(item)
-            
-            NSLayoutConstraint.activate([
-                item.widthAnchor.constraint(equalTo: sidebar.widthAnchor, constant: -20)
-            ])
         }
         
         // Flexible spacer at the bottom of the sidebar to allow stretching
@@ -138,12 +169,21 @@ extension PreferencesWindow {
         rightColumn.translatesAutoresizingMaskIntoConstraints = false
         rightColumn.wantsLayer = true
         rightColumn.layer?.backgroundColor = Palette.windowBackground.cgColor
+        rightColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         shellView.addArrangedSubview(rightColumn)
         
         NSLayoutConstraint.activate([
             rightColumn.topAnchor.constraint(equalTo: shellView.topAnchor),
             rightColumn.bottomAnchor.constraint(equalTo: shellView.bottomAnchor),
-            rightColumn.trailingAnchor.constraint(equalTo: shellView.trailingAnchor)
+            rightColumn.trailingAnchor.constraint(equalTo: shellView.trailingAnchor),
+            // The right pane always consumes exactly the width left by the
+            // fixed sidebar and divider. Its contents may wrap or compress,
+            // but can never feed a larger fitting width back into the window.
+            rightColumn.widthAnchor.constraint(
+                equalTo: shellView.widthAnchor,
+                constant: -(204 + 0.5)
+            )
         ])
         
         // Custom titlebar for right column (with horizontal bottom separator)
@@ -170,7 +210,7 @@ extension PreferencesWindow {
             titlebarSep.bottomAnchor.constraint(equalTo: rightTitlebarView.bottomAnchor),
             titlebarSep.heightAnchor.constraint(equalToConstant: 0.5)
         ])
-        
+
         let winTitleLabel = NSTextField(labelWithString: L10n.tr("preferences.title"))
         winTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         winTitleLabel.textColor = Palette.primaryText
@@ -185,9 +225,7 @@ extension PreferencesWindow {
             winTitleLabel.centerXAnchor.constraint(equalTo: rightTitlebarView.centerXAnchor),
             winTitleLabel.centerYAnchor.constraint(equalTo: rightTitlebarView.centerYAnchor)
         ])
-        
 
-        
         // Right Scroll View (with refined small scroller sizing and custom clean track)
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -197,6 +235,8 @@ extension PreferencesWindow {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         settingsScrollView = scrollView
         rightColumn.addArrangedSubview(scrollView)
         
@@ -211,6 +251,8 @@ extension PreferencesWindow {
         rightPaneContainer.alignment = .leading
         rightPaneContainer.spacing = 0
         rightPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        rightPaneContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightPaneContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         scrollView.documentView = rightPaneContainer
         
         NSLayoutConstraint.activate([
@@ -221,12 +263,13 @@ extension PreferencesWindow {
             rightPaneContainer.heightAnchor.constraint(greaterThanOrEqualTo: clipView.heightAnchor)
         ])
         
-        // Create the 5 page stack views inside the scrollable documentView
+        // Create the page stack views inside the scrollable documentView
         let pageMeta = [
             ("general", L10n.tr("preferences.nav.general"), L10n.tr("preferences.page.general.desc")),
             ("agents", L10n.tr("preferences.nav.agents"), L10n.tr("preferences.page.agents.desc")),
             ("automation", L10n.tr("preferences.nav.automation"), L10n.tr("preferences.page.automation.desc")),
             ("messaging", L10n.tr("preferences.nav.messaging"), L10n.tr("preferences.page.messaging.desc")),
+            ("provider-routing", L10n.tr("preferences.nav.provider_routing"), L10n.tr("preferences.page.provider_routing.desc")),
             ("services", L10n.tr("preferences.nav.services"), L10n.tr("preferences.page.services.desc"))
         ]
         
@@ -237,6 +280,8 @@ extension PreferencesWindow {
             pageStack.spacing = 20
             pageStack.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
             pageStack.translatesAutoresizingMaskIntoConstraints = false
+            pageStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            pageStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             pageStack.isHidden = (id != "general")
             rightPaneContainer.addArrangedSubview(pageStack)
             
@@ -260,11 +305,16 @@ extension PreferencesWindow {
             p.font = NSFont.systemFont(ofSize: 12.5, weight: .regular)
             p.textColor = Palette.secondaryText
             p.cell?.wraps = true
+            p.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             p.isEditable = false
             p.isSelectable = false
             p.isBordered = false
             p.drawsBackground = false
             pageStack.addArrangedSubview(p)
+            p.widthAnchor.constraint(
+                lessThanOrEqualTo: pageStack.widthAnchor,
+                constant: -(pageStack.edgeInsets.left + pageStack.edgeInsets.right)
+            ).isActive = true
             
             // Balanced title/description and section spacing with elegant breathing room
             pageStack.setCustomSpacing(10, after: h1)
@@ -403,7 +453,8 @@ extension PreferencesWindow {
         card.widthAnchor.constraint(equalTo: sectionStack.widthAnchor).isActive = true
 
         documentStack.addArrangedSubview(sectionStack)
-        sectionStack.widthAnchor.constraint(equalTo: documentStack.widthAnchor, constant: -44).isActive = true
+        let totalInset = documentStack.edgeInsets.left + documentStack.edgeInsets.right
+        sectionStack.widthAnchor.constraint(equalTo: documentStack.widthAnchor, constant: -totalInset).isActive = true
 
         return sectionStack
     }

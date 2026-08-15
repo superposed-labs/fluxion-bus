@@ -6,6 +6,7 @@ Field names verified against codex-cli-repo at `c8957bbf0f`.
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -13,13 +14,16 @@ from fluxion.provider_gateway.codex_config import (
     BEGIN_MARKER,
     END_MARKER,
     CodexConfigError,
+    apply_integration_plan,
     apply_plan,
     find_backups,
     is_read_only_role,
     plan_install,
+    plan_integration,
     render_provider_block,
     render_role_file,
     uninstall,
+    validate_integration_plan,
 )
 
 TOKEN_COMMAND = "/bin/cat"
@@ -40,6 +44,22 @@ def build_plan(tmp_path, existing: str | None = None, **overrides):
     )
     kwargs.update(overrides)
     return plan_install(**kwargs)
+
+
+def build_integration_plan(tmp_path, existing: str | None = None, **overrides):
+    config_path = tmp_path / "config.toml"
+    if existing is not None:
+        config_path.write_text(existing)
+    kwargs = dict(
+        config_path=config_path,
+        agents_dir=tmp_path / "agents",
+        base_url="http://127.0.0.1:8787/v1",
+        token_command=TOKEN_COMMAND,
+        token_args=TOKEN_ARGS,
+        model="gpt-x",
+    )
+    kwargs.update(overrides)
+    return plan_integration(**kwargs)
 
 
 # ── provider block ───────────────────────────────────────────────────
@@ -278,6 +298,108 @@ def test_apply_backs_up_the_previous_config(tmp_path):
 
 def test_apply_creates_no_backup_when_there_was_no_config(tmp_path):
     assert apply_plan(build_plan(tmp_path)) is None
+
+
+def test_integration_plan_exposes_backend_generated_preview(tmp_path):
+    plan = build_integration_plan(tmp_path)
+    preview = plan.as_dict()
+
+    assert preview["mode"] == "install"
+    assert preview["files"][0]["content"] == plan.config.merged_config
+    assert {item["role"] for item in preview["files"][1:]} == {
+        "auto",
+        "explorer",
+        "reviewer",
+        "worker",
+    }
+
+
+def test_repair_only_writes_missing_or_corrupt_roles(tmp_path):
+    installed = build_integration_plan(tmp_path)
+    apply_integration_plan(installed, validate_with_codex=False)
+    auto = installed.config.agents_dir / "auto.toml"
+    worker = installed.config.agents_dir / "worker.toml"
+    auto.unlink()
+    worker.write_text("not valid [toml", encoding="utf-8")
+
+    repair = build_integration_plan(tmp_path, mode="auto")
+    actions = {item.role: item.action for item in repair.files if item.role}
+
+    assert repair.mode == "corrupt"
+    assert actions == {
+        "auto": "write",
+        "explorer": "keep",
+        "reviewer": "keep",
+        "worker": "rewrite",
+    }
+
+
+def test_transaction_backs_up_every_replaced_file(tmp_path):
+    first = build_integration_plan(tmp_path)
+    apply_integration_plan(first, validate_with_codex=False)
+    second = build_integration_plan(tmp_path, model="gpt-y", mode="reinstall")
+
+    result = apply_integration_plan(second, validate_with_codex=False)
+
+    assert len(result.changed_files) == 4
+    assert len(result.backups) == 4
+    assert {path.name.split(".fluxion-backup-")[0] for path in result.backups} == {
+        "auto.toml",
+        "explorer.toml",
+        "reviewer.toml",
+        "worker.toml",
+    }
+
+
+def test_transaction_rolls_back_all_files_after_write_failure(tmp_path, monkeypatch):
+    first = build_integration_plan(tmp_path)
+    apply_integration_plan(first, validate_with_codex=False)
+    before = {
+        path: path.read_bytes() for path in [first.config.config_path, *first.config.role_files]
+    }
+    second = build_integration_plan(tmp_path, model="gpt-y", mode="reinstall")
+    real_write = __import__(
+        "fluxion.provider_gateway.codex_config", fromlist=["_atomic_write"]
+    )._atomic_write
+    writes = 0
+
+    def fail_second_write(path, content):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise OSError("simulated disk failure")
+        real_write(path, content)
+
+    monkeypatch.setattr("fluxion.provider_gateway.codex_config._atomic_write", fail_second_write)
+    with pytest.raises(CodexConfigError, match="rolled back"):
+        apply_integration_plan(second, validate_with_codex=False)
+
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_validation_uses_an_isolated_codex_home(tmp_path, monkeypatch):
+    plan = build_integration_plan(tmp_path)
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed["home"] = Path(kwargs["env"]["CODEX_HOME"])
+        assert (observed["home"] / "config.toml").exists()
+        assert (observed["home"] / "agents" / "worker.toml").exists()
+
+        class Completed:
+            returncode = 0
+            stdout = "No MCP servers configured"
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr("fluxion.provider_gateway.codex_config.subprocess.run", fake_run)
+
+    output = validate_integration_plan(plan, codex_command="/usr/bin/codex")
+
+    assert observed["command"] == ["/usr/bin/codex", "mcp", "list"]
+    assert output == "No MCP servers configured"
 
 
 def test_uninstall_removes_only_the_managed_block(tmp_path):

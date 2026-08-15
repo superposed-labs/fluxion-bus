@@ -115,6 +115,7 @@ def _claude_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, A
                 "alias": True,
                 "availability": "known_cli_alias",
                 "note": "Claude Code accepts model aliases via --model.",
+                "supported_reasoning_efforts": list(_CLAUDE_REASONING_EFFORTS),
             },
         )
         for model_id in _CLAUDE_EXECUTOR_ALIASES
@@ -127,7 +128,10 @@ def _claude_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, A
                 provider="claude",
                 prices=prices,
                 source="configured_model",
-                extra={"availability": "configured"},
+                extra={
+                    "availability": "configured",
+                    "supported_reasoning_efforts": list(_CLAUDE_REASONING_EFFORTS),
+                },
             )
         )
     models = _sorted_models(models)

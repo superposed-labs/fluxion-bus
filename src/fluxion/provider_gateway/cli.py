@@ -30,6 +30,7 @@ from fluxion.provider_gateway.model_catalog import (
     describe_missing,
     verify_configured_models,
 )
+from fluxion.provider_gateway.preferences import preferences_state, set_route
 from fluxion.provider_gateway.sticky import StickyStore
 from fluxion.utils import macos_notify
 
@@ -130,7 +131,12 @@ def _doctor(args: argparse.Namespace) -> int:
         problems.append(f"token file missing: {settings.token_file} — run `init`")
 
     if _port_in_use(settings.host, settings.port):
-        problems.append(f"port {settings.port} is already in use; another gateway may be running")
+        if args.running:
+            notes.append(f"port {settings.port} is listening (running gateway expected)")
+        else:
+            problems.append(
+                f"port {settings.port} is already in use; another gateway may be running"
+            )
     else:
         notes.append(f"port {settings.port} is free")
 
@@ -211,6 +217,45 @@ def _check_models(args: argparse.Namespace) -> int:
     if getattr(args, "notify", False):
         _notify_findings(problems, bool(routing_problems))
     return 1 if problems else 0
+
+
+def _preferences_state(args: argparse.Namespace) -> int:
+    settings = GatewaySettings.load()
+    payload = preferences_state(
+        settings,
+        include_catalogs=not args.skip_catalogs,
+        include_model_health=not args.skip_model_health,
+    )
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
+def _set_route(args: argparse.Namespace) -> int:
+    settings = GatewaySettings.load()
+    efforts = dict(args.effort)
+    data_dir = Path(
+        os.environ.get("FLUXION_DATA_DIR", str(settings.token_file.expanduser().parent))
+    ).expanduser()
+    backup = set_route(
+        settings.config_file,
+        role=args.role,
+        candidates=list(args.candidate),
+        fallback=list(args.fallback),
+        efforts=efforts,
+        add_missing_models=args.add_models,
+        backup_dir=data_dir / "backups" / "provider-routing",
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "role": args.role,
+                "config_file": str(settings.config_file.expanduser()),
+                "backup": str(backup),
+            }
+        )
+    )
+    return 0
 
 
 _NOTIFY_KEY = "check-models"
@@ -520,6 +565,45 @@ def _install_codex_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _codex_integration_plan(args: argparse.Namespace) -> int:
+    plan = _build_codex_integration_plan(args)
+    print(json.dumps(plan.as_dict(), ensure_ascii=False))
+    return 0
+
+
+def _codex_integration_apply(args: argparse.Namespace) -> int:
+    plan = _build_codex_integration_plan(args)
+    result = codex_config.apply_integration_plan(
+        plan,
+        validate_with_codex=not args.skip_codex_validation,
+    )
+    print(
+        json.dumps(
+            {
+                "status": "completed",
+                "plan": plan.as_dict(),
+                **result.as_dict(),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _build_codex_integration_plan(args: argparse.Namespace) -> codex_config.CodexIntegrationPlan:
+    settings = GatewaySettings.load()
+    command, command_args = _token_command(args, settings)
+    return codex_config.plan_integration(
+        config_path=Path(args.codex_config).expanduser(),
+        agents_dir=Path(args.agents_dir).expanduser(),
+        base_url=_gateway_url(settings),
+        token_command=command,
+        token_args=command_args,
+        model=args.model,
+        mode=args.mode,
+    )
+
+
 def _uninstall_codex_config(args: argparse.Namespace) -> int:
     config_path = Path(args.codex_config).expanduser()
     if not args.yes and not _confirm(f"Remove the Fluxion block from {config_path}?"):
@@ -649,6 +733,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     serve_parser.set_defaults(handler=_serve)
 
     doctor_parser = subparsers.add_parser("doctor", help="Check the local setup.")
+    doctor_parser.add_argument(
+        "--running",
+        action="store_true",
+        help="Treat the configured port listening as healthy for an already-running gateway.",
+    )
     doctor_parser.set_defaults(handler=_doctor)
 
     check_models_parser = subparsers.add_parser(
@@ -663,6 +752,54 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "desktop app, at most once a day per unchanged finding.",
     )
     check_models_parser.set_defaults(handler=_check_models)
+
+    preferences_parser = subparsers.add_parser(
+        "preferences-state",
+        help="Print the Provider Routing state consumed by the desktop app.",
+    )
+    preferences_parser.add_argument(
+        "--skip-catalogs",
+        action="store_true",
+        help="Skip display model catalogs (model-health checks still probe live catalogs).",
+    )
+    preferences_parser.add_argument(
+        "--skip-model-health",
+        action="store_true",
+        help="Skip live model-health probes for a fast local-only state read.",
+    )
+    preferences_parser.set_defaults(handler=_preferences_state)
+
+    set_route_parser = subparsers.add_parser(
+        "set-route",
+        help="Safely update one role route, keeping a timestamped backup.",
+    )
+    set_route_parser.add_argument("--role", required=True)
+    set_route_parser.add_argument(
+        "--candidate",
+        action="append",
+        required=True,
+        help="Primary provider:model candidate (repeatable).",
+    )
+    set_route_parser.add_argument(
+        "--fallback",
+        action="append",
+        default=[],
+        help="Fallback provider:model candidate (repeatable).",
+    )
+    set_route_parser.add_argument(
+        "--effort",
+        action="append",
+        type=_parse_candidate_effort,
+        default=[],
+        metavar="PROVIDER:MODEL=LEVEL",
+        help="Reasoning effort for one selected candidate (repeatable).",
+    )
+    set_route_parser.add_argument(
+        "--add-models",
+        action="store_true",
+        help="Declare selected live-catalog models that are not yet in the provider config.",
+    )
+    set_route_parser.set_defaults(handler=_set_route)
 
     install_catalog_parser = subparsers.add_parser(
         "install-codex-catalog",
@@ -736,6 +873,36 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     add_codex_paths(install_parser)
     install_parser.set_defaults(handler=_install_codex_config)
 
+    def add_integration_arguments(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--model", required=True)
+        sub.add_argument(
+            "--mode",
+            choices=("auto", "install", "repair", "reinstall"),
+            default="auto",
+        )
+        sub.add_argument("--token-command", default="")
+        sub.add_argument("--codex-config", default=str(codex_home / "config.toml"))
+        sub.add_argument("--agents-dir", default=str(codex_home / "agents"))
+
+    integration_plan_parser = subparsers.add_parser(
+        "codex-integration-plan",
+        help="Print the exact selective Codex install/repair plan as JSON.",
+    )
+    add_integration_arguments(integration_plan_parser)
+    integration_plan_parser.set_defaults(handler=_codex_integration_plan)
+
+    integration_apply_parser = subparsers.add_parser(
+        "codex-integration-apply",
+        help="Validate and transactionally apply a Codex integration plan.",
+    )
+    add_integration_arguments(integration_apply_parser)
+    integration_apply_parser.add_argument(
+        "--skip-codex-validation",
+        action="store_true",
+        help="Skip validation by the installed Codex CLI (tests and recovery only).",
+    )
+    integration_apply_parser.set_defaults(handler=_codex_integration_apply)
+
     uninstall_parser = subparsers.add_parser(
         "uninstall-codex-config", help="Remove only the Fluxion block."
     )
@@ -758,6 +925,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     routes_parser.set_defaults(handler=_routes)
 
     return parser.parse_args(argv)
+
+
+def _parse_candidate_effort(value: str) -> tuple[str, str]:
+    candidate, separator, effort = value.rpartition("=")
+    candidate = candidate.strip()
+    effort = effort.strip().lower()
+    if not separator or ":" not in candidate or not effort:
+        raise argparse.ArgumentTypeError("effort must look like PROVIDER:MODEL=LEVEL")
+    return candidate, effort
 
 
 if __name__ == "__main__":  # pragma: no cover

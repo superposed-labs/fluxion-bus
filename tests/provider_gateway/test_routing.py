@@ -104,6 +104,31 @@ def test_sticky_route_short_circuits_scoring():
     assert f"sticky={FAST}" in decision.routing_reason
 
 
+def test_reasoning_effort_follows_scored_and_sticky_route_decisions():
+    router = build_router(
+        policies={
+            "balanced": PolicySpec(
+                "balanced",
+                candidates=(GOOD, FAST),
+                weights={"cost": 1.0},
+                efforts={FAST: "high"},
+            )
+        },
+        routes={"auto": "balanced"},
+        stats={FAST: CandidateStats(cost=1.0), GOOD: CandidateStats(cost=0.0)},
+    )
+
+    assert router.select(identity("auto"), RequestRequirements()).reasoning_effort == "high"
+    assert (
+        router.select(
+            identity("auto"),
+            RequestRequirements(),
+            sticky_candidate=FAST,
+        ).reasoning_effort
+        == "high"
+    )
+
+
 def test_sticky_route_is_dropped_when_it_can_no_longer_serve():
     """Being chosen before does not make an unusable model usable now."""
     router = build_router(capabilities={FAST: ModelCapabilities(), GOOD: ALL_CAPABLE})

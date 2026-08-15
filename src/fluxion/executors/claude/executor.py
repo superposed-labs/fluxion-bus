@@ -489,14 +489,19 @@ class ClaudeExecutor:
             if self._allowed_tools:
                 command.append(f"--allowedTools={self._allowed_tools}")
         model_override = str(task.metadata.get("model") or "").strip()
+        effort_override = str(task.metadata.get("reasoning_effort") or "").strip().lower()
         if model_override:
             command.extend(["--model", model_override])
         elif self._is_ping_task(task):
             # Keep-alive ping: force the cheapest tier + lowest effort,
             # overriding any configured model.
-            command.extend(["--model", _PING_MODEL, "--effort", _PING_EFFORT])
+            command.extend(["--model", _PING_MODEL])
+            if not effort_override:
+                command.extend(["--effort", _PING_EFFORT])
         elif self._model:
             command.extend(["--model", self._model])
+        if effort_override:
+            command.extend(["--effort", effort_override])
         if self._append_system_prompt:
             command.extend(["--append-system-prompt", self._append_system_prompt])
         if self._max_turns > 0:

@@ -25,6 +25,9 @@ from fluxion.provider_gateway.routing import DIMENSIONS, PolicySpec, split_candi
 from fluxion.provider_gateway.sticky import DEFAULT_TTL_SECONDS
 
 SUPPORTED_CONFIG_VERSION = 1
+SUPPORTED_REASONING_EFFORTS = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
 
 # Protocols a provider entry may declare.
 # One value today. Kept as an explicit field rather than dropped so a config
@@ -315,11 +318,32 @@ def _parse_policies(raw: Any, source: str) -> dict[str, PolicySpec]:
                 f"{source}: policy {policy_id!r} has unknown weights {sorted(unknown)}; "
                 f"valid dimensions are {list(DIMENSIONS)}"
             )
+        fallback = _string_list(entry.get("fallback"), f"{source}: {policy_id}.fallback")
+        efforts = entry.get("efforts", {})
+        if not isinstance(efforts, Mapping):
+            raise ConfigError(f"{source}: policy {policy_id!r} efforts must be an object")
+        ordered_candidates = {*candidates, *fallback}
+        unknown_effort_candidates = set(efforts) - ordered_candidates
+        if unknown_effort_candidates:
+            raise ConfigError(
+                f"{source}: policy {policy_id!r} has efforts for candidates it does not use: "
+                f"{sorted(unknown_effort_candidates)}"
+            )
+        normalized_efforts: dict[str, str] = {}
+        for candidate, value in efforts.items():
+            effort = str(value).strip().lower()
+            if effort not in SUPPORTED_REASONING_EFFORTS:
+                raise ConfigError(
+                    f"{source}: policy {policy_id!r} has unsupported effort {value!r} "
+                    f"for {candidate!r}; supported: {sorted(SUPPORTED_REASONING_EFFORTS)}"
+                )
+            normalized_efforts[str(candidate)] = effort
         policies[str(policy_id)] = PolicySpec(
             policy_id=str(policy_id),
             candidates=tuple(candidates),
-            fallback=tuple(_string_list(entry.get("fallback"), f"{source}: {policy_id}.fallback")),
+            fallback=tuple(fallback),
             weights={name: float(value) for name, value in weights.items()},
+            efforts=normalized_efforts,
         )
     return policies
 

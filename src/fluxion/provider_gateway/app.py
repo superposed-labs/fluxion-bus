@@ -449,6 +449,7 @@ async def _handle_messages(context: GatewayContext, request: Request):
         workspace=workspace,
         session_id=session_id,
         image_attachments=images,
+        reasoning_effort=decision.reasoning_effort,
     )
 
     # `stream` defaults to false in the Messages API, and a caller that wants
@@ -702,6 +703,7 @@ async def _run_local_agent(
         # The role file's `sandbox_mode` binds Codex's sub-thread, which runs no
         # tools here, so enforcing it is ours to do — see codex_config.
         read_only=is_read_only_role(identity.route_hint),
+        reasoning_effort=decision.reasoning_effort,
     ):
         event_type = str(event.get("type", ""))
         yield encode_sse(event)

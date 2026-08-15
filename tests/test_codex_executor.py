@@ -383,6 +383,24 @@ def test_build_command_uses_model_override(tmp_path: Path):
     assert "--ignore-user-config" not in command
 
 
+@pytest.mark.parametrize("session_id", ["", "019f0720-22d4-72f3-9b73-f8c8c9bfdf2f"])
+def test_build_command_applies_route_reasoning_effort(tmp_path: Path, session_id: str):
+    metadata = {"reasoning_effort": "high"}
+    if session_id:
+        metadata["executor_session_id"] = session_id
+    task = Task.create(
+        channel="local",
+        user_id="u",
+        text="hi",
+        workspace=tmp_path,
+        metadata=metadata,
+    )
+
+    command = _executor(tmp_path)._build_command(task)
+
+    assert "model_reasoning_effort=high" in command
+
+
 # ── recursion guard ──────────────────────────────────────────────────
 def _executor(tmp_path: Path) -> CodexExecutor:
     return CodexExecutor(

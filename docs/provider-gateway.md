@@ -90,8 +90,29 @@ A request with no such header — every Anthropic Messages request — takes the
 
 ### Install
 
+The recommended path on macOS is the Fluxion app:
+
+1. Open **Fluxion Preferences → Provider Routing**.
+2. Confirm that **Provider Gateway** is running.
+3. Expand **Codex Integration** and click **Install / Repair**.
+4. Choose the Codex model written into the role files.
+5. Review the generated `config.toml` block and four role files, then install.
+6. Restart Codex. Codex reads `~/.codex/agents/` when it starts, so an existing
+   session does not see newly installed roles.
+
+The selected Codex model is used by Codex for role capabilities and usage
+attribution. It is not the executor model that handles the request; the
+Provider Routing page decides that independently for each Fluxion role.
+
+The app validates the exact generated files with the installed Codex CLI before
+writing, backs up every file it replaces, and restores the previous files if
+validation or writing fails. **View Configuration** shows the resolved paths,
+gateway address, installed role files, role models, and current routes.
+
+For a CLI-only installation, pass the Codex model explicitly:
+
 ```bash
-fluxion-provider install-codex-config
+fluxion-provider install-codex-config --model gpt-5.6-terra
 ```
 
 This writes a managed block into `~/.codex/config.toml` (one `[model_providers.fluxion_*]` entry per role) plus role files under `~/.codex/agents/`. It shows an interactive diff first and backs up the existing config.
@@ -101,6 +122,58 @@ fluxion-provider print-codex-config    # inspect without writing
 fluxion-provider uninstall-codex-config
 fluxion-provider rollback-codex-config
 ```
+
+### MCP registration and Codex Integration are different
+
+Registering `fluxion-mcp` in `~/.codex/config.toml` gives the primary Codex
+agent tools such as `mcp__fluxion__run_subagent`. Installing Codex Integration
+adds native Codex roles backed by the Provider Gateway, so Codex's own
+`spawn_agent` can name `fluxion_worker`, `fluxion_explorer`, and the other
+Fluxion roles.
+
+Neither installation implies the other, and users may enable either one
+independently:
+
+| Integration | How it is invoked | What must be installed |
+| :--- | :--- | :--- |
+| Fluxion MCP | `mcp__fluxion__run_subagent` | MCP server registration |
+| Native Codex roles | `spawn_agent` with `fluxion_worker`, etc. | Codex Integration and Provider Gateway |
+
+### Verify the installation
+
+First ask Codex to load the generated configuration without starting a model
+session:
+
+```bash
+codex mcp list
+```
+
+This command is used as a safe configuration parser: Codex loads
+`~/.codex/config.toml` and the role files before listing MCP servers. A normal
+listing with no TOML or role-file error confirms that the generated files are
+accepted. It does not mean Codex Integration depends on MCP.
+
+Then restart Codex, start a new session, and explicitly name a Fluxion role:
+
+```text
+Use the fluxion_worker role to inspect this repository's README.
+Return a summary and do not modify files.
+```
+
+The role should be created without an unknown-role error, and the request
+should appear in Fluxion's Provider Gateway activity. Asking only for “a worker
+sub-agent” may select Codex's built-in worker instead.
+
+The **Run Diagnostics** button on the Provider Routing page checks the gateway
+port, token permissions, routing JSON, registered executors, configured model
+catalog entries, and whether read-only roles can be enforced. Treat a `FAIL` as
+an unusable route, not as an informational warning.
+
+`fluxion_explorer` and `fluxion_reviewer` are read-only. Every primary and
+fallback candidate on those routes must use an executor that can enforce
+read-only operation. Codex CLI and Claude Code can enforce it; Antigravity
+currently cannot, so the gateway refuses those turns instead of silently
+allowing writes.
 
 ### You must name the role explicitly
 

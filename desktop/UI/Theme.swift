@@ -1,3 +1,90 @@
+// MARK: - Pixel-Perfect Sidebar Vector Icons (matching prefs.jsx)
+enum SidebarIcons {
+    static func makeIcon(for id: String) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size, flipped: false) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.setStrokeColor(NSColor.white.cgColor)
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.setLineWidth(1.6)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+
+            // Map from 24x24 SVG viewBox to 14x14
+            let scale = rect.width / 24.0
+            ctx.translateBy(x: 0, y: rect.height)
+            ctx.scaleBy(x: scale, y: -scale)
+
+            switch id {
+            case "general":
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 4, y: 8)); ctx.addLine(to: CGPoint(x: 20, y: 8))
+                ctx.move(to: CGPoint(x: 4, y: 16)); ctx.addLine(to: CGPoint(x: 20, y: 16))
+                ctx.strokePath()
+                ctx.fillEllipse(in: CGRect(x: 9 - 2.4, y: 8 - 2.4, width: 4.8, height: 4.8))
+                ctx.fillEllipse(in: CGRect(x: 15 - 2.4, y: 16 - 2.4, width: 4.8, height: 4.8))
+
+            case "agents":
+                let bodyPath = CGPath(roundedRect: CGRect(x: 6.5, y: 6.5, width: 11, height: 11), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+                ctx.addPath(bodyPath)
+                ctx.strokePath()
+                let centerPath = CGPath(roundedRect: CGRect(x: 10, y: 10, width: 4, height: 4), cornerWidth: 1, cornerHeight: 1, transform: nil)
+                ctx.addPath(centerPath)
+                ctx.fillPath()
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 9, y: 3.5)); ctx.addLine(to: CGPoint(x: 9, y: 6))
+                ctx.move(to: CGPoint(x: 15, y: 3.5)); ctx.addLine(to: CGPoint(x: 15, y: 6))
+                ctx.move(to: CGPoint(x: 9, y: 18)); ctx.addLine(to: CGPoint(x: 9, y: 20.5))
+                ctx.move(to: CGPoint(x: 15, y: 18)); ctx.addLine(to: CGPoint(x: 15, y: 20.5))
+                ctx.strokePath()
+
+            case "automation":
+                ctx.strokeEllipse(in: CGRect(x: 12 - 7.5, y: 12 - 7.5, width: 15, height: 15))
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 12, y: 8))
+                ctx.addLine(to: CGPoint(x: 12, y: 12))
+                ctx.addLine(to: CGPoint(x: 14.8, y: 13.8))
+                ctx.strokePath()
+
+            case "messaging":
+                let msgPath = CGPath(roundedRect: CGRect(x: 4, y: 5.5, width: 16, height: 11), cornerWidth: 3, cornerHeight: 3, transform: nil)
+                ctx.addPath(msgPath)
+                ctx.strokePath()
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 8.5, y: 16.5))
+                ctx.addLine(to: CGPoint(x: 7.5, y: 19.5))
+                ctx.addLine(to: CGPoint(x: 12, y: 16.5))
+                ctx.strokePath()
+
+            case "provider-routing", "provider":
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 8.2, y: 11.2)); ctx.addLine(to: CGPoint(x: 15.8, y: 7.3))
+                ctx.move(to: CGPoint(x: 8.2, y: 12.8)); ctx.addLine(to: CGPoint(x: 15.8, y: 16.7))
+                ctx.strokePath()
+                ctx.strokeEllipse(in: CGRect(x: 6 - 2.2, y: 12 - 2.2, width: 4.4, height: 4.4))
+                ctx.strokeEllipse(in: CGRect(x: 18 - 2.2, y: 6.5 - 2.2, width: 4.4, height: 4.4))
+                ctx.strokeEllipse(in: CGRect(x: 18 - 2.2, y: 17.5 - 2.2, width: 4.4, height: 4.4))
+
+            case "services":
+                let r1 = CGPath(roundedRect: CGRect(x: 4.5, y: 6, width: 15, height: 5), cornerWidth: 1.6, cornerHeight: 1.6, transform: nil)
+                let r2 = CGPath(roundedRect: CGRect(x: 4.5, y: 13, width: 15, height: 5), cornerWidth: 1.6, cornerHeight: 1.6, transform: nil)
+                ctx.addPath(r1)
+                ctx.addPath(r2)
+                ctx.strokePath()
+                ctx.fillEllipse(in: CGRect(x: 8 - 0.8, y: 8.5 - 0.8, width: 1.6, height: 1.6))
+                ctx.fillEllipse(in: CGRect(x: 8 - 0.8, y: 15.5 - 0.8, width: 1.6, height: 1.6))
+
+            default:
+                break
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
+
 import AppKit
 import Foundation
 
@@ -199,42 +286,39 @@ class SidebarNavItem: NSView {
             dotView.isHidden = !showDot
         }
     }
-    
+
     var onClick: ((String) -> Void)?
-    
+
     private let iconTile = NSView()
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let dotView = NSView()
     private var trackingArea: NSTrackingArea?
-    
+
     init(id: String, title: String, iconSymbol: String, iconBgColor: NSColor) {
         self.id = id
         self.title = title
         self.iconSymbol = iconSymbol
         self.iconBgColor = iconBgColor
         super.init(frame: .zero)
-        
+
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 7
-        
+
         // Icon Tile (22x22)
         iconTile.translatesAutoresizingMaskIntoConstraints = false
         iconTile.wantsLayer = true
         iconTile.layer?.cornerRadius = 6
         iconTile.layer?.backgroundColor = iconBgColor.cgColor
         addSubview(iconTile)
-        
-        // Icon View
+
+        // Icon View (Custom vector icon matching design)
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = .white
-        if #available(macOS 11.0, *) {
-            iconView.image = NSImage(systemSymbolName: iconSymbol, accessibilityDescription: nil)
-        }
+        iconView.image = SidebarIcons.makeIcon(for: id)
         iconTile.addSubview(iconView)
-        
+
         // Label
         label.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = title
@@ -245,7 +329,7 @@ class SidebarNavItem: NSView {
         label.isBordered = false
         label.drawsBackground = false
         addSubview(label)
-        
+
         // Dot View (6x6 green circle)
         dotView.translatesAutoresizingMaskIntoConstraints = false
         dotView.wantsLayer = true
@@ -253,37 +337,37 @@ class SidebarNavItem: NSView {
         dotView.layer?.backgroundColor = NSColor.systemGreen.cgColor
         dotView.isHidden = true
         addSubview(dotView)
-        
+
         // Constraints
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 32),
-            
+
             iconTile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             iconTile.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconTile.widthAnchor.constraint(equalToConstant: 22),
             iconTile.heightAnchor.constraint(equalToConstant: 22),
-            
+
             iconView.centerXAnchor.constraint(equalTo: iconTile.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: iconTile.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 13),
             iconView.heightAnchor.constraint(equalToConstant: 13),
-            
+
             label.leadingAnchor.constraint(equalTo: iconTile.trailingAnchor, constant: 9),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            
+
             dotView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             dotView.centerYAnchor.constraint(equalTo: centerYAnchor),
             dotView.widthAnchor.constraint(equalToConstant: 6),
             dotView.heightAnchor.constraint(equalToConstant: 6),
-            
+
             label.trailingAnchor.constraint(lessThanOrEqualTo: dotView.leadingAnchor, constant: -8)
         ])
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-    
+
     override func updateTrackingAreas() {
         if let trackingArea = trackingArea {
             removeTrackingArea(trackingArea)
@@ -293,19 +377,19 @@ class SidebarNavItem: NSView {
         addTrackingArea(trackingArea!)
         super.updateTrackingAreas()
     }
-    
+
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
     }
-    
+
     override func mouseExited(with event: NSEvent) {
         isHovered = false
     }
-    
+
     override func mouseDown(with event: NSEvent) {
         onClick?(id)
     }
-    
+
     private func updateAppearance() {
         if isActive {
             label.textColor = .white
@@ -318,7 +402,7 @@ class SidebarNavItem: NSView {
         }
         needsDisplay = true
     }
-    
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if isActive {
@@ -329,7 +413,7 @@ class SidebarNavItem: NSView {
             NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
         }
     }
-    
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateAppearance()
