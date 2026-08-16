@@ -9,6 +9,26 @@ milestones.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-16
+
+### Changed
+
+- **Detection-driven provider routing** — setup now probes all installed
+  agent CLIs and their live catalogs to build routing plans automatically;
+  the Preferences sheet, `init`, and `setup-plan` all share the same
+  generator so the two write paths cannot disagree about defaults.
+- **Removed comparison roles** — dropped the unused `cmp_*` side-by-side
+  comparison routes that nothing could dispatch.
+
+### Fixed
+
+- **Model upgrades limited to dispatchable roles** — the upgrade banner
+  no longer offers upgrades for roles that have no caller, preventing
+  unreachable roles from crowding out actionable suggestions.
+- **Compaction model not user-editable** — the route editor no longer
+  offers a Change button for compaction, whose model choice is
+  short-circuited by sticky routing in the cases that actually occur.
+
 ## [1.3.0] - 2026-08-16
 
 ### Added
@@ -352,7 +372,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.0...v1.2.1
