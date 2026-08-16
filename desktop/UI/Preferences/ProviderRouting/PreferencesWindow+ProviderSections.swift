@@ -209,7 +209,7 @@ extension PreferencesWindow {
             primaryRow.addArrangedSubview(primaryKey)
 
             let primaryCandidate = route.candidates.first ?? ""
-            let primaryModelName = formatCandidateModelName(primaryCandidate)
+            let primaryModelName = formatCandidateModelNameWithoutEffort(primaryCandidate)
             let primaryValue = NSTextField(labelWithString: primaryModelName)
             primaryValue.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
             primaryValue.textColor = Palette.primaryText
@@ -220,6 +220,15 @@ extension PreferencesWindow {
             primaryValue.isBordered = false
             primaryValue.drawsBackground = false
             primaryRow.addArrangedSubview(primaryValue)
+
+            // Same badge the model picker uses, and shown for every agent:
+            // Claude's and Codex's efforts live in the route rather than the
+            // model id, so they were previously invisible here.
+            let primaryEffort = effortForCandidate(primaryCandidate, in: route)
+            if !primaryEffort.isEmpty {
+                primaryRow.addArrangedSubview(
+                    ProviderTagView(text: primaryEffort.capitalized, isAccent: true))
+            }
 
             let executorName = formatCandidateExecutorName(primaryCandidate, state: state)
             let execTag = ProviderTagView(text: executorName)
@@ -244,7 +253,11 @@ extension PreferencesWindow {
             fallbackKey.widthAnchor.constraint(equalToConstant: 80).isActive = true
             fallbackRow.addArrangedSubview(fallbackKey)
 
-            let fallbackNames = route.fallback.map { formatCandidateModelName($0) }
+            let fallbackNames = route.fallback.map { candidate -> String in
+                let name = formatCandidateModelNameWithoutEffort(candidate)
+                let effort = effortForCandidate(candidate, in: route)
+                return effort.isEmpty ? name : "\(name) · \(effort.capitalized)"
+            }
             let fallbackString = fallbackNames.isEmpty
                 ? L10n.tr("preferences.provider.none")
                 : fallbackNames.joined(separator: "  →  ")
@@ -617,15 +630,23 @@ extension PreferencesWindow {
         var rows: [NSView] = []
 
         let preferredOrder = ["antigravity", "claude", "codex"]
-        let sortedProviders = state.providers.sorted { p1, p2 in
-            let i1 = preferredOrder.firstIndex(of: p1.executor.lowercased()) ?? 99
-            let i2 = preferredOrder.firstIndex(of: p2.executor.lowercased()) ?? 99
-            return i1 < i2
+        // One row per known executor rather than per configured provider. This
+        // section is named for executors, and an agent CLI that is installed
+        // but absent from the routing config used to be invisible here — the
+        // only place it could have been noticed.
+        var executorNames = state.executors.map { $0.executor.lowercased() }
+        for provider in state.providers where !executorNames.contains(provider.executor.lowercased()) {
+            executorNames.append(provider.executor.lowercased())
+        }
+        executorNames.sort { name1, name2 in
+            (preferredOrder.firstIndex(of: name1) ?? 99) < (preferredOrder.firstIndex(of: name2) ?? 99)
         }
 
-        for (index, provider) in sortedProviders.enumerated() {
-            let catalog = state.catalogs.first { $0.agent == provider.executor }
-            let count = catalog?.models.count ?? provider.models.count
+        for (index, executorName) in executorNames.enumerated() {
+            let provider = state.providers.first { $0.executor.lowercased() == executorName }
+            let detected = state.executors.first { $0.executor.lowercased() == executorName }
+            let catalog = state.catalogs.first { $0.agent.lowercased() == executorName }
+            let count = catalog?.models.count ?? provider?.models.count ?? 0
 
             let rowView = NSView()
             rowView.translatesAutoresizingMaskIntoConstraints = false
@@ -652,7 +673,11 @@ extension PreferencesWindow {
             rowView.addSubview(rightStack)
 
             let tagText: String
-            if provider.executor == "claude" {
+            if provider == nil {
+                tagText = detected?.installed == true
+                    ? L10n.tr("preferences.provider.executor.tag.unrouted")
+                    : L10n.tr("preferences.provider.executor.tag.not_installed")
+            } else if executorName == "claude" {
                 tagText = L10n.tr("preferences.provider.catalog.alias_table")
             } else if catalog != nil {
                 tagText = L10n.tr("preferences.provider.catalog.live_catalog")
@@ -663,6 +688,18 @@ extension PreferencesWindow {
             }
             let tagView = ProviderTagView(text: tagText)
             rightStack.addArrangedSubview(tagView)
+
+            // Installed but unrouted is the one row the user can act on here.
+            if provider == nil, detected?.isAddable == true {
+                let addButton = NSButton(
+                    title: L10n.tr("preferences.provider.executor.add"),
+                    target: self,
+                    action: #selector(addProviderExecutorAction(_:)))
+                addButton.bezelStyle = .rounded
+                addButton.controlSize = .small
+                addButton.identifier = NSUserInterfaceItemIdentifier(executorName)
+                rightStack.addArrangedSubview(addButton)
+            }
 
             NSLayoutConstraint.activate([
                 rightStack.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -16),
@@ -683,7 +720,7 @@ extension PreferencesWindow {
                 labelStack.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -12)
             ])
 
-            let titleLabel = NSTextField(labelWithString: formatProviderName(provider.executor))
+            let titleLabel = NSTextField(labelWithString: formatProviderName(executorName))
             titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             titleLabel.textColor = Palette.primaryText
             titleLabel.isEditable = false
@@ -693,7 +730,13 @@ extension PreferencesWindow {
             labelStack.addArrangedSubview(titleLabel)
 
             let descText: String
-            if provider.executor == "claude" {
+            if provider == nil {
+                descText = detected?.installed == true
+                    ? L10n.tr(
+                        "preferences.provider.executor.unrouted_desc",
+                        detected?.path ?? "")
+                    : L10n.tr("preferences.provider.executor.not_installed_desc")
+            } else if executorName == "claude" {
                 descText = L10n.tr("preferences.provider.catalog.aliases")
             } else if catalog != nil {
                 descText = String(
@@ -702,11 +745,11 @@ extension PreferencesWindow {
             } else if providerCatalogsLoading {
                 descText = L10n.tr(
                     "preferences.provider.catalog.loading_desc",
-                    provider.models.count)
+                    provider?.models.count ?? 0)
             } else {
                 descText = L10n.tr(
                     "preferences.provider.catalog.configured_desc",
-                    provider.models.count)
+                    provider?.models.count ?? 0)
             }
             let descLabel = NSTextField(labelWithString: descText)
             descLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
@@ -788,6 +831,11 @@ extension PreferencesWindow {
 
         let sectionTitle = L10n.tr("preferences.provider.section.catalogs")
         addSection(title: sectionTitle, rows: rows, into: stack)
+    }
+
+    @objc func addProviderExecutorAction(_ sender: NSButton) {
+        guard let executor = sender.identifier?.rawValue, !executor.isEmpty else { return }
+        addProviderExecutor(executor, reopeningRole: nil)
     }
 
     // MARK: - 6. Model Updates Section

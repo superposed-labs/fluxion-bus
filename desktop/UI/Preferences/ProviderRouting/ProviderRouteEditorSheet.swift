@@ -95,18 +95,44 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
         formatter: PreferencesWindow
     ) -> [(providerDisplayName: String, items: [ProviderCatalogModelItem])] {
         let preferredOrder = ["antigravity", "claude", "codex"]
-        let enabledProviders = state.providers.filter(\.enabled).sorted { p1, p2 in
-            let i1 = preferredOrder.firstIndex(of: p1.executor.lowercased()) ?? 99
-            let i2 = preferredOrder.firstIndex(of: p2.executor.lowercased()) ?? 99
-            return i1 < i2
+
+        // A source is one column of the picker. Providers already in the config
+        // are the obvious ones; an installed CLI with no provider entry is
+        // listed too, and picking one of its models is what declares it. Making
+        // the user declare the provider first would expose the config schema as
+        // a step before they can say which model should serve the role.
+        struct CatalogSource {
+            let providerId: String
+            let executor: String
+            let configuredModels: [String]
+            let needsDeclaration: Bool
+        }
+
+        var sources: [CatalogSource] = state.providers.filter(\.enabled).map {
+            CatalogSource(
+                providerId: $0.id,
+                executor: $0.executor.lowercased(),
+                configuredModels: $0.models,
+                needsDeclaration: false)
+        }
+        for detected in state.executors where detected.isAddable {
+            sources.append(CatalogSource(
+                providerId: detected.defaultProviderId ?? "local_\(detected.executor)",
+                executor: detected.executor.lowercased(),
+                configuredModels: [],
+                needsDeclaration: true))
+        }
+        sources.sort { source1, source2 in
+            (preferredOrder.firstIndex(of: source1.executor) ?? 99)
+                < (preferredOrder.firstIndex(of: source2.executor) ?? 99)
         }
 
         var result: [(providerDisplayName: String, items: [ProviderCatalogModelItem])] = []
 
-        for provider in enabledProviders {
-            let exec = provider.executor.lowercased()
+        for provider in sources {
+            let exec = provider.executor
             let providerDisplayName = formatter.formatProviderName(exec)
-            let catalog = state.catalogs.first(where: { $0.agent == provider.executor })
+            let catalog = state.catalogs.first(where: { $0.agent.lowercased() == exec })
 
             var rawModelList: [(id: String, catalogModel: ProviderCatalogModelState?)] = []
             var seenRawIds = Set<String>()
@@ -120,7 +146,7 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
                 }
             }
 
-            for id in provider.models {
+            for id in provider.configuredModels {
                 if !seenRawIds.contains(id) {
                     seenRawIds.insert(id)
                     rawModelList.append((id: id, catalogModel: nil))
@@ -185,31 +211,17 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
                     runtimeEffortSet.contains($0)
                 }
 
-                let displayName: String
-                switch baseId {
-                case "gemini-3.7-flash": displayName = "Gemini 3.7 Flash"
-                case "gemini-3.6-flash": displayName = "Gemini 3.6 Flash"
-                case "gemini-3.1-pro": displayName = "Gemini 3.1 Pro"
-                case "opus", "claude-opus-5": displayName = "Claude Opus 5"
-                case "sonnet", "claude-sonnet-5": displayName = "Claude Sonnet 5"
-                case "haiku", "claude-haiku-4-5-20251001", "claude-haiku-4.5": displayName = "Claude Haiku 4.5"
-                case "gpt-5.6-sol": displayName = "GPT-5.6 Sol"
-                case "gpt-5.6-terra": displayName = "GPT-5.6 Terra"
-                case "gpt-5.6-luna": displayName = "GPT-5.6 Luna"
-                case "gpt-5.5": displayName = "GPT-5.5"
-                case "gpt-5.4": displayName = "GPT-5.4"
-                case "gpt-5.4-mini": displayName = "GPT-5.4 Mini"
-                default:
-                    displayName = formatter.formatCandidateModelName(baseId)
-                }
+                // One derivation for every model name in the app; this list was
+                // a second copy of the table in PreferencesWindow+ProviderRouting.
+                let displayName = formatter.formatModelDisplayName(baseId)
 
                 let isRetired = state.modelHealth.missing.contains(rawId)
                     || state.modelHealth.missing.contains(baseId)
-                    || state.modelHealth.missing.contains("\(provider.id):\(rawId)")
-                    || state.modelHealth.missing.contains("\(provider.id):\(baseId)")
+                    || state.modelHealth.missing.contains("\(provider.providerId):\(rawId)")
+                    || state.modelHealth.missing.contains("\(provider.providerId):\(baseId)")
 
                 items.append(ProviderCatalogModelItem(
-                    providerId: provider.id,
+                    providerId: provider.providerId,
                     executor: provider.executor,
                     providerDisplayName: providerDisplayName,
                     baseModelId: baseId,
@@ -224,7 +236,8 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
                     tag: catModel?.tag,
                     isRetired: isRetired,
                     effortCapabilitiesKnown: !supportedEfforts.isEmpty
-                        || catModel?.supportedReasoningEfforts != nil
+                        || catModel?.supportedReasoningEfforts != nil,
+                    needsDeclaration: provider.needsDeclaration
                 ))
             }
 
@@ -798,6 +811,110 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
         return row
     }
 
+    /// Why this model cannot serve the role being edited, if it cannot.
+    ///
+    /// Explorer and Reviewer are enforced read-only, and an executor with no
+    /// read-only mode is refused at request time rather than run with write
+    /// access. Offering it here would be offering a route that dies on its
+    /// first turn — and the models of such an executor are one click away now.
+    private func blockedReason(for item: ProviderCatalogModelItem) -> String? {
+        guard state.isReadOnlyRole(route.role) else { return nil }
+        let detected = state.executors.first {
+            $0.executor.lowercased() == item.executor.lowercased()
+        }
+        guard detected?.enforcesReadOnly == false else { return nil }
+        return L10n.tr("preferences.provider.editor.no_read_only")
+    }
+
+    /// Executors with no group in the picker: not in the config at all, or in
+    /// it but unusable right now. Each still gets a tab so the reason is
+    /// visible instead of the executor silently missing.
+    private func unroutedExecutorTabs() -> [(executor: ProviderExecutorState, displayName: String)] {
+        let routed = Set(allCatalogGroups.map(\.providerDisplayName))
+        let preferredOrder = ["antigravity", "claude", "codex"]
+        return state.executors
+            .map { (executor: $0, displayName: preferencesWindow.formatProviderName($0.executor)) }
+            .filter { !routed.contains($0.displayName) }
+            .sorted {
+                (preferredOrder.firstIndex(of: $0.executor.executor.lowercased()) ?? 99)
+                    < (preferredOrder.firstIndex(of: $1.executor.executor.lowercased()) ?? 99)
+            }
+    }
+
+    private func buildUnroutedExecutorPanel(
+        _ tab: (executor: ProviderExecutorState, displayName: String)
+    ) -> NSView {
+        let panel = NSView()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stack)
+        NSLayoutConstraint.activate([
+            panel.heightAnchor.constraint(equalToConstant: 188),
+            stack.centerYAnchor.constraint(equalTo: panel.centerYAnchor),
+            stack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -24)
+        ])
+
+        let titleKey: String
+        let descKey: String
+        switch tab.executor.state {
+        case "available":
+            titleKey = "preferences.provider.picker.unrouted.title"
+            descKey = "preferences.provider.picker.unrouted.desc"
+        case "disabled":
+            titleKey = "preferences.provider.picker.disabled.title"
+            descKey = "preferences.provider.picker.disabled.desc"
+        case "cli_missing":
+            titleKey = "preferences.provider.picker.cli_missing.title"
+            descKey = "preferences.provider.picker.cli_missing.desc"
+        default:
+            titleKey = "preferences.provider.picker.missing.title"
+            descKey = "preferences.provider.picker.missing.desc"
+        }
+
+        let title = NSTextField(labelWithString: L10n.tr(titleKey, tab.displayName))
+        title.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        title.textColor = Palette.primaryText
+        title.alignment = .center
+        title.isEditable = false
+        title.isSelectable = false
+        stack.addArrangedSubview(title)
+
+        let desc = NSTextField(wrappingLabelWithString: L10n.tr(descKey))
+        desc.font = NSFont.systemFont(ofSize: 11.5)
+        desc.textColor = Palette.secondaryText
+        desc.alignment = .center
+        desc.isEditable = false
+        desc.isSelectable = false
+        desc.preferredMaxLayoutWidth = 380
+        stack.addArrangedSubview(desc)
+
+        if tab.executor.isAddable {
+            let button = NSButton(
+                title: L10n.tr("preferences.provider.picker.unrouted.add"),
+                target: self,
+                action: #selector(addUnroutedExecutorAction(_:)))
+            button.bezelStyle = .rounded
+            button.controlSize = .regular
+            button.keyEquivalent = ""
+            button.identifier = NSUserInterfaceItemIdentifier(tab.executor.executor)
+            stack.addArrangedSubview(button)
+        }
+        return panel
+    }
+
+    @objc private func addUnroutedExecutorAction(_ sender: NSButton) {
+        guard let executor = sender.identifier?.rawValue, !executor.isEmpty else { return }
+        // Dismisses this sheet and reopens it on fresh state once the new
+        // executor's catalog has loaded.
+        preferencesWindow.addProviderExecutor(executor, reopeningRole: route.role)
+    }
+
     private func buildModelPickerView(
         selectedValue: String?,
         effort: String,
@@ -862,13 +979,21 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
             tabBottomBorder.heightAnchor.constraint(equalToConstant: 1)
         ])
 
+        // Every known executor gets a tab, not just the ones already routed.
+        // An installed CLI that is missing from the config used to be absent
+        // from this strip entirely, which reads as "unsupported" rather than
+        // "not set up yet", and left no way to set it up.
+        let unroutedTabs = unroutedExecutorTabs()
         let filterNames = ["All"] + allCatalogGroups.map(\.providerDisplayName)
+            + unroutedTabs.map(\.displayName)
         for filterName in filterNames {
+            let unrouted = unroutedTabs.first(where: { $0.displayName == filterName })
             let button = ProviderExecutorFilterButton(
                 title: filterName,
                 isSelected: executorFilter == filterName,
                 containsSelection: filterName != "All" && pickedItem?.providerDisplayName == filterName,
                 hasWarning: filterName != "All" && warningExecutors.contains(filterName),
+                isDimmed: unrouted != nil,
                 onSelect: {
                     guard executorFilter != filterName else { return }
                     onFilterChange(filterName)
@@ -885,6 +1010,17 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
             ? allCatalogGroups
             : allCatalogGroups.filter { $0.providerDisplayName == executorFilter }
 
+        if let unrouted = unroutedTabs.first(where: { $0.displayName == executorFilter }) {
+            let panel = buildUnroutedExecutorPanel(unrouted)
+            container.addArrangedSubview(panel)
+            panel.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+            return container
+        }
+
+        // No note about the provider being declared on save: picking a model
+        // that is not in the config already declares it (--add-models) without
+        // announcing itself, and the provider is the less meaningful half of
+        // that pair. The Executors section is where setup status belongs.
         let listStack = NSStackView()
         listStack.orientation = .vertical
         listStack.alignment = .leading
@@ -944,6 +1080,7 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
                     effort: effort,
                     isSelected: isSelected,
                     isUsed: isUsed,
+                    blockedReason: blockedReason(for: item),
                     onPick: { onPick(item) }
                 )
                 listStack.addArrangedSubview(row)
@@ -1279,6 +1416,12 @@ class ProviderRouteEditorSheetController: NSObject, NSWindowDelegate {
     }
 
     @objc private func cancelAction(_ sender: Any) {
+        dismiss()
+    }
+
+    /// Close without saving. Used when the sheet has to be rebuilt from fresh
+    /// state, such as after adding a provider the picker did not know about.
+    func dismiss() {
         guard let win = sheetWindow else { return }
         parentWindow.endSheet(win, returnCode: .cancel)
         win.orderOut(nil)

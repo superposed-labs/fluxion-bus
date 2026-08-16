@@ -2,8 +2,9 @@ import AppKit
 import Foundation
 
 // The two full-width cards at the top of the provider-routing page: the gateway
-// status card (endpoints, start/stop, connection details) and the Gemini 3.7
-// upgrade banner with its review sheet.
+// status card (endpoints, start/stop, connection details) and the model upgrade
+// banner with its review sheet. The banner's contents come from the backend, so
+// a vendor release it has never heard of still produces a correct offer.
 
 extension PreferencesWindow {
 
@@ -57,7 +58,7 @@ extension PreferencesWindow {
         var factParts: [String] = []
         factParts.append(L10n.tr("preferences.provider.facts.roles", installedRoles, totalRoles))
         factParts.append(L10n.tr("preferences.provider.facts.executors", availableExecutors))
-        if hasGemini37Upgrade(state) && providerGatewayRunning {
+        if hasProviderUpgrade(state) && providerGatewayRunning {
             factParts.append(L10n.tr("preferences.provider.facts.update_available"))
         } else if !providerGatewayRunning {
             factParts.append(L10n.tr("preferences.provider.facts.disconnected"))
@@ -252,47 +253,37 @@ extension PreferencesWindow {
         renderProviderRouting()
     }
 
-    // MARK: - 2. Gemini 3.7 Upgrade Banner
+    // MARK: - 2. Model Upgrade Banner
 
-    func hasGemini37Upgrade(_ state: ProviderRoutingState) -> Bool {
-        let antigravityCatalog = state.catalogs.first(where: { $0.agent == "antigravity" })
-        guard
-            let oldModel = antigravityCatalog?.models.first(where: {
-                $0.id == "gemini-3.6-flash-high"
-            }),
-            let newModel = antigravityCatalog?.models.first(where: {
-                $0.id == "gemini-3.7-flash-high"
-            }),
-            let oldInput = oldModel.inputPer1M,
-            let newInput = newModel.inputPer1M,
-            let oldOutput = oldModel.outputPer1M,
-            let newOutput = newModel.outputPer1M,
-            oldInput == newInput,
-            oldOutput == newOutput
-        else {
-            return false
-        }
-        return !geminiUpgradeRoutes(state).isEmpty
+    /// The upgrade to offer, if the backend found one.
+    ///
+    /// This was a named pair of Gemini versions and the strings to describe
+    /// them, which meant every release needed a new function, new copy in three
+    /// languages, and a signed build of the app before any user heard about it.
+    /// The backend now derives the offer from the catalog and this renders
+    /// whatever it is handed.
+    func providerUpgradeOffer(_ state: ProviderRoutingState) -> ProviderUpgradeOffer? {
+        (state.upgrades ?? []).first { !$0.roles.isEmpty }
     }
 
-    private func geminiUpgradeRoutes(_ state: ProviderRoutingState) -> [ProviderRouteState] {
-        let recommendedRoles = Set(["auto", "worker", "balanced"])
-        return state.routes.filter { route in
-            recommendedRoles.contains(route.role)
-                && !route.inheritsAuto
-                && route.candidates.contains {
-                    $0.hasSuffix(":gemini-3.6-flash-high")
-                }
-        }
+    func hasProviderUpgrade(_ state: ProviderRoutingState) -> Bool {
+        providerUpgradeOffer(state) != nil
     }
 
-    private func geminiUpgradePriceText(_ state: ProviderRoutingState) -> String {
-        let catalog = state.catalogs.first(where: { $0.agent == "antigravity" })
-        let model = catalog?.models.first(where: { $0.id == "gemini-3.7-flash-high" })
-        return L10n.tr(
-            "preferences.provider.upgrade.sheet.price_v",
-            String(format: "$%.2f", model?.inputPer1M ?? 0),
-            String(format: "$%.2f", model?.outputPer1M ?? 0))
+    private func upgradeRoutes(
+        _ state: ProviderRoutingState,
+        offer: ProviderUpgradeOffer
+    ) -> [ProviderRouteState] {
+        state.routes.filter { offer.roles.contains($0.role) }
+    }
+
+    private func upgradePriceText(_ offer: ProviderUpgradeOffer) -> String {
+        L10n.tr(
+            offer.priceDelta == "cheaper"
+                ? "preferences.provider.upgrade.sheet.price_cheaper"
+                : "preferences.provider.upgrade.sheet.price_same",
+            String(format: "$%.2f", offer.inputPer1M ?? 0),
+            String(format: "$%.2f", offer.outputPer1M ?? 0))
     }
 
     func addProviderUpgradeBanner(_ state: ProviderRoutingState, into stack: NSStackView) {
@@ -318,7 +309,9 @@ extension PreferencesWindow {
         textStack.alignment = .leading
         textStack.spacing = 4
 
-        let titleLabel = NSTextField(labelWithString: L10n.tr("preferences.provider.upgrade.title"))
+        guard let offer = providerUpgradeOffer(state) else { return }
+        let titleLabel = NSTextField(labelWithString: L10n.tr(
+            "preferences.provider.upgrade.title", formatModelDisplayName(offer.toModel)))
         titleLabel.font = NSFont.systemFont(ofSize: 13.5, weight: .bold)
         titleLabel.textColor = Palette.primaryText
         titleLabel.isEditable = false
@@ -327,12 +320,14 @@ extension PreferencesWindow {
         titleLabel.drawsBackground = false
         textStack.addArrangedSubview(titleLabel)
 
-        let affectedRoutes = geminiUpgradeRoutes(state).map {
-            formatRoleDisplayName($0.role)
-        }
-        let routeNames = affectedRoutes.joined(separator: ", ")
+        let routeNames = upgradeRoutes(state, offer: offer)
+            .map { formatRoleDisplayName($0.role) }
+            .joined(separator: ", ")
 
-        let descLabel = NSTextField(wrappingLabelWithString: L10n.tr("preferences.provider.upgrade.desc", routeNames.isEmpty ? "Auto, Worker" : routeNames))
+        let descLabel = NSTextField(wrappingLabelWithString: L10n.tr(
+            "preferences.provider.upgrade.desc",
+            routeNames,
+            formatModelDisplayName(offer.fromModel)))
         descLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
         descLabel.textColor = Palette.secondaryText
         descLabel.cell?.wraps = true
@@ -347,7 +342,10 @@ extension PreferencesWindow {
         descLabel.drawsBackground = false
         textStack.addArrangedSubview(descLabel)
 
-        let metaLabel = NSTextField(wrappingLabelWithString: L10n.tr("preferences.provider.upgrade.meta"))
+        let metaLabel = NSTextField(wrappingLabelWithString: L10n.tr(
+            offer.priceDelta == "cheaper"
+                ? "preferences.provider.upgrade.meta_cheaper"
+                : "preferences.provider.upgrade.meta_same"))
         metaLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         metaLabel.textColor = Palette.secondaryText
         metaLabel.cell?.wraps = true
@@ -379,11 +377,13 @@ extension PreferencesWindow {
     @objc func reviewUpgradeAction(_ sender: Any) {
         guard let state = providerRoutingState, let win = window else { return }
 
-        let affected = geminiUpgradeRoutes(state)
+        guard let offer = providerUpgradeOffer(state) else { return }
+        let affected = upgradeRoutes(state, offer: offer)
         let alert = NSAlert()
         alert.messageText = L10n.tr("preferences.provider.upgrade.sheet.title")
         alert.informativeText = ""
-        alert.accessoryView = buildReviewUpgradeAccessoryView(state: state, affectedRoutes: affected)
+        alert.accessoryView = buildReviewUpgradeAccessoryView(
+            offer: offer, affectedRoutes: affected)
 
         let applyTitle = String(format: L10n.tr("preferences.provider.upgrade.sheet.apply"), affected.count)
         alert.addButton(withTitle: applyTitle)
@@ -391,12 +391,12 @@ extension PreferencesWindow {
 
         alert.beginSheetModal(for: win) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self = self else { return }
-            self.applyGeminiUpgrade(affected)
+            self.applyUpgradeOffer(offer, to: affected)
         }
     }
 
     private func buildReviewUpgradeAccessoryView(
-        state: ProviderRoutingState,
+        offer: ProviderUpgradeOffer,
         affectedRoutes: [ProviderRouteState]
     ) -> NSView {
         let container = NSStackView()
@@ -406,7 +406,8 @@ extension PreferencesWindow {
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 440).isActive = true
 
-        let subLabel = NSTextField(wrappingLabelWithString: L10n.tr("preferences.provider.upgrade.sheet.sub"))
+        let subLabel = NSTextField(wrappingLabelWithString: L10n.tr(
+            "preferences.provider.upgrade.sheet.sub", formatModelDisplayName(offer.toModel)))
         subLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
         subLabel.textColor = Palette.secondaryText
         subLabel.isEditable = false
@@ -430,21 +431,26 @@ extension PreferencesWindow {
         // Primary diff row
         let primaryRow = makeDiffRow(
             key: L10n.tr("preferences.provider.upgrade.sheet.primary_k"),
-            value: L10n.tr("preferences.provider.upgrade.sheet.primary_v")
+            value: L10n.tr(
+                "preferences.provider.upgrade.sheet.primary_v",
+                formatModelDisplayName(offer.fromModel),
+                formatModelDisplayName(offer.toModel))
         )
         diffStack.addArrangedSubview(primaryRow)
 
         // Fallback diff row
         let fallbackRow = makeDiffRow(
             key: L10n.tr("preferences.provider.upgrade.sheet.fallback_k"),
-            value: L10n.tr("preferences.provider.upgrade.sheet.fallback_v")
+            value: L10n.tr(
+                "preferences.provider.upgrade.sheet.fallback_v",
+                formatModelDisplayName(offer.fromModel))
         )
         diffStack.addArrangedSubview(fallbackRow)
 
         // Price diff row
         let priceRow = makeDiffRow(
             key: L10n.tr("preferences.provider.upgrade.sheet.price_k"),
-            value: geminiUpgradePriceText(state)
+            value: upgradePriceText(offer)
         )
         diffStack.addArrangedSubview(priceRow)
 
@@ -515,7 +521,9 @@ extension PreferencesWindow {
                 hStack.addArrangedSubview(slug)
                 rStack.addArrangedSubview(hStack)
 
-                let chainParts = ["Gemini 3.6 Flash · High"] + route.fallback.map { formatCandidateModelName($0) }
+                // The model being replaced heads the chain it is demoted into.
+                let chainParts = [formatModelDisplayName(offer.fromModel)]
+                    + route.fallback.map { formatCandidateModelName($0) }
                 let chainLabel = NSTextField(wrappingLabelWithString: chainParts.joined(separator: " → "))
                 chainLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
                 chainLabel.textColor = Palette.secondaryText
@@ -572,11 +580,15 @@ extension PreferencesWindow {
         return row
     }
 
-    private func applyGeminiUpgrade(_ routes: [ProviderRouteState]) {
-        applyGeminiUpgrade(routes, index: 0)
+    private func applyUpgradeOffer(_ offer: ProviderUpgradeOffer, to routes: [ProviderRouteState]) {
+        applyUpgradeOffer(offer, to: routes, index: 0)
     }
 
-    private func applyGeminiUpgrade(_ routes: [ProviderRouteState], index: Int) {
+    private func applyUpgradeOffer(
+        _ offer: ProviderUpgradeOffer,
+        to routes: [ProviderRouteState],
+        index: Int
+    ) {
         guard index < routes.count else {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
@@ -591,9 +603,7 @@ extension PreferencesWindow {
 
         let route = routes[index]
         let newCandidates = route.candidates.map {
-            $0.replacingOccurrences(
-                of: ":gemini-3.6-flash-high",
-                with: ":gemini-3.7-flash-high")
+            $0 == offer.fromCandidate ? offer.toCandidate : $0
         }
         var newFallbacks = route.fallback
         if let oldPrimary = route.candidates.first, !newFallbacks.contains(oldPrimary) {
@@ -610,7 +620,7 @@ extension PreferencesWindow {
             guard let self = self else { return }
             switch result {
             case .success:
-                self.applyGeminiUpgrade(routes, index: index + 1)
+                self.applyUpgradeOffer(offer, to: routes, index: index + 1)
             case .failure(let error):
                 self.showProviderRoutingError(error.localizedDescription)
                 self.refreshProviderRouting(includeCatalogs: true)

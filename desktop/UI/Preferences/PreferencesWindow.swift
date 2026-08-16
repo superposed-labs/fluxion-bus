@@ -295,6 +295,7 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var providerAdvancedRoutesOpen = false
     var providerCodexIntegrationOpen = false
     var activeRouteEditorSheetController: ProviderRouteEditorSheetController?
+    var activeProviderSetupSheetController: ProviderSetupSheetController?
     var activeCodexConfigSheetController: ProviderCodexConfigSheetController?
     var activeInstallRepairSheetController: ProviderInstallRepairSheetController?
 

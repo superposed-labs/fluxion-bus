@@ -153,12 +153,11 @@ class ProviderCodexConfigSheetController: NSObject, NSWindowDelegate {
         let port = preferencesWindow.appDelegate.envVals["FLUXION_PROVIDER_PORT"] ?? "8787"
         let gatewayAddr = "http://\(host):\(port)/v1"
 
-        let roleItems: [ProviderCodexRoleConfigItem] = [
-            buildRoleItem(roleSlug: "auto", defaultModel: "Claude Haiku 4.5"),
-            buildRoleItem(roleSlug: "worker", defaultModel: "Claude Sonnet 5"),
-            buildRoleItem(roleSlug: "explorer", defaultModel: "Gemini 3.6 Flash"),
-            buildRoleItem(roleSlug: "reviewer", defaultModel: "Claude Opus 5")
-        ]
+        // No per-role placeholder names: what a role would run is whatever
+        // its route resolves to, and naming a model here was a guess that went
+        // stale on its own schedule. An unrouted role says so instead.
+        let roleItems: [ProviderCodexRoleConfigItem] = ["auto", "worker", "explorer", "reviewer"]
+            .map { buildRoleItem(roleSlug: $0) }
 
         let okCount = roleItems.filter { $0.status == .installed }.count
         let totalCount = roleItems.count
@@ -351,19 +350,21 @@ class ProviderCodexConfigSheetController: NSObject, NSWindowDelegate {
         sec2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
-    private func buildRoleItem(roleSlug: String, defaultModel: String) -> ProviderCodexRoleConfigItem {
+    private func buildRoleItem(roleSlug: String) -> ProviderCodexRoleConfigItem {
         let fullRole = "fluxion_\(roleSlug)"
         let file = "agents/\(roleSlug).toml"
         let codexHome = state.codex.home ?? "~/.codex"
 
         let codexRole = state.codex.roles.first(where: { $0.role == roleSlug || $0.role == fullRole })
         let isInstalled = codexRole?.installed ?? false
-        let codexModel = codexRole?.model.isEmpty == false ? codexRole!.model : "gpt-5.6-terra"
+        let codexModel = codexRole?.model.isEmpty == false
+            ? codexRole!.model
+            : (state.executors.first { $0.executor.lowercased() == "codex" }?.recommendedModel ?? "")
 
         let matchingRoute = state.routes.first(where: { $0.role == roleSlug || $0.role == fullRole })
         let candidate = matchingRoute?.candidates.first ?? ""
         let routeModel = candidate.isEmpty
-            ? defaultModel
+            ? L10n.tr("preferences.provider.codex.role.unrouted")
             : preferencesWindow.formatCandidateModelName(candidate)
         let routeExecutor = candidate.isEmpty
             ? "Antigravity"

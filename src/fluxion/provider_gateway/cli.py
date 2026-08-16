@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+from fluxion.availability import PROVIDERS
 from fluxion.config.settings import load_dotenv
 from fluxion.provider_gateway import codex_catalog, codex_config
 from fluxion.provider_gateway.auth import check_bind, load_or_create_token
@@ -30,40 +31,14 @@ from fluxion.provider_gateway.model_catalog import (
     describe_missing,
     verify_configured_models,
 )
-from fluxion.provider_gateway.preferences import preferences_state, set_route
+from fluxion.provider_gateway.preferences import add_provider, preferences_state, set_route
+from fluxion.provider_gateway.setup import (
+    build_setup_plan,
+    build_setup_plans,
+    plan_to_config,
+)
 from fluxion.provider_gateway.sticky import StickyStore
 from fluxion.utils import macos_notify
-
-_STARTER_CONFIG = {
-    "version": 1,
-    "providers": [
-        {
-            "id": "local_claude",
-            # Backed by the Claude Code CLI on the user's own subscription
-            # rather than a metered API. Capability flags are granted
-            # automatically for local agents — see config.py.
-            "protocol": "local_agent",
-            "executor": "claude",
-            "enabled": True,
-            # Where the agent runs when a request carries no workspace. Codex
-            # normally reports its git repo root, so this is only the fallback;
-            # leave it empty to have such requests refused rather than run in
-            # the wrong repository.
-            "default_workspace": "",
-            "models": [{"id": "opus", "capabilities": {"max_context_tokens": 200000}}],
-        }
-    ],
-    "policies": {
-        "balanced": {"candidates": ["local_claude:opus"]},
-    },
-    "routes": {
-        "auto": "balanced",
-        "explorer": "balanced",
-        "reviewer": "balanced",
-        "worker": "balanced",
-        "compaction": "balanced",
-    },
-}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,11 +66,25 @@ def _init(args: argparse.Namespace) -> int:
         # Never overwrite: this file holds the user's provider and policy work.
         print(f"routing config already exists, left untouched: {config_path}")
     else:
+        # Same generator the Preferences setup sheet uses. Two paths writing the
+        # first config would eventually disagree about what a good default is,
+        # and only one of them would get fixed.
+        plan = build_setup_plan(config_file=str(config_path), config_exists=False)
+        if plan["blockers"]:
+            for blocker in plan["blockers"]:
+                print(f"  {blocker}")
+            return 1
+        config = plan_to_config(plan)
+        RoutingConfig.parse(config, source=str(config_path))
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(json.dumps(_STARTER_CONFIG, indent=2) + "\n", encoding="utf-8")
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         print(f"routing config: {config_path}")
-        print("  It routes every role to the local Claude Code CLI. Adjust models,")
-        print("  add roles, or set default_workspace before starting.")
+        for route in plan["routes"]:
+            print(f"  {route['role']:<11}{route['primary']:<38}{route['reason']}")
+            if route["warning"]:
+                print(f"  {'':<11}{route['warning']}")
+        for note in plan["notes"]:
+            print(f"  note: {note}")
         print("  For the fuller shape — several executors, per-role policies —")
         print("  see config/provider_routes.example.json.")
 
@@ -243,6 +232,7 @@ def _set_route(args: argparse.Namespace) -> int:
         fallback=list(args.fallback),
         efforts=efforts,
         add_missing_models=args.add_models,
+        declare_providers=dict(args.declare_provider),
         backup_dir=data_dir / "backups" / "provider-routing",
     )
     print(
@@ -252,6 +242,85 @@ def _set_route(args: argparse.Namespace) -> int:
                 "role": args.role,
                 "config_file": str(settings.config_file.expanduser()),
                 "backup": str(backup),
+            }
+        )
+    )
+    return 0
+
+
+def _setup_plan(args: argparse.Namespace) -> int:
+    settings = GatewaySettings.load()
+    config_path = settings.config_file.expanduser()
+    print(
+        json.dumps(
+            build_setup_plans(
+                config_file=str(config_path),
+                config_exists=config_path.exists(),
+                worker_executor=args.worker_executor,
+            ),
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _setup_apply(args: argparse.Namespace) -> int:
+    settings = GatewaySettings.load()
+    config_path = settings.config_file.expanduser()
+    if config_path.exists():
+        # Never overwrite: this file holds the user's provider and policy work.
+        return _error(f"routing config already exists, left untouched: {config_path}")
+
+    # Rebuilt rather than accepting the previewed plan back: what gets written
+    # should describe this machine now, not when the sheet was drawn.
+    plan = build_setup_plan(
+        config_file=str(config_path),
+        config_exists=False,
+        worker_executor=args.worker_executor,
+    )
+    if plan["blockers"]:
+        return _error("; ".join(plan["blockers"]))
+
+    config = plan_to_config(plan)
+    RoutingConfig.parse(config, source=str(config_path))
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    load_or_create_token(settings.token_file)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "config_file": str(config_path),
+                "worker_executor": plan["worker_executor"],
+                "providers": [provider["id"] for provider in plan["providers"]],
+                "routes": {route["role"]: route["primary"] for route in plan["routes"]},
+                "warnings": [route["warning"] for route in plan["routes"] if route["warning"]],
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _add_provider(args: argparse.Namespace) -> int:
+    settings = GatewaySettings.load()
+    data_dir = Path(
+        os.environ.get("FLUXION_DATA_DIR", str(settings.token_file.expanduser().parent))
+    ).expanduser()
+    result = add_provider(
+        settings.config_file,
+        executor=args.executor,
+        provider_id=args.provider_id,
+        models=[item for value in args.models for item in value.split(",")],
+        backup_dir=data_dir / "backups" / "provider-routing",
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "executor": args.executor,
+                "config_file": str(settings.config_file.expanduser()),
+                **result,
             }
         )
     )
@@ -729,6 +798,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     init_parser = subparsers.add_parser("init", help="Create the token and a starter config.")
     init_parser.set_defaults(handler=_init)
 
+    for name, handler, help_text in (
+        ("setup-plan", _setup_plan, "Show the config detection would write, without writing."),
+        ("setup-apply", _setup_apply, "Write the detected starter config."),
+    ):
+        setup_parser = subparsers.add_parser(name, help=help_text)
+        setup_parser.add_argument(
+            "--worker-executor",
+            default="",
+            help="Agent to hand the working roles to. Defaults to the best installed one.",
+        )
+        setup_parser.set_defaults(handler=handler)
+
     serve_parser = subparsers.add_parser("serve", help="Run the gateway.")
     serve_parser.set_defaults(handler=_serve)
 
@@ -799,7 +880,38 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Declare selected live-catalog models that are not yet in the provider config.",
     )
+    set_route_parser.add_argument(
+        "--declare-provider",
+        action="append",
+        type=_parse_declared_provider,
+        default=[],
+        metavar="PROVIDER_ID=EXECUTOR",
+        help="Create this provider if the config lacks it, seeded with the selected model.",
+    )
     set_route_parser.set_defaults(handler=_set_route)
+
+    add_provider_parser = subparsers.add_parser(
+        "add-provider",
+        help="Declare an installed agent CLI as a provider, leaving routes unchanged.",
+    )
+    add_provider_parser.add_argument(
+        "--executor",
+        required=True,
+        choices=sorted(PROVIDERS),
+        help="Which agent CLI runs the work.",
+    )
+    add_provider_parser.add_argument(
+        "--provider-id",
+        default="",
+        help="Provider id to create. Defaults to the conventional name for the executor.",
+    )
+    add_provider_parser.add_argument(
+        "--models",
+        action="append",
+        default=[],
+        help="Comma-separated model ids to declare. Defaults to one seed from the live catalog.",
+    )
+    add_provider_parser.set_defaults(handler=_add_provider)
 
     install_catalog_parser = subparsers.add_parser(
         "install-codex-catalog",
@@ -925,6 +1037,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     routes_parser.set_defaults(handler=_routes)
 
     return parser.parse_args(argv)
+
+
+def _parse_declared_provider(value: str) -> tuple[str, str]:
+    provider_id, separator, executor = value.partition("=")
+    provider_id = provider_id.strip()
+    executor = executor.strip().lower()
+    if not separator or not provider_id or not executor:
+        raise argparse.ArgumentTypeError("declared provider must look like PROVIDER_ID=EXECUTOR")
+    return provider_id, executor
 
 
 def _parse_candidate_effort(value: str) -> tuple[str, str]:

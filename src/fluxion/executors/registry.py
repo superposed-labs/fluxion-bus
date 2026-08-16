@@ -16,6 +16,21 @@ from fluxion.executors.claude.executor import ClaudeExecutor
 from fluxion.executors.codex.executor import CodexExecutor
 
 
+def executor_read_only_support() -> dict[str, bool]:
+    """Which executors can honor a read-only task, without building any.
+
+    Whether an executor can promise read-only is a property of the CLI it
+    drives, not of how this machine configured it, so it is readable from the
+    classes. Callers that only need the capability — the preferences state,
+    which must stay cheap — should not have to load Settings to find out.
+    """
+    return {
+        "codex": CodexExecutor.enforces_read_only(),
+        "claude": ClaudeExecutor.enforces_read_only(),
+        "antigravity": AntiGravityExecutor.enforces_read_only(),
+    }
+
+
 def build_all_executors(settings: Settings) -> dict[str, Executor]:
     """Every executor Fluxion knows how to run, regardless of what is enabled."""
     logs_dir = settings.data_dir / "logs"

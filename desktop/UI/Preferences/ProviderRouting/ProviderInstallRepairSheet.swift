@@ -62,86 +62,50 @@ class ProviderInstallRepairSheetController: NSObject, NSWindowDelegate {
     private func buildModelOptions(configuredModel: String) {
         var options: [ProviderCodexRoleModelOption] = []
 
+        // Tiers come from the backend's ranking of this vendor's current
+        // lineup. They used to be matched by codename — `terra`, `sol`, `luna`
+        // as substrings — which silently stops working the day a vendor names
+        // its next generation something else, leaving the fallback to
+        // "recommend" whatever happened to sort first, the priciest model.
         let catalogModels = state.catalogs.first(where: { $0.agent.lowercased() == "codex" })?.models ?? []
+        let lineup = state.executors.first { $0.executor.lowercased() == "codex" }?.lineup ?? []
 
-        // Standard curated tier descriptions for capability mapping
-        let defaultList: [ProviderCodexRoleModelOption] = [
-            ProviderCodexRoleModelOption(
-                id: "gpt-5.6-terra",
-                name: "GPT-5.6 Terra",
-                isRecommended: true,
-                why: "Matches the capability tier of the routes Fluxion installs."
-            ),
-            ProviderCodexRoleModelOption(
-                id: "gpt-5.6-sol",
-                name: "GPT-5.6 Sol",
-                isRecommended: false,
-                why: "Highest tier. Codex allows the widest tool surface."
-            ),
-            ProviderCodexRoleModelOption(
-                id: "gpt-5.6-luna",
-                name: "GPT-5.6 Luna",
-                isRecommended: false,
-                why: "Lowest tier. Codex may withhold some tools from the roles."
-            )
-        ]
-
-        // Filter out internal non-role tasks (auto-review, eval, internal, embed)
-        let eligibleCatalogModels = catalogModels.filter { m in
-            let id = m.id.lowercased()
-            return !id.contains("auto-review") && !id.contains("eval") && !id.contains("internal") && !id.contains("embed")
+        // Internal non-role tasks are never a choice for a role thread.
+        let eligible = catalogModels.filter { model in
+            let id = model.id.lowercased()
+            return !id.contains("auto-review") && !id.contains("eval")
+                && !id.contains("internal") && !id.contains("embed")
         }
+        let ranked = lineup.isEmpty
+            ? Array(eligible.prefix(3)).map { $0.id }
+            : lineup.filter { id in eligible.contains { $0.id == id } }
 
+        let reasons = [
+            L10n.tr("preferences.provider.codex.tier.recommended"),
+            L10n.tr("preferences.provider.codex.tier.highest"),
+            L10n.tr("preferences.provider.codex.tier.lowest")
+        ]
+        let recommendedIndex = ranked.isEmpty ? 0 : (ranked.count - 1) / 2
         var dynamicOptions: [ProviderCodexRoleModelOption] = []
-
-        if eligibleCatalogModels.isEmpty {
-            dynamicOptions = defaultList
-        } else {
-            // Match capability tiers dynamically: terra (recommended), sol (highest), luna (lowest)
-            let terraModel = eligibleCatalogModels.first { $0.id.lowercased().contains("terra") }
-            let solModel = eligibleCatalogModels.first { $0.id.lowercased().contains("sol") }
-            let lunaModel = eligibleCatalogModels.first { $0.id.lowercased().contains("luna") }
-
-            if let terra = terraModel {
-                let name = terra.label?.isEmpty == false ? terra.label! : preferencesWindow.formatCandidateModelName(terra.id)
-                dynamicOptions.append(ProviderCodexRoleModelOption(
-                    id: terra.id,
-                    name: name,
-                    isRecommended: true,
-                    why: terra.note?.isEmpty == false ? terra.note! : "Matches the capability tier of the routes Fluxion installs."
-                ))
+        for (index, modelId) in ranked.enumerated() {
+            let model = eligible.first { $0.id == modelId }
+            let name = model?.label?.isEmpty == false
+                ? model!.label!
+                : preferencesWindow.formatModelDisplayName(modelId)
+            let reason: String
+            if index == recommendedIndex {
+                reason = reasons[0]
+            } else if index < recommendedIndex {
+                reason = reasons[1]
+            } else {
+                reason = reasons[2]
             }
-            if let sol = solModel {
-                let name = sol.label?.isEmpty == false ? sol.label! : preferencesWindow.formatCandidateModelName(sol.id)
-                dynamicOptions.append(ProviderCodexRoleModelOption(
-                    id: sol.id,
-                    name: name,
-                    isRecommended: false,
-                    why: sol.note?.isEmpty == false ? sol.note! : "Highest tier. Codex allows the widest tool surface."
-                ))
-            }
-            if let luna = lunaModel {
-                let name = luna.label?.isEmpty == false ? luna.label! : preferencesWindow.formatCandidateModelName(luna.id)
-                dynamicOptions.append(ProviderCodexRoleModelOption(
-                    id: luna.id,
-                    name: name,
-                    isRecommended: false,
-                    why: luna.note?.isEmpty == false ? luna.note! : "Lowest tier. Codex may withhold some tools from the roles."
-                ))
-            }
-
-            // Fallback: If no tier keywords found, take top 3 eligible models
-            if dynamicOptions.isEmpty {
-                for (idx, m) in eligibleCatalogModels.prefix(3).enumerated() {
-                    let name = m.label?.isEmpty == false ? m.label! : preferencesWindow.formatCandidateModelName(m.id)
-                    dynamicOptions.append(ProviderCodexRoleModelOption(
-                        id: m.id,
-                        name: name,
-                        isRecommended: idx == 0,
-                        why: m.note?.isEmpty == false ? m.note! : "Standard capability tier for Codex role execution."
-                    ))
-                }
-            }
+            dynamicOptions.append(ProviderCodexRoleModelOption(
+                id: modelId,
+                name: name,
+                isRecommended: index == recommendedIndex,
+                why: model?.note?.isEmpty == false ? model!.note! : reason
+            ))
         }
 
         let knownIds = Set(dynamicOptions.map(\.id))
@@ -161,7 +125,10 @@ class ProviderInstallRepairSheetController: NSObject, NSWindowDelegate {
         } else if knownIds.contains(configuredModel) {
             self.selectedModel = configuredModel
         } else {
-            self.selectedModel = dynamicOptions.first(where: \.isRecommended)?.id ?? dynamicOptions.first?.id ?? "gpt-5.6-terra"
+            self.selectedModel =
+                dynamicOptions.first(where: \.isRecommended)?.id
+                ?? dynamicOptions.first?.id
+                ?? configuredModel
         }
 
         options.append(contentsOf: dynamicOptions)

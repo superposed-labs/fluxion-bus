@@ -128,7 +128,8 @@ class CodexExecutor:
     def name(self) -> str:
         return "codex"
 
-    def enforces_read_only(self) -> bool:
+    @staticmethod
+    def enforces_read_only() -> bool:
         """`codex exec -s read-only` is a documented sandbox policy."""
         return True
 

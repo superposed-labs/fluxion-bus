@@ -99,7 +99,8 @@ class ClaudeExecutor:
     def name(self) -> str:
         return "claude"
 
-    def enforces_read_only(self) -> bool:
+    @staticmethod
+    def enforces_read_only() -> bool:
         """Honored in `_build_command` via `--disallowedTools`."""
         return True
 
