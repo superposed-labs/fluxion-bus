@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fluxion.availability import Availability
+from fluxion.provider_gateway import preferences
 from fluxion.provider_gateway.cli import _parse_args
 from fluxion.provider_gateway.codex_config import BEGIN_MARKER, END_MARKER
 from fluxion.provider_gateway.config import GatewaySettings, RoutingConfig
@@ -562,3 +563,68 @@ def test_set_route_can_declare_a_live_catalog_model(tmp_path):
     }
     assert updated["policies"]["worker"]["candidates"] == ["local_agy:gemini-3.7-flash"]
     RoutingConfig.load(path)
+
+
+def _routing_with_stale_model(tmp_path):
+    """A config whose `auto` and a custom role both sit on an old version."""
+    config = {
+        "version": 1,
+        "providers": [
+            {
+                "id": "local_agy",
+                "protocol": "local_agent",
+                "executor": "antigravity",
+                "models": [{"id": "gemini-3.6-flash-high"}],
+            }
+        ],
+        "policies": {"p": {"candidates": ["local_agy:gemini-3.6-flash-high"]}},
+        "routes": {"auto": "p", "cmp_agy": "p"},
+    }
+    path = tmp_path / "routes.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return RoutingConfig.load(path)
+
+
+_CATALOG = [
+    {
+        "agent": "antigravity",
+        "models": [
+            {"id": "gemini-3.6-flash-high", "input_per_1m": 0.75, "output_per_1m": 3.75},
+            {"id": "gemini-3.7-flash-high", "input_per_1m": 0.75, "output_per_1m": 3.75},
+        ],
+    }
+]
+
+
+def _routes_for(routing):
+    return [
+        {
+            "role": role,
+            "candidates": list(routing.policies[policy].candidates),
+            "inherits_auto": False,
+        }
+        for role, policy in routing.routes.items()
+    ]
+
+
+def test_upgrade_offers_skip_roles_nothing_can_dispatch(tmp_path):
+    routing = _routing_with_stale_model(tmp_path)
+    codex = {"roles": [{"role": "fluxion_auto", "installed": True}]}
+
+    offers = preferences._upgrade_offers(routing, _routes_for(routing), _CATALOG, codex)
+
+    # `cmp_agy` exists only in Fluxion's routing config: Codex has no role file
+    # for it, so nothing sets the header that would route to it. Offering an
+    # upgrade for it would crowd out a real one — only the first is shown.
+    assert len(offers) == 1
+    assert offers[0]["roles"] == ["auto"]
+
+
+def test_upgrade_offers_cover_auto_without_any_codex_role_file(tmp_path):
+    routing = _routing_with_stale_model(tmp_path)
+
+    offers = preferences._upgrade_offers(routing, _routes_for(routing), _CATALOG, {"roles": []})
+
+    # An Anthropic Messages request carries no role header and takes `auto`, so
+    # that route is reachable whether or not Codex is set up at all.
+    assert [offer["roles"] for offer in offers] == [["auto"]]

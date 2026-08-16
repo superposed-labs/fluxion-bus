@@ -93,6 +93,7 @@ def preferences_state(
         )
 
     executor_states = _executors_state(routing, settings)
+    codex_state = _codex_state(codex_home)
 
     catalogs: list[dict[str, Any]] = []
     if include_catalogs:
@@ -124,7 +125,7 @@ def preferences_state(
         "catalogs": catalogs,
         "executors": executor_states,
         "read_only_roles": sorted(codex_config.read_only_roles()),
-        "upgrades": _upgrade_offers(routing, routes, catalogs),
+        "upgrades": _upgrade_offers(routing, routes, catalogs, codex_state),
         "model_health": {
             "missing": list(verification.missing) if verification else [],
             "unverified": [
@@ -133,7 +134,7 @@ def preferences_state(
             ],
             "notes": list(verification.catalog_notes) if verification else [],
         },
-        "codex": _codex_state(codex_home),
+        "codex": codex_state,
     }
 
 
@@ -484,6 +485,7 @@ def _upgrade_offers(
     routing: RoutingConfig,
     routes: list[dict[str, Any]],
     catalogs: list[dict[str, Any]],
+    codex: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Routes pinned to a model the vendor has since superseded.
 
@@ -498,9 +500,15 @@ def _upgrade_offers(
     has not asked for.
     """
     by_agent = {str(catalog.get("agent", "")): catalog for catalog in catalogs}
+    dispatchable = _dispatchable_roles(codex)
     offers: dict[tuple[str, str], dict[str, Any]] = {}
 
     for route in routes:
+        if route["role"] not in dispatchable:
+            # A route nothing can call is not worth interrupting anyone about,
+            # and only one offer is shown at a time — so an unreachable role
+            # pinned to an old model would crowd out a real one indefinitely.
+            continue
         if route["inherits_auto"]:
             # It shows whatever Auto resolves to, so upgrading Auto covers it.
             continue
@@ -541,6 +549,21 @@ def _upgrade_offers(
                 offer["roles"].append(route["role"])
 
     return list(offers.values())
+
+
+def _dispatchable_roles(codex: dict[str, Any]) -> set[str]:
+    """Roles something can actually send a request for.
+
+    `auto` always counts: an Anthropic Messages request carries no role header
+    and takes that route. Everything else needs a Codex role file, which is
+    what sets `X-Fluxion-Route` — a role present only in Fluxion's own routing
+    config has no caller.
+    """
+    roles = {"auto"}
+    for entry in codex.get("roles") or []:
+        if entry.get("installed"):
+            roles.add(str(entry.get("role", "")).removeprefix("fluxion_"))
+    return roles
 
 
 def _catalog_entry(model_id: str, models: list[dict[str, Any]]) -> dict[str, Any] | None:
