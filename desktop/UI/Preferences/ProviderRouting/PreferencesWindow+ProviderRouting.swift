@@ -128,6 +128,9 @@ extension PreferencesWindow {
             routes: localState.routes,
             providers: localState.providers,
             catalogs: currentState.catalogs,
+            executorStates: localState.executors,
+            readOnlyRoles: localState.readOnlyRoles,
+            upgrades: currentState.upgrades,
             modelHealth: currentState.modelHealth,
             codex: localState.codex)
     }
@@ -211,8 +214,8 @@ extension PreferencesWindow {
             return
         }
 
-        // 2. Gemini 3.7 Flash Upgrade Banner (if eligible)
-        if hasGemini37Upgrade(state) && providerGatewayRunning {
+        // 2. Model upgrade banner (only when the backend found an offer)
+        if hasProviderUpgrade(state) && providerGatewayRunning {
             addProviderUpgradeBanner(state, into: stack)
         }
 
@@ -263,14 +266,92 @@ extension PreferencesWindow {
     }
 
     @objc func initializeProviderRouting(_ sender: NSButton) {
+        // Detection first, shown before anything is written. The config this
+        // produces depends on which agent CLIs exist on this Mac, so the user
+        // should see that reasoning rather than discover the result afterward.
+        // Reading each agent's catalog shells out to its CLI, which takes a few
+        // seconds. A disabled button alone looks like the window has hung, so
+        // say what is happening while it happens.
+        let restoreTitle = sender.title
         sender.isEnabled = false
-        runProviderCommand(["init"]) { [weak self] result in
+        sender.title = L10n.tr("preferences.provider.setup.checking")
+        fetchProviderSetupPlan(workerExecutor: "") { [weak self] result in
             sender.isEnabled = true
+            sender.title = restoreTitle
+            guard let self = self else { return }
+            switch result {
+            case .success(let plan):
+                self.presentProviderSetupSheet(plan: plan)
+            case .failure(let error):
+                self.showProviderRoutingError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentProviderSetupSheet(plan: ProviderSetupPlan) {
+        guard activeProviderSetupSheetController == nil, let win = window, win.isVisible else {
+            return
+        }
+        let controller = ProviderSetupSheetController(
+            plan: plan,
+            parentWindow: win,
+            preferencesWindow: self,
+            onDismiss: { [weak self] in
+                self?.activeProviderSetupSheetController = nil
+            },
+            onApplied: { [weak self] in
+                guard let self = self else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    self.appDelegate.startServicesIfNeeded()
+                    DispatchQueue.main.async {
+                        self.providerGatewayRunning =
+                            self.appDelegate.isServiceDaemonRunning("fluxion-provider")
+                        self.updateSidebarDots()
+                        self.refreshProviderRouting(includeCatalogs: true)
+                    }
+                }
+            })
+        activeProviderSetupSheetController = controller
+        controller.show()
+    }
+
+    func fetchProviderSetupPlan(
+        workerExecutor: String,
+        completion: @escaping (Result<ProviderSetupPlan, Error>) -> Void
+    ) {
+        var arguments = ["setup-plan"]
+        if !workerExecutor.isEmpty {
+            arguments += ["--worker-executor", workerExecutor]
+        }
+        runProviderCommand(arguments) { result in
+            switch result {
+            case .success(let data):
+                do {
+                    completion(.success(
+                        try JSONDecoder().decode(ProviderSetupPlan.self, from: data)))
+                } catch {
+                    completion(.failure(error))
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func applyProviderSetupPlan(
+        workerExecutor: String,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        var arguments = ["setup-apply"]
+        if !workerExecutor.isEmpty {
+            arguments += ["--worker-executor", workerExecutor]
+        }
+        runProviderCommand(arguments) { result in
             switch result {
             case .success:
-                self?.refreshProviderRouting(includeCatalogs: true)
+                completion(.success(()))
             case .failure(let error):
-                self?.showProviderRoutingError(error.localizedDescription)
+                completion(.failure(error))
             }
         }
     }
@@ -370,6 +451,29 @@ extension PreferencesWindow {
         controller.show()
     }
 
+    /// Declare an installed agent CLI as a provider so it can be routed to.
+    ///
+    /// The gateway is deliberately not restarted: the new provider is not
+    /// referenced by any policy yet, so it cannot change how a single request
+    /// is served. Saving a route does restart, and that is the point at which
+    /// the change actually matters.
+    func addProviderExecutor(_ executor: String, reopeningRole role: String?) {
+        activeRouteEditorSheetController?.dismiss()
+        runProviderCommand(["add-provider", "--executor", executor]) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success:
+                self.pendingProviderRouteEditRole = role
+                // A full refresh, not the local-only one: the new executor's
+                // catalog has never been fetched, and the picker needs it.
+                self.providerCatalogsLoaded = false
+                self.refreshProviderCatalogDetails()
+            case .failure(let error):
+                self.showProviderRoutingError(error.localizedDescription)
+            }
+        }
+    }
+
     private func saveProviderRoute(
         role: String,
         candidate: String,
@@ -384,6 +488,15 @@ extension PreferencesWindow {
         }
         for fallback in fallbacks where fallback != candidate && !fallback.isEmpty {
             arguments += ["--fallback", fallback]
+        }
+        // A candidate may name a provider the config has never declared,
+        // because the picker offers the models of any installed agent CLI. The
+        // executor is passed explicitly: the backend refuses to infer which CLI
+        // a provider id means.
+        for (providerId, executor) in undeclaredProviders(
+            in: [candidate] + fallbacks)
+        {
+            arguments += ["--declare-provider", "\(providerId)=\(executor)"]
         }
         runProviderCommand(arguments) { [weak self] result in
             switch result {
@@ -417,6 +530,25 @@ extension PreferencesWindow {
                 self?.showProviderRoutingError(error.localizedDescription)
             }
         }
+    }
+
+    /// Provider ids named by these candidates that the routing config has no
+    /// entry for, paired with the executor that should back them.
+    private func undeclaredProviders(in candidates: [String]) -> [(String, String)] {
+        guard let state = providerRoutingState else { return [] }
+        let declared = Set(state.providers.map(\.id))
+        var found: [(String, String)] = []
+        for candidate in candidates where !candidate.isEmpty {
+            let providerId = String(candidate.split(separator: ":", maxSplits: 1).first ?? "")
+            guard !providerId.isEmpty, !declared.contains(providerId),
+                  !found.contains(where: { $0.0 == providerId })
+            else { continue }
+            guard let executor = state.executors.first(where: {
+                ($0.defaultProviderId ?? "local_\($0.executor)") == providerId
+            }) else { continue }
+            found.append((providerId, executor.executor))
+        }
+        return found
     }
 
     private func applySavedProviderRoute(
@@ -455,6 +587,9 @@ extension PreferencesWindow {
             routes: updatedRoutes,
             providers: state.providers,
             catalogs: state.catalogs,
+            executorStates: state.executors,
+            readOnlyRoles: state.readOnlyRoles,
+            upgrades: state.upgrades,
             modelHealth: state.modelHealth,
             codex: state.codex)
         renderProviderRoutingIfVisible()
@@ -480,17 +615,21 @@ extension PreferencesWindow {
             activeCodexConfigSheetController = nil
         }
 
-        let configuredModel =
-            state.codex.roles.first(where: { !$0.model.isEmpty })?.model
-            ?? state.catalogs.first(where: { $0.agent.lowercased() == "codex" })?.models.first?.id
-            ?? "gpt-5.6-terra"
+        // The recommended tier comes from the backend's ranking of Codex's
+        // current lineup, so a generation with new codenames still resolves.
+        let codexExecutor = state.executors.first { $0.executor.lowercased() == "codex" }
         let codexModels =
             state.catalogs.first(where: { $0.agent.lowercased() == "codex" })?.models
             ?? []
+        let configuredModel =
+            state.codex.roles.first(where: { !$0.model.isEmpty })?.model
+            ?? codexExecutor?.recommendedModel
+            ?? codexModels.first?.id
+            ?? ""
         let selectedModel =
             codexModels.contains(where: { $0.id == configuredModel })
             ? configuredModel
-            : (codexModels.first(where: { $0.id == "gpt-5.6-terra" })?.id
+            : (codexExecutor?.recommendedModel
                 ?? codexModels.first?.id
                 ?? configuredModel)
         loadCodexIntegrationPlan(model: selectedModel, mode: initialMode) { [weak self, weak win] result in
@@ -614,9 +753,6 @@ extension PreferencesWindow {
         case "reviewer": return "Reviewer"
         case "compaction": return "Compaction"
         case "balanced", "fluxion_balanced": return "Balanced"
-        case "cmp_agy": return "Comparison · Antigravity"
-        case "cmp_claude": return "Comparison · Claude Code"
-        case "cmp_codex": return "Comparison · Codex CLI"
         default: return role.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
@@ -641,40 +777,105 @@ extension PreferencesWindow {
         case "reviewer": return L10n.tr("preferences.provider.role.reviewer.desc")
         case "compaction": return L10n.tr("preferences.provider.role.compaction.desc")
         case "balanced", "fluxion_balanced": return L10n.tr("preferences.provider.role.balanced.desc")
-        case "cmp_agy": return L10n.tr("preferences.provider.role.cmp_agy.desc")
-        case "cmp_claude": return L10n.tr("preferences.provider.role.cmp_claude.desc")
-        case "cmp_codex": return L10n.tr("preferences.provider.role.cmp_codex.desc")
         default: return ""
         }
     }
 
     func formatCandidateModelName(_ candidate: String) -> String {
         let parts = candidate.split(separator: ":", maxSplits: 1).map(String.init)
-        let modelID = parts.count == 2 ? parts[1] : candidate
+        return formatModelDisplayName(parts.count == 2 ? parts[1] : candidate)
+    }
 
+    /// A readable name for a model id, derived rather than listed.
+    ///
+    /// This used to be a table naming every shipped model, which meant a
+    /// vendor's next release rendered under a generic fallback until someone
+    /// added a line and shipped a new build of the app. Nothing here mentions
+    /// a version, so a model this code has never seen still reads correctly.
+    ///
+    /// Claude's aliases are the one thing no rule can derive — `opus` says
+    /// nothing about what it resolves to — and they are deliberately shown
+    /// without a version number, because that is exactly what an alias does
+    /// not promise.
+    func formatModelDisplayName(
+        _ modelID: String,
+        includingEffort: Bool = true
+    ) -> String {
         switch modelID {
-        case "gemini-3.6-flash-high": return "Gemini 3.6 Flash · High"
-        case "gemini-3.6-flash-medium": return "Gemini 3.6 Flash · Medium"
-        case "gemini-3.6-flash-low": return "Gemini 3.6 Flash · Low"
-        case "gemini-3.7-flash-high": return "Gemini 3.7 Flash · High"
-        case "gemini-3.7-flash-medium": return "Gemini 3.7 Flash · Medium"
-        case "gemini-3.7-flash-low": return "Gemini 3.7 Flash · Low"
-        case "gemini-3.1-pro-high": return "Gemini 3.1 Pro · High"
-        case "gemini-3.1-pro-medium": return "Gemini 3.1 Pro · Medium"
-        case "gemini-3.1-pro-low": return "Gemini 3.1 Pro · Low"
-        case "gemini-3.1-pro": return "Gemini 3.1 Pro"
-        case "opus", "claude-opus-5": return "Claude Opus 5"
-        case "sonnet", "claude-sonnet-5": return "Claude Sonnet 5"
-        case "haiku", "claude-haiku-4-5-20251001", "claude-haiku-4.5": return "Claude Haiku 4.5"
-        case "gpt-5.6-sol": return "GPT-5.6 Sol"
-        case "gpt-5.6-terra": return "GPT-5.6 Terra"
-        case "gpt-5.6-luna": return "GPT-5.6 Luna"
-        case "gpt-5.5": return "GPT-5.5"
-        case "gpt-5.4": return "GPT-5.4"
-        case "gpt-5.4-mini": return "GPT-5.4 Mini"
-        default:
-            return modelID.split(separator: "-").map { $0.capitalized }.joined(separator: " ")
+        case "fable": return "Claude Fable"
+        case "opus": return "Claude Opus"
+        case "sonnet": return "Claude Sonnet"
+        case "haiku": return "Claude Haiku"
+        default: break
         }
+
+        var segments = modelID.split(separator: "-").map(String.init)
+        // A trailing build date is identity, not something to read out loud.
+        if let last = segments.last, last.count == 8, last.allSatisfy(\.isNumber) {
+            segments.removeLast()
+        }
+
+        // Reasoning effort is a variant of the model rather than part of its
+        // name, so it is set off instead of run together with it.
+        var effort: String?
+        if let last = segments.last,
+           ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains(last.lowercased()),
+           segments.count > 1
+        {
+            effort = last.capitalized
+            segments.removeLast()
+        }
+
+        // Vendors split version digits across segments (`haiku-4-5`); rejoin
+        // them so they read as one number.
+        var merged: [String] = []
+        for segment in segments {
+            if segment.allSatisfy(\.isNumber), let previous = merged.last,
+               previous.allSatisfy({ $0.isNumber || $0 == "." })
+            {
+                merged[merged.count - 1] = "\(previous).\(segment)"
+            } else {
+                merged.append(segment)
+            }
+        }
+
+        let acronyms: Set<String> = ["gpt", "oss", "cli", "api"]
+        var words = merged.map { acronyms.contains($0.lowercased()) ? $0.uppercased() : $0.capitalized }
+        // `GPT-5.6 Sol`, not `GPT 5.6 Sol`: the vendor hyphenates its line name
+        // to the version, and that convention outlives any single version.
+        if words.count >= 2, acronyms.contains(merged[0].lowercased()),
+           merged[1].first?.isNumber == true
+        {
+            words = ["\(words[0])-\(words[1])"] + words.dropFirst(2)
+        }
+
+        let name = words.joined(separator: " ")
+        guard includingEffort, let effort else { return name }
+        return "\(name) · \(effort)"
+    }
+
+    /// The effort a candidate runs at, wherever it happens to be stored.
+    ///
+    /// Claude and Codex keep it in the route's effort map; Antigravity spells
+    /// it into the model id. That is a difference in delivery, not in what the
+    /// user chose, so every surface resolves it through here and renders one
+    /// badge — otherwise the agents that store it in the route show nothing at
+    /// all, which is what the role list used to do.
+    func effortForCandidate(_ candidate: String, in route: ProviderRouteState?) -> String {
+        if let stored = route?.efforts?[candidate], !stored.isEmpty {
+            return stored
+        }
+        let modelId = candidate.split(separator: ":", maxSplits: 1).last.map(String.init) ?? candidate
+        let suffix = String(modelId.split(separator: "-").last ?? "").lowercased()
+        let known = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+        return known.contains(suffix) ? suffix : ""
+    }
+
+    /// The model's name with any effort suffix removed, so the badge beside it
+    /// is not a second copy of the same word.
+    func formatCandidateModelNameWithoutEffort(_ candidate: String) -> String {
+        let modelId = candidate.split(separator: ":", maxSplits: 1).last.map(String.init) ?? candidate
+        return formatModelDisplayName(modelId, includingEffort: false)
     }
 
     func formatCandidateExecutorName(_ candidate: String, state: ProviderRoutingState?) -> String {

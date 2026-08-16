@@ -22,6 +22,9 @@ struct ProviderCatalogModelItem {
     let tag: String?
     let isRetired: Bool
     let effortCapabilitiesKnown: Bool
+    // The executor is installed but has no provider entry yet. Choosing this
+    // model is what declares it, so saving has to carry the executor along.
+    let needsDeclaration: Bool
 
     var storesEffortInModelId: Bool { !supportedEfforts.isEmpty }
 
@@ -171,6 +174,9 @@ final class ProviderExecutorFilterButton: NSControl {
         isSelected: Bool,
         containsSelection: Bool,
         hasWarning: Bool,
+        // An executor that exists but is not part of routing yet. Still
+        // clickable: the tab it opens is where the user adds it.
+        isDimmed: Bool = false,
         onSelect: @escaping () -> Void
     ) {
         self.title = title
@@ -199,7 +205,11 @@ final class ProviderExecutorFilterButton: NSControl {
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: isSelected ? .semibold : .medium)
-        titleLabel.textColor = isSelected ? Palette.primaryText : Palette.secondaryText
+        if isDimmed && !isSelected {
+            titleLabel.textColor = Palette.sectionHeader
+        } else {
+            titleLabel.textColor = isSelected ? Palette.primaryText : Palette.secondaryText
+        }
         titleLabel.isEditable = false
         titleLabel.isSelectable = false
         titleLabel.isBordered = false
@@ -344,6 +354,9 @@ class ProviderModelRowView: NSView {
         effort: String,
         isSelected: Bool,
         isUsed: Bool,
+        // Short reason this model cannot serve the role being edited, e.g. a
+        // read-only role pointed at an executor with no read-only mode.
+        blockedReason: String? = nil,
         onPick: @escaping () -> Void
     ) {
         self.item = item
@@ -356,7 +369,7 @@ class ProviderModelRowView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 5
 
-        let isBad = item.isRetired || isUsed
+        let isBad = item.isRetired || isUsed || blockedReason != nil
 
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -389,7 +402,10 @@ class ProviderModelRowView: NSView {
             stack.addArrangedSubview(tagView)
         }
 
-        if item.isRetired {
+        if let blockedReason {
+            let blockedView = ProviderTagView(text: blockedReason, isBold: true, isUppercase: true)
+            stack.addArrangedSubview(blockedView)
+        } else if item.isRetired {
             let retView = ProviderTagView(text: L10n.tr("preferences.provider.editor.retired"), isBold: true, isUppercase: true)
             stack.addArrangedSubview(retView)
         } else if isUsed {

@@ -211,6 +211,7 @@ swiftc -O \
     desktop/UI/Preferences/ProviderRouting/PreferencesWindow+ProviderSections.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderRouteEditorRows.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderRouteEditorSheet.swift \
+    desktop/UI/Preferences/ProviderRouting/ProviderSetupSheet.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderCodexModels.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderCodexRowViews.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderCodexConfigSheet.swift \

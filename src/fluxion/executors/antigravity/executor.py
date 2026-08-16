@@ -72,7 +72,8 @@ class AntiGravityExecutor:
     def name(self) -> str:
         return "antigravity"
 
-    def enforces_read_only(self) -> bool:
+    @staticmethod
+    def enforces_read_only() -> bool:
         """`agy` has no read-only mode.
 
         Its `--sandbox` restricts terminal access, which is not the same
