@@ -141,22 +141,32 @@ extension PreferencesWindow {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         topLine.addArrangedSubview(spacer)
 
-        let editButton = NSButton(
-            title: !providerCatalogsLoaded && providerCatalogsLoading
-                ? L10n.tr("preferences.provider.catalogs.loading_short")
-                : (route.inheritsAuto
-                    ? L10n.tr("preferences.provider.change")
-                    : L10n.tr("preferences.provider.edit")),
-            target: self,
-            action: #selector(editProviderRoute(_:))
-        )
-        editButton.bezelStyle = .rounded
-        editButton.controlSize = .small
-        editButton.identifier = NSUserInterfaceItemIdentifier(route.role)
-        editButton.isEnabled = providerCatalogsLoaded
-            || providerCatalogsUnavailable
-            || !providerCatalogsLoading
-        topLine.addArrangedSubview(editButton)
+        // A route that inherits Auto is shown, not offered.
+        //
+        // Compaction is the one that lands here, and picking a model for it
+        // does not reliably take effect: a compaction turn only happens on a
+        // thread long enough to fill its context, which is a thread whose
+        // sticky route is hot, and a sticky hit short-circuits candidate
+        // scoring. The route still decides on the cold paths — an expired or
+        // evicted sticky row, an executor switch — so the key keeps working;
+        // what it cannot do is honour a choice made here every time, and a
+        // control the system honours sometimes is worse than none.
+        if !route.inheritsAuto {
+            let editButton = NSButton(
+                title: !providerCatalogsLoaded && providerCatalogsLoading
+                    ? L10n.tr("preferences.provider.catalogs.loading_short")
+                    : L10n.tr("preferences.provider.edit"),
+                target: self,
+                action: #selector(editProviderRoute(_:))
+            )
+            editButton.bezelStyle = .rounded
+            editButton.controlSize = .small
+            editButton.identifier = NSUserInterfaceItemIdentifier(route.role)
+            editButton.isEnabled = providerCatalogsLoaded
+                || providerCatalogsUnavailable
+                || !providerCatalogsLoading
+            topLine.addArrangedSubview(editButton)
+        }
 
         contentStack.addArrangedSubview(topLine)
         topLine.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true

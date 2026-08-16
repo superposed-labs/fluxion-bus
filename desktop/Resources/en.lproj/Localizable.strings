@@ -413,7 +413,6 @@
 "preferences.provider.not_configured.title" = "Routing is not configured";
 "preferences.provider.not_configured.desc" = "Create a validated starter configuration at %@.";
 "preferences.provider.edit" = "Edit";
-"preferences.provider.change" = "Change";
 "preferences.provider.route.summary" = "Primary: %@ · Fallback: %@";
 "preferences.provider.route.inherits_auto" = "Inherits Auto";
 "preferences.provider.role.auto.desc" = "General-purpose routing";

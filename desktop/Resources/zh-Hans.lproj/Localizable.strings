@@ -410,7 +410,6 @@
 "preferences.provider.not_configured.title" = "尚未配置路由";
 "preferences.provider.not_configured.desc" = "在 %@ 创建一份经过校验的初始配置。";
 "preferences.provider.edit" = "编辑";
-"preferences.provider.change" = "更改";
 "preferences.provider.route.summary" = "首选：%@ · 回退：%@";
 "preferences.provider.route.inherits_auto" = "继承 Auto";
 "preferences.provider.role.auto.desc" = "通用路由";

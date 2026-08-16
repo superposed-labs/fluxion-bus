@@ -410,7 +410,6 @@
 "preferences.provider.not_configured.title" = "ルーティング未設定";
 "preferences.provider.not_configured.desc" = "%@ に検証済みの初期設定を作成します。";
 "preferences.provider.edit" = "編集";
-"preferences.provider.change" = "変更";
 "preferences.provider.route.summary" = "優先：%@ · フォールバック：%@";
 "preferences.provider.route.inherits_auto" = "Auto を継承";
 "preferences.provider.role.auto.desc" = "汎用ルーティング";
