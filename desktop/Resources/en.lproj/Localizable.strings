@@ -422,9 +422,6 @@
 "preferences.provider.role.reviewer.desc" = "Correctness and security review";
 "preferences.provider.role.compaction.desc" = "Follows whatever the Auto route resolves to.";
 "preferences.provider.role.balanced.desc" = "Cost-aware general routing";
-"preferences.provider.role.cmp_agy.desc" = "Side-by-side comparison runs on Antigravity";
-"preferences.provider.role.cmp_claude.desc" = "Side-by-side comparison runs on Claude Code";
-"preferences.provider.role.cmp_codex.desc" = "Side-by-side comparison runs on Codex CLI";
 "preferences.provider.badge.readonly" = "READ ONLY";
 "preferences.provider.badge.recommended" = "RECOMMENDED";
 "preferences.provider.advanced_count" = "Advanced Routes (%d)";

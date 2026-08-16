@@ -578,7 +578,7 @@ def _routing_with_stale_model(tmp_path):
             }
         ],
         "policies": {"p": {"candidates": ["local_agy:gemini-3.6-flash-high"]}},
-        "routes": {"auto": "p", "cmp_agy": "p"},
+        "routes": {"auto": "p", "side_by_side": "p"},
     }
     path = tmp_path / "routes.json"
     path.write_text(json.dumps(config), encoding="utf-8")
@@ -613,7 +613,7 @@ def test_upgrade_offers_skip_roles_nothing_can_dispatch(tmp_path):
 
     offers = preferences._upgrade_offers(routing, _routes_for(routing), _CATALOG, codex)
 
-    # `cmp_agy` exists only in Fluxion's routing config: Codex has no role file
+    # `side_by_side` exists only in Fluxion's routing config: Codex has no file
     # for it, so nothing sets the header that would route to it. Offering an
     # upgrade for it would crowd out a real one — only the first is shown.
     assert len(offers) == 1

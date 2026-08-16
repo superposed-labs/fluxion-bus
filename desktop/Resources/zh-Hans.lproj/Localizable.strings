@@ -419,9 +419,6 @@
 "preferences.provider.role.reviewer.desc" = "正确性与安全性审查";
 "preferences.provider.role.compaction.desc" = "跟随 Auto 路由的解析结果。";
 "preferences.provider.role.balanced.desc" = "注重成本效益的通用路由";
-"preferences.provider.role.cmp_agy.desc" = "在 Antigravity 上的对比运行";
-"preferences.provider.role.cmp_claude.desc" = "在 Claude Code 上的对比运行";
-"preferences.provider.role.cmp_codex.desc" = "在 Codex CLI 上的对比运行";
 "preferences.provider.badge.readonly" = "READ ONLY";
 "preferences.provider.badge.recommended" = "推荐";
 "preferences.provider.advanced_count" = "高级路由 (%d)";

@@ -753,9 +753,6 @@ extension PreferencesWindow {
         case "reviewer": return "Reviewer"
         case "compaction": return "Compaction"
         case "balanced", "fluxion_balanced": return "Balanced"
-        case "cmp_agy": return "Comparison · Antigravity"
-        case "cmp_claude": return "Comparison · Claude Code"
-        case "cmp_codex": return "Comparison · Codex CLI"
         default: return role.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
@@ -780,9 +777,6 @@ extension PreferencesWindow {
         case "reviewer": return L10n.tr("preferences.provider.role.reviewer.desc")
         case "compaction": return L10n.tr("preferences.provider.role.compaction.desc")
         case "balanced", "fluxion_balanced": return L10n.tr("preferences.provider.role.balanced.desc")
-        case "cmp_agy": return L10n.tr("preferences.provider.role.cmp_agy.desc")
-        case "cmp_claude": return L10n.tr("preferences.provider.role.cmp_claude.desc")
-        case "cmp_codex": return L10n.tr("preferences.provider.role.cmp_codex.desc")
         default: return ""
         }
     }
