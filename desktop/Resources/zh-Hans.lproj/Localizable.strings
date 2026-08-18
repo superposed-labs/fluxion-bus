@@ -209,10 +209,15 @@
 "preferences.autoping.window.both" = "两者";
 "preferences.window.5h" = "5 小时";
 "preferences.window.weekly" = "每周";
+"preferences.window.days" = "%d天";
+"preferences.window.hours" = "%d小时";
 "notch.row.5h" = "5 小时";
 "notch.row.weekly" = "每周";
+"notch.row.days" = "%d天";
+"notch.row.hours" = "%d小时";
 "notch.card.five_resets_in" = "5小时窗口重置倒计时";
 "notch.card.week_resets_in" = "周窗口重置倒计时";
+"notch.card.days_resets_in" = "%d天额度重置倒计时";
 "notch.five_hour_uncapped" = "暂不设限";
 "notch.peek.exhausted" = "已耗尽";
 "notch.card.weekly_reached" = "已达每周上限";

@@ -421,7 +421,7 @@ extension NotchIslandView {
                 HStack {
                     Spacer()
                     soloWindowGlance(
-                        label: "WK",
+                        label: notchWindowShortTag(state.weekly, defaultTag: "WK"),
                         snapshot: state.weekly,
                         brandColor: visual.brandColor
                     )
@@ -445,7 +445,7 @@ extension NotchIslandView {
                     .fill(Color.white.opacity(0.16))
                     .frame(width: 0.5, height: 12)
                 soloWindowGlance(
-                    label: "WK",
+                    label: notchWindowShortTag(state.weekly, defaultTag: "WK"),
                     snapshot: state.weekly,
                     brandColor: visual.brandColor
                 )
@@ -472,7 +472,7 @@ extension NotchIslandView {
             numeralAllowed: false
         )
         let right = windowGauge(
-            label: "WK",
+            label: notchWindowShortTag(state.weekly, defaultTag: "WK"),
             snapshot: state.weekly,
             brandColor: visual.brandColor,
             size: 17,

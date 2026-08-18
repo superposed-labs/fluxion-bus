@@ -282,6 +282,16 @@ class CodexUsageProbe:
             return "5h", "5-hour"
         if window_minutes == 10080:
             return "7d", "Weekly"
+        # Derive from actual duration when it doesn't match a known value,
+        # so a 30-day free-tier window is not silently labelled "5h".
+        if window_minutes is not None and window_minutes > 0:
+            if window_minutes % 1440 == 0:
+                days = window_minutes // 1440
+                return f"{days}d", f"{days}-day"
+            if window_minutes % 60 == 0:
+                hours = window_minutes // 60
+                return f"{hours}h", f"{hours}-hour"
+            return f"{window_minutes}m", f"{window_minutes}-minute"
         return fallback_key, fallback_label
 
     @staticmethod

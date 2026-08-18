@@ -481,7 +481,7 @@ extension NotchIslandView {
         VStack(spacing: 6) {
             if state.fiveHour != nil {
                 quotaInfoLine(
-                    title: L10n.tr("notch.row.5h"),
+                    title: notchWindowRowTitle(state.fiveHour),
                     snapshot: state.fiveHour,
                     showPercent: false,
                     color: state.fiveHour?.depleted == true ? Color(NSColor.systemRed) : Color.white.opacity(0.48)
@@ -494,7 +494,7 @@ extension NotchIslandView {
             }
             if state.weekly != nil {
                 quotaInfoLine(
-                    title: L10n.tr("notch.row.weekly"),
+                    title: notchWindowRowTitle(state.weekly),
                     snapshot: state.weekly,
                     showPercent: true,
                     color: state.weekly?.depleted == true ? Color(NSColor.systemRed) : Color.white.opacity(0.5)
@@ -814,8 +814,8 @@ extension NotchIslandView {
                 let ringColor = splitRing.map { splitQuotaColor(for: $0, visual: visual) } ?? Color(visual.brandColor)
                 let ringSubtitle = state.mode == .healthy
                     ? (splitRing.map { splitRingSubtitle(for: $0) }
-                        ?? (state.fiveHour.map { $0.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left") }
-                            ?? (state.weekly != nil ? L10n.tr("notch.weekly_left") : L10n.tr("notch.unavailable"))))
+                        ?? (state.fiveHour.map { notchRingSubtitle(for: $0) }
+                            ?? (state.weekly.map { notchRingSubtitle(for: $0) } ?? L10n.tr("notch.unavailable"))))
                     : state.lockReason
                 // Dual-pool providers get concentric per-pool 5h arcs so both
                 // pools stay visible at once; a blocked pool's arc renders as
@@ -1020,8 +1020,8 @@ extension NotchIslandView {
             ? (state.fiveHour?.remaining ?? state.bindingRemaining)
             : state.bindingRemaining
         let ringSubtitle = state.mode == .healthy
-            ? (state.fiveHour.map { $0.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left") }
-                ?? (state.weekly != nil ? L10n.tr("notch.weekly_left") : L10n.tr("notch.unavailable")))
+            ? (state.fiveHour.map { notchRingSubtitle(for: $0) }
+                ?? (state.weekly.map { notchRingSubtitle(for: $0) } ?? L10n.tr("notch.unavailable")))
             : state.lockReason
         return VStack(spacing: 0) {
             providerHeaderRow(for: p, visual: visual, centered: true, subtle: true)
@@ -1109,7 +1109,7 @@ extension NotchIslandView {
                 ? L10n.tr("notch.card.all_spent")
                 : (weekZero ? L10n.tr("notch.card.weekly_reached") : L10n.tr("notch.five_hour_spent")))
             : (state.fiveHour == nil
-                ? L10n.tr("notch.card.week_resets_in")
+                ? notchSoloCardNonFiveHourTitle(for: state.weekly)
                 : (idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.card.five_resets_in")))
         let titleColor: Color = depleted
             ? (state.mode == .credits ? Color(NSColor.systemGreen).opacity(0.85) : Color(NSColor.systemRed))
@@ -1190,7 +1190,7 @@ extension NotchIslandView {
             } else if let weekly = state.weekly {
                 let depleted = weekly.depleted
                 quotaInfoLine(
-                    title: L10n.tr("notch.row.weekly"),
+                    title: notchWindowRowTitle(weekly),
                     snapshot: weekly,
                     showPercent: true,
                     color: depleted ? Color(NSColor.systemRed) : Color.white.opacity(0.5)

@@ -209,10 +209,15 @@
 "preferences.autoping.window.both" = "両方";
 "preferences.window.5h" = "5時間";
 "preferences.window.weekly" = "週次";
+"preferences.window.days" = "%d日";
+"preferences.window.hours" = "%d時間";
 "notch.row.5h" = "5時間";
 "notch.row.weekly" = "週次";
+"notch.row.days" = "%d日";
+"notch.row.hours" = "%d時間";
 "notch.card.five_resets_in" = "5時間枠リセットまで";
 "notch.card.week_resets_in" = "週間枠リセットまで";
+"notch.card.days_resets_in" = "%d日枠リセットまで";
 "notch.five_hour_uncapped" = "一時解除";
 "notch.peek.exhausted" = "上限到達";
 "notch.card.weekly_reached" = "週次上限に到達";

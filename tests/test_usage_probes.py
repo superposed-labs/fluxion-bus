@@ -213,6 +213,62 @@ def test_codex_live_maps_weekly_primary_by_duration(monkeypatch):
     assert window.resets_at == _epoch_to_iso(1784487578)
 
 
+def test_codex_live_maps_monthly_primary_by_duration(monkeypatch):
+    payload = {
+        "plan_type": "free",
+        "rate_limit": {
+            "allowed": True,
+            "limit_reached": False,
+            "primary_window": {
+                "used_percent": 5,
+                "limit_window_seconds": 2592000,
+                "reset_after_seconds": 123456,
+                "reset_at": 1784487578,
+            },
+            "secondary_window": None,
+        },
+    }
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", "acc-1"))
+    monkeypatch.setattr(
+        CodexUsageProbe,
+        "_http_get_json",
+        lambda self, url, headers: {} if "rate-limit-reset-credits" in url else payload,
+    )
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+
+    assert usage.status == STATUS_OK
+    assert len(usage.windows) == 1
+    window = usage.windows[0]
+    assert window.key == "30d"
+    assert window.label == "30-day"
+    assert window.used_percent == 5.0
+    assert window.window_minutes == 43200
+    assert window.resets_at == _epoch_to_iso(1784487578)
+
+
+@pytest.mark.parametrize(
+    "minutes,fallback_key,fallback_label,expected_key,expected_label",
+    [
+        (300, "5h", "5-hour", "5h", "5-hour"),
+        (10080, "7d", "Weekly", "7d", "Weekly"),
+        (43200, "5h", "5-hour", "30d", "30-day"),
+        (2880, "5h", "5-hour", "2d", "2-day"),
+        (120, "5h", "5-hour", "2h", "2-hour"),
+        (45, "5h", "5-hour", "45m", "45-minute"),
+        (None, "5h", "5-hour", "5h", "5-hour"),
+        (0, "5h", "5-hour", "5h", "5-hour"),
+    ],
+)
+def test_codex_window_identity_derivation(
+    minutes, fallback_key, fallback_label, expected_key, expected_label
+):
+    key, label = CodexUsageProbe._window_identity(minutes, fallback_key, fallback_label)
+    assert key == expected_key
+    assert label == expected_label
+
+
 def test_codex_live_maps_credits(monkeypatch):
     payload = dict(_LIVE_PAYLOAD)
     payload["credits"] = {
