@@ -799,12 +799,13 @@ def _proto_bytes_field(number: int, value: bytes) -> bytes:
 
 def _antigravity_blob(
     *,
-    timestamp: int = 1_781_107_200,
+    timestamp: int | None = 1_781_107_200,
     model: str = "gemini-3-flash-a",
     display_model: str | None = None,
     input_tokens: int = 3949,
     output_tokens: int = 160,
     cache_read_tokens: int = 16289,
+    last_step_index: int | None = None,
 ) -> bytes:
     usage = b"".join(
         (
@@ -813,23 +814,41 @@ def _antigravity_blob(
             _proto_int_field(5, cache_read_tokens),
         )
     )
-    protobuf_timestamp = _proto_int_field(1, timestamp)
+    meta_pairs = []
+    if last_step_index is not None:
+        meta_pairs.append(
+            _proto_bytes_field(
+                20,
+                _proto_bytes_field(1, b"last_step_index")
+                + _proto_bytes_field(2, str(last_step_index).encode()),
+            )
+        )
     chat = b"".join(
         (
             _proto_bytes_field(4, usage),
-            _proto_bytes_field(9, _proto_bytes_field(4, protobuf_timestamp)),
+            *(
+                (_proto_bytes_field(9, _proto_bytes_field(4, _proto_int_field(1, timestamp))),)
+                if timestamp is not None
+                else ()
+            ),
             _proto_bytes_field(19, model.encode()),
             *(
                 (_proto_bytes_field(21, display_model.encode()),)
                 if display_model is not None
                 else ()
             ),
+            *meta_pairs,
         )
     )
     return _proto_bytes_field(1, chat)
 
 
-def _write_antigravity_db(path: Path, blobs: list[bytes]) -> None:
+def _write_antigravity_db(
+    path: Path,
+    blobs: list[bytes],
+    *,
+    step_timestamps: dict[int, int] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     try:
@@ -840,6 +859,13 @@ def _write_antigravity_db(path: Path, blobs: list[bytes]) -> None:
             "INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)",
             [(index, blob, len(blob)) for index, blob in enumerate(blobs)],
         )
+        if step_timestamps is not None:
+            connection.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB)")
+            step_rows = []
+            for s_idx, s_ts in step_timestamps.items():
+                s_meta = _proto_bytes_field(1, _proto_int_field(1, s_ts))
+                step_rows.append((s_idx, s_meta))
+            connection.executemany("INSERT INTO steps (idx, metadata) VALUES (?, ?)", step_rows)
         connection.commit()
     finally:
         connection.close()
@@ -850,7 +876,7 @@ def test_parses_antigravity_generator_metadata():
 
     assert entry is not None
     assert entry.provider == "antigravity"
-    assert entry.model == "gemini-3-flash-a"
+    assert entry.model == "Gemini 3.5 Flash"
     assert entry.session_id == "cascade-1"
     assert entry.ts == datetime(2026, 6, 10, 16, tzinfo=UTC)
     assert (entry.input_tokens, entry.output_tokens, entry.cache_read_tokens) == (
@@ -862,7 +888,49 @@ def test_parses_antigravity_generator_metadata():
     assert entry.dedup_key == "antigravity:cascade-1:7"
 
 
-def test_antigravity_prefers_selected_model_over_backend_response_model():
+def test_antigravity_step_timestamp_fallback():
+    # When chat[9] omits timestamp, falls back to steps table via last_step_index
+    blob = _antigravity_blob(
+        timestamp=None,
+        model="claude-opus-4-6-thinking",
+        last_step_index=3,
+    )
+    entry = _antigravity_entry_from_blob(
+        blob,
+        session_id="cascade-1",
+        row_index=0,
+        step_timestamps={1: 1_787_018_000, 3: 1_787_018_010},
+    )
+    assert entry is not None
+    assert entry.model == "Claude Opus 4.6"
+    assert entry.ts == datetime(2026, 8, 18, 1, 53, 30, tzinfo=UTC)
+
+
+def test_antigravity_file_mtime_fallback():
+    # When neither chat[9] nor steps table has timestamp, falls back to file mtime
+    blob = _antigravity_blob(
+        timestamp=None,
+        model="gemini-3.7-flash-exp-a",
+    )
+    entry = _antigravity_entry_from_blob(
+        blob,
+        session_id="cascade-1",
+        row_index=0,
+        fallback_ts=1_787_018_020,
+    )
+    assert entry is not None
+    assert entry.model == "Gemini 3.7 Flash"
+    assert entry.ts == datetime(2026, 8, 18, 1, 53, 40, tzinfo=UTC)
+    assert (entry.input_tokens, entry.output_tokens, entry.cache_read_tokens) == (
+        3949,
+        160,
+        16289,
+    )
+    assert entry.total_tokens == 20398
+    assert entry.dedup_key == "antigravity:cascade-1:0"
+
+
+def test_antigravity_normalizes_model_names():
     entry = _antigravity_entry_from_blob(
         _antigravity_blob(
             model="gemini-3-flash-a",
@@ -873,7 +941,7 @@ def test_antigravity_prefers_selected_model_over_backend_response_model():
     )
 
     assert entry is not None
-    assert entry.model == "Gemini 3.5 Flash (High)"
+    assert entry.model == "Gemini 3.5 Flash"
 
 
 def test_antigravity_parser_skips_invalid_or_usageless_metadata():
@@ -907,7 +975,7 @@ def test_collect_antigravity_sqlite_and_incremental_cache(tmp_path: Path):
 
     parsed = _parse_antigravity_db(database)
     assert len(parsed) == 2
-    assert {entry.model for entry in parsed} == {"gemini-3-flash-a", "gemini-2.5-pro"}
+    assert {entry.model for entry in parsed} == {"Gemini 3.5 Flash", "Gemini 2.5 Pro"}
 
     cache: dict = {"version": 7, "files": {}}
     entries = collect_antigravity_entries((conversations,), cache=cache)
@@ -1540,7 +1608,7 @@ def test_compute_stats_merges_claude_codex_and_antigravity(tmp_path: Path):
     assert out["totals"]["sessions"] == 3
     assert out["totals"]["messages"] == 3
     models = {m["model"] for m in out["by_model"]}
-    assert models == {"gemini-3-flash-a", "gpt-5-codex", "claude-opus-4-8"}
+    assert models == {"Gemini 3.5 Flash", "gpt-5-codex", "claude-opus-4-8"}
 
 
 def test_history_service_reconciles_local_codex_with_server_total(tmp_path: Path):

@@ -32,9 +32,9 @@ from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 # whenever a line parser's output changes** — the cache holds per-file scan
 # state, so otherwise a corrected parser never revisits what it already read.
 #
-# v9: `_codex_line_parser` stopped emitting turns served by a provider other
-# than OpenAI.
-_CACHE_VERSION = 9
+# v11: `_antigravity_entry_from_blob` normalizes model names (e.g. Gemini 3.7 Flash,
+# Claude Opus 4.6) across display labels, effort levels, and backend response slugs.
+_CACHE_VERSION = 11
 
 
 def _parse_usage_date(raw: str, fallback: date) -> date:

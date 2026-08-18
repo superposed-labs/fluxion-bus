@@ -8,6 +8,7 @@ feeds it. It shares nothing with the rest of the pipeline beyond producing
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -95,8 +96,85 @@ def _proto_message(
     return _decode_proto(raw) if raw else {}
 
 
+_GEMINI_DISPLAY_RE = re.compile(
+    r"^Gemini\s+(?P<ver>\d+(?:\.\d+)*)\s+(?P<tier>Flash(?:-Lite)?|Pro)$", re.IGNORECASE
+)
+_CLAUDE_DISPLAY_RE = re.compile(
+    r"^Claude\s+(?P<fam>Opus|Sonnet|Haiku)\s+(?P<ver>\d+(?:\.\d+)*)$", re.IGNORECASE
+)
+_GPT_OSS_DISPLAY_RE = re.compile(r"^GPT-OSS\s+(?P<size>\d+B)$", re.IGNORECASE)
+
+_GEMINI_SLUG_RE = re.compile(
+    r"^gemini-(?P<ver>\d+(?:\.\d+)*)-(?P<tier>flash(?:-lite)?|pro)(?:-(?:exp(?:-[a-z0-9]+)?|tiered|low|medium|high|a|b))?$",
+    re.IGNORECASE,
+)
+_CLAUDE_SLUG_RE = re.compile(
+    r"^claude-(?P<fam>opus|sonnet|haiku)-(?P<ver>\d+(?:-\d+)*)(?:-(?:thinking|low|medium|high))?$",
+    re.IGNORECASE,
+)
+_GPT_OSS_SLUG_RE = re.compile(r"^gpt-oss-(?P<size>\d+b)(?:-(?:low|medium|high))?$", re.IGNORECASE)
+
+
+def _normalize_antigravity_model(raw: str) -> str:
+    """Normalize Antigravity model names across display labels and backend response slugs.
+
+    Unifies effort/thinking variants and internal routing slugs into canonical product models:
+      - 'gemini-3.7-flash-exp-a', 'Gemini 3.7 Flash (High)' -> 'Gemini 3.7 Flash'
+      - 'claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)' -> 'Claude Opus 4.6'
+      - 'gemini-3-flash-a', 'Gemini 3.5 Flash (High)' -> 'Gemini 3.5 Flash'
+      - 'gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)' -> 'GPT-OSS 120B'
+    """
+    if not raw or raw == "unknown":
+        return "unknown"
+    s = raw.strip()
+    s = re.sub(r"\s*\((?:high|low|medium|xhigh|max|thinking)\)", "", s, flags=re.IGNORECASE).strip()
+
+    m_gemini_disp = _GEMINI_DISPLAY_RE.match(s)
+    if m_gemini_disp:
+        tier_raw = m_gemini_disp.group("tier").lower()
+        tier = "Flash-Lite" if tier_raw == "flash-lite" else tier_raw.capitalize()
+        return f"Gemini {m_gemini_disp.group('ver')} {tier}"
+
+    m_claude_disp = _CLAUDE_DISPLAY_RE.match(s)
+    if m_claude_disp:
+        return f"Claude {m_claude_disp.group('fam').capitalize()} {m_claude_disp.group('ver')}"
+
+    m_gpt_disp = _GPT_OSS_DISPLAY_RE.match(s)
+    if m_gpt_disp:
+        return f"GPT-OSS {m_gpt_disp.group('size').upper()}"
+
+    m_gemini_slug = _GEMINI_SLUG_RE.match(s)
+    if m_gemini_slug:
+        ver = m_gemini_slug.group("ver")
+        if ver == "3":
+            ver = "3.5"
+        tier_raw = m_gemini_slug.group("tier").lower()
+        tier = "Flash-Lite" if tier_raw == "flash-lite" else tier_raw.capitalize()
+        return f"Gemini {ver} {tier}"
+
+    m_claude_slug = _CLAUDE_SLUG_RE.match(s)
+    if m_claude_slug:
+        fam = m_claude_slug.group("fam").capitalize()
+        ver = m_claude_slug.group("ver").replace("-", ".")
+        return f"Claude {fam} {ver}"
+
+    m_oss_slug = _GPT_OSS_SLUG_RE.match(s)
+    if m_oss_slug:
+        return f"GPT-OSS {m_oss_slug.group('size').upper()}"
+
+    if s == "gemini-default":
+        return "Gemini 3.5 Flash"
+
+    return s
+
+
 def _antigravity_entry_from_blob(
-    blob: bytes, *, session_id: str, row_index: int
+    blob: bytes,
+    *,
+    session_id: str,
+    row_index: int,
+    step_timestamps: dict[int, int] | None = None,
+    fallback_ts: int | None = None,
 ) -> UsageEntry | None:
     """Map Antigravity GeneratorMetadataHeader protobuf fields to UsageEntry."""
     try:
@@ -109,16 +187,46 @@ def _antigravity_entry_from_blob(
     input_tokens = _proto_int(usage, 2)
     output_tokens = _proto_int(usage, 3)
     cache_read_tokens = _proto_int(usage, 5)
-    seconds = _proto_int(timestamp, 1)
-    if not seconds or not (input_tokens or output_tokens or cache_read_tokens):
+    if not (input_tokens or output_tokens or cache_read_tokens):
         return None
-    # Field 21 is the user-selected/display model (for example
-    # "Gemini 3.5 Flash (High)"); field 19 is the backend response model (for
-    # example "gemini-3-flash-a"). Stats should group by what the user selected,
-    # otherwise High-mode calls are silently folded into the generic backend
-    # model. Fall back to the response model for older rows without field 21.
+
+    seconds = _proto_int(timestamp, 1)
+    if not seconds:
+        # In newer Antigravity versions, chat[9] omits the generator timestamp submessage.
+        # Fall back to resolving the turn's timestamp via the last_step_index pointer
+        # against the steps table (where step.metadata field 1 stores unix seconds).
+        last_step_index: int | None = None
+        for item in chat.get(20, []):
+            if isinstance(item, bytes):
+                try:
+                    pair = _decode_proto(item)
+                    if _proto_bytes(pair, 1) == b"last_step_index":
+                        last_step_index = int(
+                            _proto_bytes(pair, 2).decode("utf-8", errors="replace")
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+        if step_timestamps:
+            if last_step_index is not None and last_step_index in step_timestamps:
+                seconds = step_timestamps[last_step_index]
+            elif last_step_index is not None:
+                candidates = [s for s in step_timestamps if s <= last_step_index]
+                if candidates:
+                    seconds = step_timestamps[max(candidates)]
+                else:
+                    seconds = min(step_timestamps.values())
+            else:
+                seconds = min(step_timestamps.values())
+        elif fallback_ts:
+            seconds = fallback_ts
+
+    if not seconds:
+        return None
+
     model_raw = _proto_bytes(chat, 21) or _proto_bytes(chat, 19)
-    model = model_raw.decode("utf-8", errors="replace") if model_raw else "unknown"
+    raw_name = model_raw.decode("utf-8", errors="replace") if model_raw else "unknown"
+    model = _normalize_antigravity_model(raw_name)
     try:
         ts = datetime.fromtimestamp(seconds, tz=UTC)
     except (OSError, OverflowError, ValueError):
@@ -142,12 +250,40 @@ def _parse_antigravity_db(path: Path) -> list[UsageEntry]:
     try:
         connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.2)
         try:
+            step_timestamps: dict[int, int] = {}
+            try:
+                step_rows = connection.execute(
+                    "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL"
+                ).fetchall()
+                for s_idx, s_meta in step_rows:
+                    if not isinstance(s_idx, int) or not isinstance(s_meta, bytes):
+                        continue
+                    try:
+                        s_decoded = _decode_proto(s_meta)
+                        s_ts_msg = _proto_message(s_decoded, 1)
+                        s_sec = _proto_int(s_ts_msg, 1)
+                        if s_sec:
+                            step_timestamps[s_idx] = s_sec
+                    except Exception:
+                        pass
+            except (sqlite3.Error, OSError):
+                pass
+
+            try:
+                fallback_ts = int(path.stat().st_mtime)
+            except OSError:
+                fallback_ts = 0
+
             rows = connection.execute("SELECT idx, data FROM gen_metadata ORDER BY idx")
             for row_index, blob in rows:
                 if not isinstance(row_index, int) or not isinstance(blob, bytes):
                     continue
                 entry = _antigravity_entry_from_blob(
-                    blob, session_id=path.stem, row_index=row_index
+                    blob,
+                    session_id=path.stem,
+                    row_index=row_index,
+                    step_timestamps=step_timestamps,
+                    fallback_ts=fallback_ts,
                 )
                 if entry is not None:
                     out.append(entry)
