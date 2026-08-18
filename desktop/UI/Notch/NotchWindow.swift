@@ -59,6 +59,11 @@ func notchWindowKind(_ window: QuotaWindow) -> QuotaWindowKind? {
     if hay.contains("7d") || hay.contains("weekly") || hay.contains("week") {
         return .weekly
     }
+    // Duration-based fallback: a 30-day free-tier window carries key "30d"
+    // which the text checks above don't recognise.
+    if let m = window.windowMinutes, m > 0 {
+        return m <= 720 ? .fiveHour : .weekly
+    }
     return nil
 }
 
@@ -71,6 +76,93 @@ func notchWindowTag(_ window: QuotaWindow) -> String? {
         return "GEM"
     }
     return nil
+}
+
+func notchWindowShortTag(_ window: QuotaWindow?, defaultTag: String = "WK") -> String {
+    guard let w = window else { return defaultTag }
+    let m = w.windowMinutes
+    let raw = ((w.label ?? "") + " " + (w.key ?? "")).lowercased()
+    if m == 300 || raw.contains("5h") || raw.contains("5-hour") {
+        return "5H"
+    }
+    if m == 10080 || raw.contains("7d") || raw.contains("weekly") || raw.contains("week") {
+        return "WK"
+    }
+    if let m = m, m > 0 {
+        return QuotaFormatter.windowLengthText(windowMinutes: m, fallbackLabel: nil).uppercased()
+    }
+    return defaultTag
+}
+
+func notchWindowShortTag(_ snapshot: QuotaWindowSnapshot?, defaultTag: String = "WK") -> String {
+    notchWindowShortTag(snapshot?.window, defaultTag: defaultTag)
+}
+
+func notchWindowRowTitle(_ snapshot: QuotaWindowSnapshot?) -> String {
+    guard let snap = snapshot else { return "" }
+    let m = snap.window.windowMinutes
+    let raw = ((snap.window.label ?? "") + " " + (snap.window.key ?? "")).lowercased()
+    if m == 300 || raw.contains("5h") || raw.contains("5-hour") {
+        return L10n.tr("notch.row.5h")
+    }
+    if m == 10080 || raw.contains("7d") || raw.contains("weekly") || raw.contains("week") {
+        return L10n.tr("notch.row.weekly")
+    }
+    if let m = m, m > 0 {
+        if m % 1440 == 0 {
+            return L10n.tr("notch.row.days", m / 1440)
+        }
+        if m % 60 == 0 {
+            return L10n.tr("notch.row.hours", m / 60)
+        }
+        return "\(m)m"
+    }
+    return snap.kind == .fiveHour ? L10n.tr("notch.row.5h") : L10n.tr("notch.row.weekly")
+}
+
+func notchRingSubtitle(for snapshot: QuotaWindowSnapshot) -> String {
+    let m = snapshot.window.windowMinutes
+    let raw = ((snapshot.window.label ?? "") + " " + (snapshot.window.key ?? "")).lowercased()
+    let is5h = m == 300 || raw.contains("5h") || raw.contains("5-hour")
+    let isWeekly = m == 10080 || raw.contains("7d") || raw.contains("weekly") || raw.contains("week")
+
+    if snapshot.idle {
+        if is5h {
+            return L10n.tr("notch.five_hour_window")
+        }
+        if isWeekly {
+            return "WEEKLY WINDOW"
+        }
+        let length = QuotaFormatter.windowLengthText(windowMinutes: snapshot.window.windowMinutes, fallbackLabel: nil)
+        return "\(length.uppercased()) WINDOW"
+    } else {
+        if is5h {
+            return L10n.tr("notch.five_hour_left")
+        }
+        if isWeekly {
+            return L10n.tr("notch.weekly_left")
+        }
+        let length = QuotaFormatter.windowLengthText(windowMinutes: snapshot.window.windowMinutes, fallbackLabel: nil)
+        return "\(length.uppercased()) LEFT"
+    }
+}
+
+func notchSoloCardNonFiveHourTitle(for snapshot: QuotaWindowSnapshot?) -> String {
+    guard let snapshot = snapshot else { return L10n.tr("notch.card.week_resets_in") }
+    let m = snapshot.window.windowMinutes
+    let raw = ((snapshot.window.label ?? "") + " " + (snapshot.window.key ?? "")).lowercased()
+    let isWeekly = m == 10080 || raw.contains("7d") || raw.contains("weekly") || raw.contains("week")
+    if isWeekly {
+        return snapshot.idle ? "WEEKLY WINDOW" : L10n.tr("notch.card.week_resets_in")
+    }
+    if snapshot.idle {
+        let len = QuotaFormatter.windowLengthText(windowMinutes: snapshot.window.windowMinutes, fallbackLabel: nil).uppercased()
+        return "\(len) WINDOW"
+    }
+    if let m = m, m > 0, m % 1440 == 0 {
+        return L10n.tr("notch.card.days_resets_in", m / 1440)
+    }
+    return L10n.tr("notch.card.week_resets_in")
 }
 
 /// True when exactly one provider is connected and it meters two tagged

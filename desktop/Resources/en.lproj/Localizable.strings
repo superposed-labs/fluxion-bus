@@ -209,10 +209,15 @@
 "preferences.autoping.window.both" = "Both";
 "preferences.window.5h" = "5-hour";
 "preferences.window.weekly" = "Weekly";
+"preferences.window.days" = "%d-day";
+"preferences.window.hours" = "%d-hour";
 "notch.row.5h" = "5-HOUR";
 "notch.row.weekly" = "WEEKLY";
+"notch.row.days" = "%dD";
+"notch.row.hours" = "%dH";
 "notch.card.five_resets_in" = "5-hour resets in";
 "notch.card.week_resets_in" = "Weekly resets in";
+"notch.card.days_resets_in" = "%d-day resets in";
 /* Compact variant of menu.five_hour_temporarily_uncapped for the narrow
    status columns — the notch's micro rows and the menu-bar dropdown row —
    where the full phrase would span or overflow the whole column. */

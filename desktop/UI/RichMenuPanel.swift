@@ -1041,8 +1041,18 @@ final class RichMenuPanelView: NSView {
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
             return L10n.tr("preferences.window.weekly")
         }
-        if raw.contains("5") || raw.contains("hour") || raw.contains("rolling") {
+        if raw.contains("5h") || raw.contains("5-hour") || raw.contains("rolling") {
             return L10n.tr("preferences.window.5h")
+        }
+        // Duration-based fallback for windows like 30-day free tier
+        if let m = w.windowMinutes, m > 0 {
+            if m % 1440 == 0 {
+                return L10n.tr("preferences.window.days", m / 1440)
+            }
+            if m % 60 == 0 {
+                return L10n.tr("preferences.window.hours", m / 60)
+            }
+            return QuotaFormatter.windowLengthText(windowMinutes: m, fallbackLabel: nil)
         }
         return richWindowLabel(w)
     }

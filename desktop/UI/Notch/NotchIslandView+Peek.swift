@@ -467,7 +467,7 @@ extension NotchIslandView {
             uncapped: isCodexFiveHourTemporarilyUncapped(provider)
         )
         let week = peekWindowInline(
-            label: "WK",
+            label: notchWindowShortTag(state.weekly, defaultTag: "WK"),
             snapshot: state.weekly,
             brandColor: visual.brandColor
         )

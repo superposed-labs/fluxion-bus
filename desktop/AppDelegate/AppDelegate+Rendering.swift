@@ -817,54 +817,27 @@ extension AppDelegate {
     func resetPhrase(window: QuotaWindow, fetchedAt: String?) -> String {
         guard let resetsAt = window.resetsAt else { return "" }
         if QuotaFormatter.isWindowIdle(window, fetchedAt: fetchedAt) {
-            let lang = L10n.resolvedAppLanguage
             let m = window.windowMinutes ?? 0
             if m == 300 {
-                switch lang {
-                case "zh-Hans": return "5小时"
-                case "ja": return "5時間"
-                default: return "5h"
-                }
+                return L10n.tr("preferences.window.5h")
             }
             if m == 10080 {
-                switch lang {
-                case "zh-Hans": return "7天"
-                case "ja": return "7日"
-                default: return "7d"
-                }
+                return L10n.tr("preferences.window.days", 7)
             }
             if m > 0 {
                 if m % 1440 == 0 {
-                    let days = m / 1440
-                    switch lang {
-                    case "zh-Hans": return "\(days)天"
-                    case "ja": return "\(days)日"
-                    default: return "\(days)d"
-                    }
+                    return L10n.tr("preferences.window.days", m / 1440)
                 }
                 if m % 60 == 0 {
-                    let hrs = m / 60
-                    switch lang {
-                    case "zh-Hans": return "\(hrs)小时"
-                    case "ja": return "\(hrs)時間"
-                    default: return "\(hrs)h"
-                    }
+                    return L10n.tr("preferences.window.hours", m / 60)
                 }
                 return "\(m)m"
             }
             let label = window.label?.lowercased() ?? ""
             if label.contains("5") || label.contains("hour") || label.contains("rolling") {
-                switch lang {
-                case "zh-Hans": return "5小时"
-                case "ja": return "5時間"
-                default: return "5h"
-                }
+                return L10n.tr("preferences.window.5h")
             }
-            switch lang {
-            case "zh-Hans": return "7天"
-            case "ja": return "7日"
-            default: return "7d"
-            }
+            return L10n.tr("preferences.window.days", 7)
         }
         guard let targetDate = QuotaFormatter.parseISODate(resetsAt) else { return "" }
         let secs = targetDate.timeIntervalSinceNow
@@ -953,8 +926,18 @@ extension AppDelegate {
         if raw.contains("weekly") || raw.contains("week") || raw.contains("wk") {
             return L10n.tr("preferences.window.weekly")
         }
-        if raw.contains("5") || raw.contains("hour") || raw.contains("rolling") {
+        if raw.contains("5h") || raw.contains("5-hour") || raw.contains("rolling") {
             return L10n.tr("preferences.window.5h")
+        }
+        // Duration-based fallback for windows like 30-day free tier
+        if let m = w.windowMinutes, m > 0 {
+            if m % 1440 == 0 {
+                return L10n.tr("preferences.window.days", m / 1440)
+            }
+            if m % 60 == 0 {
+                return L10n.tr("preferences.window.hours", m / 60)
+            }
+            return QuotaFormatter.windowLengthText(windowMinutes: m, fallbackLabel: nil)
         }
         return w.label ?? w.key ?? ""
     }
