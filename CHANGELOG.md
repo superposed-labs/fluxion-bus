@@ -9,6 +9,19 @@ milestones.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-18
+
+### Changed
+
+- **Arbitrary quota window durations** — the Codex probe and Notch UI now
+  handle quota windows of any length instead of assuming a fixed duration.
+
+### Fixed
+
+- **Antigravity usage timestamps** — recovered missing timestamps in
+  Antigravity usage history and normalized model names so aggregation no
+  longer splits the same model across multiple rows.
+
 ## [1.3.1] - 2026-08-16
 
 ### Changed
@@ -372,7 +385,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.1...v1.2.2
