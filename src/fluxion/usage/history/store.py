@@ -52,11 +52,9 @@ from fluxion.usage.history.parsing import (
 # applies to new turns while the old rows sit in `entries` forever, and the
 # aggregate stays wrong in a way no amount of restarting fixes.
 #
-# v4: `_codex_line_parser` stopped emitting turns served by a provider other
-# than OpenAI. Shipped one commit too late — the rule landed while 61 already
-# parsed phantom turns (3.75M input tokens under a model slug that does not
-# exist) stayed in the table, so the fix reported success and changed nothing.
-_SCHEMA_VERSION = 4
+# v6: `_antigravity_entry_from_blob` normalizes model names (e.g. Gemini 3.7 Flash,
+# Claude Opus 4.6) across display labels, effort levels, and backend response slugs.
+_SCHEMA_VERSION = 6
 
 
 def _local(ts: datetime, tz: timezone | None) -> datetime:
