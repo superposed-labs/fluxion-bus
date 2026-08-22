@@ -226,12 +226,28 @@ def find_conversation_db(session_id: str, conversation_dirs: tuple[Path, ...]) -
     return None
 
 
-def extract_json_payloads(blob: bytes) -> list[dict[str, Any]]:
-    """Pull the JSON objects agy embeds in a protobuf `step_payload` blob.
+def read_max_step_idx(db_path: Path) -> int:
+    """The last row already in a conversation's DB, or -1.
 
-    Shared with the live narrator, which reads the same rows while the run is
-    still in flight.
+    A resumed conversation's DB opens holding every step of every prior turn,
+    so callers that report progress take this before a run starts to keep the
+    previous turn's steps out of this turn's window.
     """
+    try:
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.2)
+    except sqlite3.Error:
+        return -1
+    try:
+        row = connection.execute("SELECT MAX(idx) FROM steps").fetchone()
+    except sqlite3.Error:
+        return -1
+    finally:
+        connection.close()
+    return row[0] if row and isinstance(row[0], int) else -1
+
+
+def extract_json_payloads(blob: bytes) -> list[dict[str, Any]]:
+    """Pull the JSON objects agy embeds in a protobuf `step_payload` blob."""
     text = blob.decode("utf-8", errors="ignore")
     if not text:
         return []

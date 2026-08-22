@@ -12,10 +12,11 @@ from pathlib import Path
 
 from fluxion.core.models.result import ExecutionResult
 from fluxion.core.models.task import Task
-from fluxion.executors.antigravity.trajectory_stream import (
-    POLL_INTERVAL_SEC,
-    TrajectoryNarrator,
-    read_max_step_idx,
+from fluxion.executors.antigravity.events import (
+    agy_answer_text,
+    agy_conversation_id,
+    agy_reasoning_text,
+    agy_result_error,
 )
 from fluxion.executors.common.actions import resolve_uploads_from_text
 from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT, clip_text
@@ -28,11 +29,7 @@ from fluxion.executors.common.process import (
 )
 from fluxion.executors.model_resolution import extract_antigravity_resolved_model
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
-from fluxion.usage.history.parsing import ANTIGRAVITY_CONVERSATIONS_DIRS
-from fluxion.workspace.antigravity_trajectory import (
-    extract_agy_session_id,
-    find_conversation_db,
-)
+from fluxion.workspace.antigravity_trajectory import extract_agy_session_id
 
 # After the answer is printed, agy lingers for post-answer housekeeping while
 # holding the process open. The reaper waits this out in the background; if the
@@ -101,22 +98,13 @@ class AntiGravityExecutor:
         task: Task,
         cancel_requested: Callable[[], bool] | None = None,
         stream_output: Callable[[str], None] | None = None,
-        # agy exposes no thinking anywhere, so this carries tool activity read
-        # live from its trajectory DB rather than a train of thought.
+        # agy exposes no thinking anywhere — its stream counts thinking tokens
+        # and emits no text for them — so this carries tool activity read live
+        # from the event stream rather than a train of thought.
         stream_reasoning: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         prompt = self._prompt_builder.build(task)
         raw_prompt = is_raw_prompt(task)
-        # Only in raw mode: the IM path renders one answer and has nowhere to
-        # put working notes. Read the resumed conversation's existing rows now,
-        # before the process can add to them, so the floor excludes exactly the
-        # prior turns and nothing of this one.
-        narrator = (
-            TrajectoryNarrator(since_idx=self._trajectory_floor(task))
-            if stream_reasoning is not None and raw_prompt
-            else None
-        )
-        narration_stop = threading.Event()
         start = time.monotonic()
         command: list[str] | None = None
         agy_log_file = self._logs_dir / f"task-{task.id}.agy.log"
@@ -144,7 +132,7 @@ class AntiGravityExecutor:
             )
             out_holder: dict[str, list[str]] = {"stdout": [], "stderr": []}
             read_error: list[Exception] = []
-            stream_state = {"sent_len": 0}
+            stream_state = {"sent_len": 0, "reasoning_len": 0}
             stream_lock = threading.Lock()
             returning = {"on": False}
             answer_done = threading.Event()
@@ -161,17 +149,25 @@ class AntiGravityExecutor:
                     delta = current[stream_state["sent_len"] :]
                     stream_state["sent_len"] = len(current)
                 if delta:
-                    # stdout has started, so it takes over as the progress
-                    # signal. Normally that means the answer, printed in one
-                    # burst at the end; under
-                    # FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS agy also
-                    # narrates each step there ("I will view the contents of
-                    # a.txt"), from around the same time the trajectory fills
-                    # up. Either way the two sources would now be describing
-                    # the same work on two channels, and the consumer would
-                    # close and reopen an item for every alternation.
-                    narration_stop.set()
                     stream_output(delta)
+
+            def _emit_reasoning_delta() -> None:
+                # Only in raw mode: the IM path renders one answer and has
+                # nowhere to put working notes. Both channels now read the same
+                # event stream, so they can no longer describe the same work
+                # twice the way stdout and the trajectory poller could.
+                if stream_reasoning is None or not raw_prompt:
+                    return
+                with stream_lock:
+                    if returning["on"]:
+                        return
+                    current = agy_reasoning_text("".join(out_holder["stdout"]))
+                    if len(current) <= stream_state["reasoning_len"]:
+                        return
+                    delta = current[stream_state["reasoning_len"] :]
+                    stream_state["reasoning_len"] = len(current)
+                if delta:
+                    stream_reasoning(delta)
 
             def _read_pipe(name: str, pipe: object | None) -> None:
                 if pipe is None:
@@ -182,6 +178,7 @@ class AntiGravityExecutor:
                             break
                         out_holder[name].append(chunk)
                         if name == "stdout":
+                            _emit_reasoning_delta()
                             _emit_stream_delta()
                             if not answer_done.is_set() and self._answer_complete(
                                 "".join(out_holder["stdout"])
@@ -195,26 +192,6 @@ class AntiGravityExecutor:
                     except Exception:
                         pass
 
-            def _narrate(active: TrajectoryNarrator, emit: Callable[[str], None]) -> None:
-                # agy names the conversation in its own log a few seconds after
-                # launch — that is a real language-server startup, not a logging
-                # delay — and the DB appears under that name. Until both exist
-                # there is nothing to read; after that the log is never read
-                # again.
-                db_path: Path | None = None
-                while not narration_stop.is_set():
-                    if db_path is None:
-                        session_id = self._extract_session_id(agy_log_file, "")
-                        if session_id:
-                            db_path = find_conversation_db(
-                                session_id, ANTIGRAVITY_CONVERSATIONS_DIRS
-                            )
-                    if db_path is not None:
-                        delta = active.poll(db_path)
-                        if delta and not narration_stop.is_set():
-                            emit(delta)
-                    narration_stop.wait(POLL_INTERVAL_SEC)
-
             stdout_thread = threading.Thread(
                 target=_read_pipe,
                 args=("stdout", proc.stdout),
@@ -227,13 +204,6 @@ class AntiGravityExecutor:
             )
             stdout_thread.start()
             stderr_thread.start()
-            if narrator is not None and stream_reasoning is not None:
-                threading.Thread(
-                    target=_narrate,
-                    args=(narrator, stream_reasoning),
-                    name="agy-narrator",
-                    daemon=True,
-                ).start()
 
             cancelled = False
             timed_out = False
@@ -286,7 +256,7 @@ class AntiGravityExecutor:
                         stderr=stderr,
                         agy_log_file=agy_log_file,
                     ),
-                    executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                    executor_session_id=self._extract_session_id(agy_log_file, stderr, stdout),
                     resolved_model=resolved_model,
                     model_resolution_source="executor_runtime" if resolved_model else "",
                     duration_sec=duration,
@@ -301,9 +271,11 @@ class AntiGravityExecutor:
                 stdout = "".join(out_holder["stdout"])
                 stderr = "".join(out_holder["stderr"])
                 duration = time.monotonic() - start
-                execution_error = self._extract_execution_error(
-                    agy_log_file, stderr
-                ) or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
+                execution_error = (
+                    self._extract_execution_error(agy_log_file, stderr)
+                    or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
+                    or self._clip(agy_result_error(stdout), EXECUTOR_TEXT_HARD_LIMIT)
+                )
                 success = not execution_error
                 # Register a completion signal the engine awaits before computing
                 # the change report — agy keeps flushing its SQLite trajectory DB
@@ -328,7 +300,7 @@ class AntiGravityExecutor:
                         stderr=stderr,
                         agy_log_file=agy_log_file,
                     ),
-                    executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                    executor_session_id=self._extract_session_id(agy_log_file, stderr, stdout),
                     resolved_model=resolved_model,
                     model_resolution_source="executor_runtime" if resolved_model else "",
                     duration_sec=duration,
@@ -356,9 +328,11 @@ class AntiGravityExecutor:
             _emit_stream_delta()
             duration = time.monotonic() - start
             returncode = proc.returncode if proc.returncode is not None else -1
-            execution_error = self._extract_execution_error(
-                agy_log_file, stderr
-            ) or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
+            execution_error = (
+                self._extract_execution_error(agy_log_file, stderr)
+                or self._blocked_tool_error(agy_log_file, stdout, raw=raw_prompt)
+                or self._clip(agy_result_error(stdout), EXECUTOR_TEXT_HARD_LIMIT)
+            )
             success = returncode == 0 and not execution_error
             resolved_model = extract_antigravity_resolved_model(agy_log_file, stdout, stderr)
             return ExecutionResult(
@@ -376,7 +350,7 @@ class AntiGravityExecutor:
                     stderr=stderr,
                     agy_log_file=agy_log_file,
                 ),
-                executor_session_id=self._extract_session_id(agy_log_file, stderr),
+                executor_session_id=self._extract_session_id(agy_log_file, stderr, stdout),
                 resolved_model=resolved_model,
                 model_resolution_source="executor_runtime" if resolved_model else "",
                 duration_sec=duration,
@@ -420,24 +394,6 @@ class AntiGravityExecutor:
                 ),
                 duration_sec=duration,
             )
-        finally:
-            # Every path out of here — answered, cancelled, timed out, crashed
-            # before the process even started — ends the run as far as working
-            # notes are concerned. Without this the poller outlives the run.
-            narration_stop.set()
-
-    def _trajectory_floor(self, task: Task) -> int:
-        """The last trajectory row that belongs to an earlier turn.
-
-        A fresh conversation has no DB yet and starts at -1; a resumed one opens
-        holding every step of every prior turn, which would otherwise replay as
-        this turn's working the moment the first poll lands.
-        """
-        session_id = str(task.metadata.get("executor_session_id", "")).strip()
-        if not session_id:
-            return -1
-        db_path = find_conversation_db(session_id, ANTIGRAVITY_CONVERSATIONS_DIRS)
-        return read_max_step_idx(db_path) if db_path is not None else -1
 
     def _build_command(
         self,
@@ -455,6 +411,16 @@ class AntiGravityExecutor:
             f"{self._print_timeout_sec}s",
             "--log-file",
             str(log_file),
+            # One JSON object per line instead of a single dump at the end:
+            # the answer, the tools, the conversation id and the terminal
+            # status all arrive on a documented channel. See `events.py`.
+            "--output-format",
+            "stream-json",
+            # Prompts are assembled from user text. A request that happens to
+            # open with `/` — a path, or someone quoting a command — would
+            # otherwise be resolved as a slash command or a skill instead of
+            # being read as the task.
+            "--disable-slash-commands",
         ]
         if self._sandbox:
             command.append("--sandbox")
@@ -571,7 +537,7 @@ class AntiGravityExecutor:
         ever read it here, so every declared upload was dropped on the floor.
         """
         return resolve_uploads_from_text(
-            text=stdout,
+            text=agy_answer_text(stdout),
             workspace=workspace,
             max_files=self._max_structured_uploads,
         )
@@ -653,7 +619,7 @@ class AntiGravityExecutor:
         return finished
 
     def _extract_user_answer(self, stdout: str) -> str:
-        text = (stdout or "").strip()
+        text = agy_answer_text(stdout).strip()
         if not text:
             return "Task completed."
 
@@ -673,11 +639,12 @@ class AntiGravityExecutor:
         return self._clip(text, EXECUTOR_TEXT_HARD_LIMIT)
 
     def _extract_partial_user_answer(self, stdout: str, *, raw: bool = False) -> str:
-        text = stdout or ""
+        text = agy_answer_text(stdout)
         if raw:
-            # No marker will ever arrive. agy prints its narration to stdout, so
-            # forwarding it verbatim is both the only option and the useful one:
-            # the caller sees progress instead of a silent stream.
+            # No marker will ever arrive, so the model's text *is* the answer.
+            # Reassembled from the stream rather than taken from stdout: stdout
+            # is now NDJSON, and forwarding that verbatim would put event
+            # objects in front of whoever is reading the reply.
             return text
         marker = "FINAL_ANSWER:"
         idx = text.rfind(marker)
@@ -692,11 +659,13 @@ class AntiGravityExecutor:
     def _answer_complete(self, stdout: str) -> bool:
         """True once stdout holds a final answer plus a parseable ACTIONS_JSON.
 
-        agy emits ``FINAL_ANSWER: ... ACTIONS_JSON: {json}`` and then prints
-        nothing more to stdout, so a complete trailing JSON object is a reliable
-        marker that the user-visible answer is done.
+        agy emits ``FINAL_ANSWER: ... ACTIONS_JSON: {json}`` and then adds
+        nothing more to its answer, so a complete trailing JSON object is a
+        reliable marker that the user-visible answer is done — it lands a beat
+        before the stream's own `result` event, which is the point: the early
+        return exists to skip agy's post-answer tail.
         """
-        text = stdout or ""
+        text = agy_answer_text(stdout)
         if "FINAL_ANSWER:" not in text:
             return False
         marker = "ACTIONS_JSON:"
@@ -722,7 +691,13 @@ class AntiGravityExecutor:
             return False
         return isinstance(obj, dict | list)
 
-    def _extract_session_id(self, log_file: Path, stderr: str) -> str:
+    def _extract_session_id(self, log_file: Path, stderr: str, stdout: str = "") -> str:
+        # The stream names the conversation on its first line. agy also writes
+        # it to its log a few seconds into the run, which is where this used to
+        # come from and still does when the stream never opened.
+        from_stream = agy_conversation_id(stdout)
+        if from_stream:
+            return from_stream
         text = stderr or ""
         if log_file.exists():
             try:
@@ -780,7 +755,8 @@ class AntiGravityExecutor:
         # In raw mode no marker is ever printed, so any output at all is the
         # answer such as it is; this catches only the silent case. Narration
         # that stops short of an answer still gets through there.
-        answered = bool(stdout.strip()) if raw else "FINAL_ANSWER:" in (stdout or "")
+        answer = agy_answer_text(stdout)
+        answered = bool(answer.strip()) if raw else "FINAL_ANSWER:" in answer
         if answered:
             return ""
         blocked = ", ".join(dict.fromkeys(matches))

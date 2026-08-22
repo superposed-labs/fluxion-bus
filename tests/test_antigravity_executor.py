@@ -1,18 +1,11 @@
 import threading
-import time
 from pathlib import Path
 from unittest.mock import patch
 
 from fluxion.core.models.task import Task
 from fluxion.executors.antigravity.executor import AntiGravityExecutor
 from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT
-from tests.test_antigravity_trajectory_stream import (
-    RUN_WC,
-    VIEW_A,
-    VIEW_B,
-    append_steps,
-    write_db,
-)
+from tests.test_antigravity_events import _answer, _init, _result, _tool
 
 
 class _FakePipe:
@@ -277,20 +270,51 @@ def test_answer_complete_requires_parseable_actions_json(tmp_path):
     assert executor._answer_complete("FINAL_ANSWER:\nhi") is False
 
 
+# ── the command ──────────────────────────────────────────────────────
+def test_the_command_asks_for_the_event_stream(tmp_path):
+    executor = _executor(tmp_path)
+    task = Task.create(channel="mcp", user_id="user", text="hi", workspace=tmp_path)
+
+    command = executor._build_command(
+        task=task,
+        prompt="hi",
+        resolved_command="agy",
+        log_file=tmp_path / "logs" / "t.agy.log",
+    )
+
+    assert "--output-format" in command
+    assert command[command.index("--output-format") + 1] == "stream-json"
+
+
+def test_the_command_disables_slash_commands(tmp_path):
+    """A prompt that opens with `/` — a path, or someone quoting a command —
+    would otherwise be resolved as a slash command instead of read as the task."""
+    executor = _executor(tmp_path)
+    task = Task.create(
+        channel="wechat",
+        user_id="user",
+        text="/usr/local/bin is missing, fix it",
+        workspace=tmp_path,
+    )
+
+    command = executor._build_command(
+        task=task,
+        prompt="/usr/local/bin is missing, fix it",
+        resolved_command="agy",
+        log_file=tmp_path / "logs" / "t.agy.log",
+    )
+
+    assert "--disable-slash-commands" in command
+
+
 # ── live working notes ───────────────────────────────────────────────
-def _seed_trajectory(tmp_path: Path, task_id: str, payloads: list[bytes]) -> Path:
-    """Stand in for what agy writes while it runs: a log naming the conversation,
-    and a DB under that name whose steps accumulate."""
-    log_file = tmp_path / "logs" / f"task-{task_id}.agy.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.write_text("Print mode: conversation=11111111-2222-3333-4444-555555555555\n")
-    conversations = tmp_path / "conversations"
-    return write_db(conversations / "11111111-2222-3333-4444-555555555555.db", payloads)
+def _stream(*chunks: str) -> str:
+    return _init("11111111-2222-3333-4444-555555555555") + "".join(chunks)
 
 
-def test_raw_mode_streams_working_notes_from_the_trajectory(tmp_path):
-    """agy prints nothing until it dumps the answer, so this is the only signal
-    a sub-agent window has that anything is happening at all."""
+def test_raw_mode_streams_working_notes_from_the_event_stream(tmp_path):
+    """Until the answer lands this is the only signal a sub-agent window has
+    that anything is happening at all."""
     executor = _executor(tmp_path)
     task = Task.create(
         channel="mcp",
@@ -299,8 +323,13 @@ def test_raw_mode_streams_working_notes_from_the_trajectory(tmp_path):
         workspace=tmp_path,
         metadata={"prompt_mode": "raw"},
     )
-    _seed_trajectory(tmp_path, task.id, [VIEW_A, RUN_WC])
-    proc = _LingeringProc(stdout="")
+    proc = _LingeringProc(
+        stdout=_stream(
+            _tool(3, "ACTIVE", "view_file", {"AbsolutePath": "/repo/a.txt"}),
+            _tool(3, "DONE", "view_file", {"AbsolutePath": "/repo/a.txt"}),
+            _tool(5, "ACTIVE", "run_command", {"CommandLine": "wc -l *.txt"}),
+        )
+    )
     notes: list[str] = []
     seen = threading.Event()
 
@@ -308,13 +337,7 @@ def test_raw_mode_streams_working_notes_from_the_trajectory(tmp_path):
         notes.append(chunk)
         seen.set()
 
-    with (
-        patch("subprocess.Popen", return_value=proc),
-        patch(
-            "fluxion.executors.antigravity.executor.ANTIGRAVITY_CONVERSATIONS_DIRS",
-            (tmp_path / "conversations",),
-        ),
-    ):
+    with patch("subprocess.Popen", return_value=proc):
         worker = threading.Thread(
             target=lambda: executor.execute(task, stream_reasoning=on_reasoning), daemon=True
         )
@@ -323,36 +346,15 @@ def test_raw_mode_streams_working_notes_from_the_trajectory(tmp_path):
         proc.release()
         worker.join(timeout=10)
 
-    assert "Reading a.txt" in "".join(notes)
-    assert "$ wc -l *.txt" in "".join(notes)
+    joined = "".join(notes)
+    assert "view_file(repo/a.txt)" in joined
+    assert "$ wc -l *.txt" in joined
+    assert joined.count("view_file(repo/a.txt)") == 1, "a tool lands twice, it is one note"
 
 
-def test_im_mode_sends_no_working_notes(tmp_path):
-    """The IM path renders one answer and has nowhere to put these."""
-    executor = _executor(tmp_path)
-    task = Task.create(
-        channel="wechat",
-        user_id="user",
-        text="count the lines",
-        workspace=tmp_path,
-    )
-    _seed_trajectory(tmp_path, task.id, [VIEW_A, RUN_WC])
-    notes: list[str] = []
-
-    with (
-        patch("subprocess.Popen", return_value=_FakeProc(stdout="FINAL_ANSWER:\nhi\n")),
-        patch(
-            "fluxion.executors.antigravity.executor.ANTIGRAVITY_CONVERSATIONS_DIRS",
-            (tmp_path / "conversations",),
-        ),
-    ):
-        executor.execute(task, stream_reasoning=notes.append)
-
-    assert notes == []
-
-
-def test_a_resumed_run_does_not_replay_the_previous_turn(tmp_path):
-    """The DB opens holding every prior turn; only this run's steps are working."""
+def test_a_resumed_run_reports_only_this_turn(tmp_path):
+    """The stream opens empty on every run — the prior turn cannot replay the
+    way an accumulated trajectory DB could."""
     executor = _executor(tmp_path)
     task = Task.create(
         channel="mcp",
@@ -364,68 +366,150 @@ def test_a_resumed_run_does_not_replay_the_previous_turn(tmp_path):
             "executor_session_id": "11111111-2222-3333-4444-555555555555",
         },
     )
-    db = _seed_trajectory(tmp_path, task.id, [VIEW_A, RUN_WC])
-    proc = _LingeringProc(stdout="")
     notes: list[str] = []
-    seen = threading.Event()
 
-    def on_reasoning(chunk: str) -> None:
-        notes.append(chunk)
-        seen.set()
-
-    with (
-        patch("subprocess.Popen", return_value=proc),
-        patch(
-            "fluxion.executors.antigravity.executor.ANTIGRAVITY_CONVERSATIONS_DIRS",
-            (tmp_path / "conversations",),
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(
+            stdout=_stream(_tool(0, "DONE", "view_file", {"AbsolutePath": "/repo/b.txt"}))
         ),
     ):
-        worker = threading.Thread(
-            target=lambda: executor.execute(task, stream_reasoning=on_reasoning), daemon=True
-        )
-        worker.start()
-        # Whatever the poller does with the pre-existing rows, it must not be
-        # this: give it time to get them wrong before adding the new one.
-        assert not seen.wait(timeout=2), f"replayed the prior turn: {notes}"
-        append_steps(db, [VIEW_B])
-        assert seen.wait(timeout=10)
-        proc.release()
-        worker.join(timeout=10)
+        executor.execute(task, stream_reasoning=notes.append)
 
-    joined = "".join(notes)
-    assert joined == "Reading b.txt"
+    assert "".join(notes) == "view_file(repo/b.txt)"
 
 
-def test_stdout_takes_over_from_the_trajectory(tmp_path):
-    """Under skip-permissions agy narrates its steps on stdout as well.
+def test_im_mode_sends_no_working_notes(tmp_path):
+    """The IM path renders one answer and has nowhere to put these."""
+    executor = _executor(tmp_path)
+    task = Task.create(
+        channel="wechat",
+        user_id="user",
+        text="count the lines",
+        workspace=tmp_path,
+    )
+    notes: list[str] = []
 
-    Both sources then describe the same work, and alternating between them
-    would make the consumer close and reopen an item on every switch. stdout
-    wins because it is the one carrying the answer.
-    """
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(
+            stdout=_stream(
+                _tool(3, "DONE", "view_file", {"AbsolutePath": "/repo/a.txt"}),
+                _answer(4, "DONE", "FINAL_ANSWER:\nhi\nACTIONS_JSON:\n{}"),
+            )
+        ),
+    ):
+        executor.execute(task, stream_reasoning=notes.append)
+
+    assert notes == []
+
+
+def test_the_event_stream_never_reaches_a_channel(tmp_path):
+    """stdout is NDJSON now. A parser that falls through would send event
+    objects to whoever is reading the reply — in IM, to the user."""
+    executor = _executor(tmp_path)
+    task = Task.create(
+        channel="wechat",
+        user_id="user",
+        text="count the lines",
+        workspace=tmp_path,
+    )
+    stdout = _stream(
+        _tool(3, "DONE", "run_command", {"CommandLine": "wc -l *.txt"}),
+        _answer(4, "ACTIVE", "FINAL_ANSWER:\nthe file has "),
+        _answer(4, "DONE", 'two lines\nACTIONS_JSON:\n{"upload_files": []}'),
+        _result(
+            "SUCCESS", 'FINAL_ANSWER:\nthe file has two lines\nACTIONS_JSON:\n{"upload_files": []}'
+        ),
+    )
+    deltas: list[str] = []
+
+    with patch("subprocess.Popen", return_value=_FakeProc(stdout=stdout)):
+        result = executor.execute(task, stream_output=deltas.append)
+
+    streamed = "".join(deltas)
+    for leak in ('{"event"', "step_update", "text_delta", "tool_info"):
+        assert leak not in streamed, f"{leak} leaked into the channel"
+        assert leak not in result.summary, f"{leak} leaked into the summary"
+    assert streamed.strip() == "the file has two lines"
+    assert result.summary == "the file has two lines"
+
+
+def test_raw_mode_answers_with_the_model_text_not_the_envelope(tmp_path):
     executor = _executor(tmp_path)
     task = Task.create(
         channel="mcp",
         user_id="user",
-        text="count the lines",
+        text="say hi",
         workspace=tmp_path,
         metadata={"prompt_mode": "raw"},
     )
-    db = _seed_trajectory(tmp_path, task.id, [VIEW_A])
-    notes: list[str] = []
+    deltas: list[str] = []
 
-    with (
-        patch("subprocess.Popen", return_value=_FakeProc(stdout="I will view a.txt\n")),
-        patch(
-            "fluxion.executors.antigravity.executor.ANTIGRAVITY_CONVERSATIONS_DIRS",
-            (tmp_path / "conversations",),
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(
+            stdout=_stream(_answer(2, "DONE", "hello there"), _result("SUCCESS", "hello there"))
         ),
     ):
-        executor.execute(task, stream_output=lambda _: None, stream_reasoning=notes.append)
+        result = executor.execute(task, stream_output=deltas.append)
 
-    append_steps(db, [RUN_WC])
-    time.sleep(0.2)
-    assert "$ wc -l" not in "".join(notes), "the poller outlived the run"
+    assert "".join(deltas) == "hello there"
+    assert result.summary == "hello there"
+
+
+def test_the_conversation_id_comes_off_the_stream(tmp_path):
+    """It used to be scraped from agy's log a few seconds into the run."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="mcp", user_id="user", text="hi", workspace=tmp_path)
+
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(stdout=_stream(_result("SUCCESS", "FINAL_ANSWER:\nhi"))),
+    ):
+        result = executor.execute(task)
+
+    assert result.executor_session_id == "11111111-2222-3333-4444-555555555555"
+
+
+def test_a_run_that_stopped_without_answering_is_not_a_success(tmp_path):
+    """agy exits zero on a print-timeout, and the empty answer used to be
+    reported to the user as "Task completed."."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="hi", workspace=tmp_path)
+
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(
+            stdout=_stream(_result("ERROR", "", error="context canceled")), returncode=0
+        ),
+    ):
+        result = executor.execute(task)
+
+    assert result.success is False
+    assert "context canceled" in result.summary
+
+
+def test_a_run_that_answered_before_its_status_soured_still_succeeds(tmp_path):
+    """Measured: a turn that kills its own background task reports ERROR with
+    the answer already delivered."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="wechat", user_id="user", text="hi", workspace=tmp_path)
+    answer = "FINAL_ANSWER:\nall done\nACTIONS_JSON:\n{}"
+
+    with patch(
+        "subprocess.Popen",
+        return_value=_FakeProc(
+            stdout=_stream(
+                _answer(2, "DONE", answer), _result("ERROR", answer, error="context canceled")
+            ),
+            returncode=0,
+        ),
+    ):
+        result = executor.execute(task)
+
+    assert result.success is True
+    assert result.summary == "all done"
 
 
 # ── permission refusals ──────────────────────────────────────────────
@@ -585,3 +669,26 @@ def test_a_runaway_answer_still_hits_the_defensive_bound(tmp_path):
 
     assert len(clipped) == EXECUTOR_TEXT_HARD_LIMIT
     assert clipped.endswith("...(truncated)")
+
+
+def test_early_return_still_fires_on_the_event_stream(tmp_path):
+    """The answer completes a beat before the stream's own `result` event, and
+    the point of returning there is to skip agy's post-answer tail."""
+    executor = _executor(tmp_path)
+    task = Task.create(channel="slack", user_id="user", text="hi", workspace=tmp_path)
+    proc = _LingeringProc(
+        stdout=_stream(
+            _tool(3, "DONE", "view_file", {"AbsolutePath": "/repo/a.txt"}),
+            _answer(4, "ACTIVE", "FINAL_ANSWER:\nthe "),
+            _answer(4, "DONE", 'answer\nACTIONS_JSON:\n{"upload_files": []}'),
+        )
+    )
+
+    with patch("subprocess.Popen", return_value=proc):
+        result = executor.execute(task)
+
+    # Returned while the process was still open: the release below is what lets
+    # the reaper finish, and it has not been called yet.
+    assert result.pending_finalization is True
+    assert result.summary == "the answer"
+    proc.release()
