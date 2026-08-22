@@ -124,6 +124,11 @@ Fluxion runs `agy --add-dir <workspace>` for each task and resumes sessions
 with `--conversation <id>` when a prior session exists. Authenticate `agy`
 locally first.
 
+Runs also pass `--output-format stream-json`, so the answer, the tools the run
+reached for, and its terminal status arrive as events while the run is in
+flight, and `--disable-slash-commands`, so a prompt that opens with `/` is read
+as the task rather than resolved as a slash command or skill.
+
 Other Antigravity keys:
 - `FLUXION_ANTIGRAVITY_SANDBOX` — pass `--sandbox`. Restricts terminal access; it is *not* a read-only mode, and the agent can still edit files
 - `FLUXION_ANTIGRAVITY_DANGEROUSLY_SKIP_PERMISSIONS` — highest risk; auto-approves every tool in every run and every workspace. Usually unnecessary, see below

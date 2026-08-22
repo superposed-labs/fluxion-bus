@@ -6,7 +6,6 @@ from typing import Any
 
 from fluxion.config.settings import Settings
 from fluxion.core.runtime_registry import TERMINAL_STATUSES, owner_is_alive
-from fluxion.executors.antigravity.trajectory_stream import read_max_step_idx
 from fluxion.executors.model_resolution import extract_antigravity_resolved_model
 from fluxion.mcp_server.logs import _log_progress
 from fluxion.subagent import SubagentRunner, compact_tail
@@ -15,6 +14,7 @@ from fluxion.web.services.aggregator import aggregate_tasks_cached
 from fluxion.workspace.antigravity_trajectory import (
     extract_agy_session_id,
     find_conversation_db,
+    read_max_step_idx,
 )
 
 _POLL_TAIL_MAX_LINES = 8

@@ -5,7 +5,10 @@ from pathlib import Path
 
 from fluxion.config.settings import Settings
 from fluxion.core.session_manager import SessionManager
-from fluxion.workspace.antigravity_trajectory import collect_antigravity_trajectory
+from fluxion.workspace.antigravity_trajectory import (
+    collect_antigravity_trajectory,
+    read_max_step_idx,
+)
 from fluxion.workspace.change_set import load_change_set
 
 
@@ -335,3 +338,28 @@ def test_session_manager_trajectory_idx_roundtrip() -> None:
     sm.set_trajectory_idx(session_id="s1", idx=4, **kw)
     assert sm.get_trajectory_idx(session_id="s1", **kw) == 4
     assert sm.get_trajectory_idx(session_id="s2", **kw) == -1
+
+
+# ── the resume floor ─────────────────────────────────────────────────
+def test_max_step_idx_is_the_last_row(tmp_path: Path) -> None:
+    """A resumed conversation's DB opens holding every prior turn."""
+    db = tmp_path / "s.db"
+    _write_trajectory_db(db, [b"{}", b"{}", b"{}"])
+    assert read_max_step_idx(db) == 2
+
+
+def test_an_empty_table_reads_as_no_floor(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    _write_trajectory_db(db, [])
+    assert read_max_step_idx(db) == -1
+
+
+def test_a_missing_database_is_not_an_error(tmp_path: Path) -> None:
+    assert read_max_step_idx(tmp_path / "absent.db") == -1
+
+
+def test_a_database_without_the_table_is_not_an_error(tmp_path: Path) -> None:
+    """agy creates the file before the schema; reads land in that window."""
+    path = tmp_path / "empty.db"
+    sqlite3.connect(path).close()
+    assert read_max_step_idx(path) == -1
