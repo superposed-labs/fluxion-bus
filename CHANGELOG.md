@@ -9,6 +9,27 @@ milestones.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-23
+
+### Added
+
+- **Antigravity stream-json output** — the Antigravity executor now consumes
+  `--output-format stream-json` events directly, replacing background SQLite
+  trajectory polling with real-time working-note and answer streaming.
+
+### Changed
+
+- **Codex ≥ 0.149 integration guard** — Codex 0.149 removed a role's ability
+  to choose its own `model_provider`, so Fluxion now refuses to install the
+  provider-routing integration on unsupported builds rather than writing a
+  config that silently does nothing. The Preferences sheet shows "Unsupported"
+  with the reason; `--allow-unsupported-codex` overrides the check.
+
+### Fixed
+
+- **Notch quota ring labels** — quota ring labels stay compact and no longer
+  overflow when window durations vary.
+
 ## [1.3.2] - 2026-08-18
 
 ### Changed
@@ -385,7 +406,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.2.2...v1.3.0
