@@ -317,12 +317,23 @@ extension PreferencesWindow {
         rightStack.translatesAutoresizingMaskIntoConstraints = false
         headerRow.addSubview(rightStack)
 
-        let pillTone: ProviderPillTone = state.codex.installed
-            ? (providerGatewayRunning ? .ok : .idle)
-            : .warn
-        let pillText = state.codex.installed
-            ? (providerGatewayRunning ? L10n.tr("preferences.provider.codex.healthy") : L10n.tr("preferences.provider.codex.idle"))
-            : L10n.tr("preferences.provider.codex.needs_repair")
+        // A Codex that ignores role providers outranks every other status: the
+        // files can all be present and healthy while nothing routes at all.
+        let codexRoutes = state.codex.routesSubAgents != false
+        let pillTone: ProviderPillTone
+        let pillText: String
+        if !codexRoutes {
+            pillTone = .warn
+            pillText = L10n.tr("preferences.provider.codex.unsupported")
+        } else if state.codex.installed {
+            pillTone = providerGatewayRunning ? .ok : .idle
+            pillText = providerGatewayRunning
+                ? L10n.tr("preferences.provider.codex.healthy")
+                : L10n.tr("preferences.provider.codex.idle")
+        } else {
+            pillTone = .warn
+            pillText = L10n.tr("preferences.provider.codex.needs_repair")
+        }
         let pill = ProviderPillView(tone: pillTone, text: pillText)
         rightStack.addArrangedSubview(pill)
 
@@ -373,12 +384,16 @@ extension PreferencesWindow {
         let tokenStatus = state.tokenAvailable == true
             ? L10n.tr("preferences.provider.codex.check.available")
             : L10n.tr("preferences.provider.codex.check.missing")
-        let summaryText = L10n.tr(
-            "preferences.provider.codex.summary",
-            installedRoles,
-            totalRoles,
-            tokenStatus,
-            connStatus)
+        let summaryText = codexRoutes
+            ? L10n.tr(
+                "preferences.provider.codex.summary",
+                installedRoles,
+                totalRoles,
+                tokenStatus,
+                connStatus)
+            : L10n.tr(
+                "preferences.provider.codex.unsupported_summary",
+                state.codex.cliVersion ?? "")
 
         let summaryLabel = NSTextField(labelWithString: summaryText)
         summaryLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
@@ -515,7 +530,10 @@ extension PreferencesWindow {
                 footStack.trailingAnchor.constraint(equalTo: footRow.trailingAnchor, constant: -16)
             ])
 
-            let footDesc = NSTextField(wrappingLabelWithString: L10n.tr("preferences.provider.codex.footer_desc"))
+            let footDesc = NSTextField(
+                wrappingLabelWithString: codexRoutes
+                    ? L10n.tr("preferences.provider.codex.footer_desc")
+                    : L10n.tr("preferences.provider.codex.unsupported_footer"))
             footDesc.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
             footDesc.textColor = Palette.secondaryText
             footDesc.isEditable = false
@@ -547,6 +565,13 @@ extension PreferencesWindow {
             )
             repairBtn.bezelStyle = .rounded
             repairBtn.controlSize = .regular
+            // Left visible rather than removed: the backend refuses this install
+            // anyway, and a button that vanishes teaches nothing. Disabled with
+            // the reason on hover says why there is nothing to install.
+            repairBtn.isEnabled = codexRoutes
+            if !codexRoutes {
+                repairBtn.toolTip = L10n.tr("preferences.provider.codex.unsupported_footer")
+            }
             btnStack.addArrangedSubview(repairBtn)
 
             footStack.addArrangedSubview(btnStack)

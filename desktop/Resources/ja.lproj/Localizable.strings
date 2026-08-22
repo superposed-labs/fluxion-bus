@@ -435,6 +435,9 @@
 "preferences.provider.codex.not_installed" = "Fluxion は %@ に完全登録されていません。";
 "preferences.provider.codex.healthy" = "正常";
 "preferences.provider.codex.needs_repair" = "要修復";
+"preferences.provider.codex.unsupported" = "非対応";
+"preferences.provider.codex.unsupported_summary" = "Codex %@ ではロールが provider を選べません · サブエージェントはこのセッションのモデルのまま";
+"preferences.provider.codex.unsupported_footer" = "Codex 0.149 でロール単位の model_provider 上書きが廃止されました。fluxion_worker のサブエージェントはご自身の OpenAI モデルで実行され、ゲートウェイには到達しません。Fluxion MCP の run_subagent をご利用ください。";
 "preferences.provider.codex.idle" = "停止中";
 "preferences.provider.codex.manage" = "管理";
 "preferences.provider.codex.hide" = "閉じる";

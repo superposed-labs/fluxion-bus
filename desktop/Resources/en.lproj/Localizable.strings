@@ -438,6 +438,9 @@
 "preferences.provider.codex.not_installed" = "Fluxion is not fully registered in %@.";
 "preferences.provider.codex.healthy" = "Healthy";
 "preferences.provider.codex.needs_repair" = "Needs repair";
+"preferences.provider.codex.unsupported" = "Unsupported";
+"preferences.provider.codex.unsupported_summary" = "Codex %@ does not let a role choose its provider · sub-agents stay on this session's model";
+"preferences.provider.codex.unsupported_footer" = "Codex 0.149 dropped the role-level model_provider override, so a fluxion_worker sub-agent would run on your own OpenAI model and never reach the gateway. Use the Fluxion MCP tool run_subagent instead.";
 "preferences.provider.codex.idle" = "Idle";
 "preferences.provider.codex.manage" = "Manage";
 "preferences.provider.codex.hide" = "Hide";

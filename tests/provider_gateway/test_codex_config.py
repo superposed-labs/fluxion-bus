@@ -18,10 +18,12 @@ from fluxion.provider_gateway.codex_config import (
     apply_plan,
     find_backups,
     is_read_only_role,
+    parse_codex_version,
     plan_install,
     plan_integration,
     render_provider_block,
     render_role_file,
+    supports_role_model_provider,
     uninstall,
     validate_integration_plan,
 )
@@ -382,16 +384,21 @@ def test_validation_uses_an_isolated_codex_home(tmp_path, monkeypatch):
     observed = {}
 
     def fake_run(command, **kwargs):
-        observed["command"] = command
-        observed["home"] = Path(kwargs["env"]["CODEX_HOME"])
-        assert (observed["home"] / "config.toml").exists()
-        assert (observed["home"] / "agents" / "worker.toml").exists()
-
         class Completed:
             returncode = 0
             stdout = "No MCP servers configured"
             stderr = ""
 
+        # The capability probe runs first and carries no CODEX_HOME: it asks the
+        # binary what it is, not what it makes of a config.
+        if command[1] == "--version":
+            Completed.stdout = "codex-cli 0.148.0-alpha.15"
+            return Completed()
+
+        observed["command"] = command
+        observed["home"] = Path(kwargs["env"]["CODEX_HOME"])
+        assert (observed["home"] / "config.toml").exists()
+        assert (observed["home"] / "agents" / "worker.toml").exists()
         return Completed()
 
     monkeypatch.setattr("fluxion.provider_gateway.codex_config.subprocess.run", fake_run)
@@ -528,3 +535,119 @@ def test_planning_refuses_a_role_file_that_would_not_parse(tmp_path, monkeypatch
     )
     with pytest.raises(CodexConfigError, match="role file"):
         build_plan(tmp_path)
+
+
+# ── Codex builds where a role may not choose its provider ─────────────
+#
+# Codex 1a6e07a4fe (#39299) restricted agent roles to a bounded override
+# allowlist that excludes `model_provider`, so a child agent always inherits the
+# parent session's provider. Bisected independently across 79 real sub-agent
+# rollouts: every spawn up to codex-cli 0.148.0-alpha.15 recorded
+# `model_provider = fluxion_worker`, and every spawn from 0.149.0-alpha.4.1 on
+# records `openai`, with the config byte-identical across the boundary.
+def test_the_last_working_codex_is_still_supported():
+    assert supports_role_model_provider((0, 148, 0)) is True
+
+
+def test_the_first_broken_codex_is_not():
+    assert supports_role_model_provider((0, 149, 0)) is False
+
+
+def test_later_codex_versions_stay_unsupported():
+    """The override was removed on purpose, so newer is not a fix."""
+    assert supports_role_model_provider((0, 150, 3)) is False
+    assert supports_role_model_provider((1, 0, 0)) is False
+
+
+def test_an_unreadable_version_is_reported_as_unknown_not_guessed():
+    """Refusing on a parse failure would break builds that are fine; assuming
+    support would restore exactly the silence this check exists to end."""
+    assert supports_role_model_provider(None) is None
+
+
+def test_prerelease_suffixes_are_dropped_rather_than_ordered():
+    """The regression shipped in the alphas, so 0.149.0-alpha.4.1 and 0.149.0
+    are the same build family here."""
+    assert parse_codex_version("codex-cli 0.149.0-alpha.4.1") == (0, 149, 0)
+    assert parse_codex_version("codex-cli 0.148.0-alpha.15") == (0, 148, 0)
+    assert parse_codex_version("codex-cli 0.149.0") == (0, 149, 0)
+
+
+def test_unparseable_version_output_yields_none():
+    assert parse_codex_version("not a version") is None
+
+
+def _fake_codex(monkeypatch, version_output, *, on_mcp_list=None):
+    def fake_run(command, **kwargs):
+        class Completed:
+            returncode = 0
+            stdout = version_output if command[1] == "--version" else "No MCP servers configured"
+            stderr = ""
+
+        if command[1] != "--version" and on_mcp_list is not None:
+            on_mcp_list()
+        return Completed()
+
+    monkeypatch.setattr("fluxion.provider_gateway.codex_config.subprocess.run", fake_run)
+
+
+def test_install_is_refused_on_a_codex_that_would_not_route(tmp_path, monkeypatch):
+    """The config parses fine on 0.149 — that is the whole problem. Refusing
+    here is the alternative to billing the user's OpenAI account in silence."""
+    plan = build_integration_plan(tmp_path)
+    _fake_codex(monkeypatch, "codex-cli 0.149.0-alpha.4.1")
+
+    with pytest.raises(CodexConfigError, match="does not let an agent role choose"):
+        validate_integration_plan(plan, codex_command="/usr/bin/codex")
+
+
+def test_the_refusal_names_the_version_and_a_way_forward(tmp_path, monkeypatch):
+    plan = build_integration_plan(tmp_path)
+    _fake_codex(monkeypatch, "codex-cli 0.149.0-alpha.4.1")
+
+    with pytest.raises(CodexConfigError) as error:
+        validate_integration_plan(plan, codex_command="/usr/bin/codex")
+
+    message = str(error.value)
+    assert "0.149.0" in message
+    assert "run_subagent" in message
+
+
+def test_a_supported_codex_still_validates_normally(tmp_path, monkeypatch):
+    plan = build_integration_plan(tmp_path)
+    _fake_codex(monkeypatch, "codex-cli 0.148.0-alpha.15")
+
+    assert validate_integration_plan(plan, codex_command="/usr/bin/codex")
+
+
+def test_an_unknown_version_does_not_block_the_install(tmp_path, monkeypatch):
+    plan = build_integration_plan(tmp_path)
+    _fake_codex(monkeypatch, "some other tool")
+
+    assert validate_integration_plan(plan, codex_command="/usr/bin/codex")
+
+
+def test_the_escape_hatch_skips_the_capability_check_only(tmp_path, monkeypatch):
+    """Still validated by the real binary; the user has just accepted that
+    sub-agents will not route."""
+    plan = build_integration_plan(tmp_path)
+    reached = []
+    _fake_codex(
+        monkeypatch,
+        "codex-cli 0.149.0-alpha.4.1",
+        on_mcp_list=lambda: reached.append(True),
+    )
+
+    validate_integration_plan(plan, codex_command="/usr/bin/codex", allow_unsupported=True)
+
+    assert reached == [True]
+
+
+def test_apply_refuses_before_writing_anything(tmp_path, monkeypatch):
+    plan = build_integration_plan(tmp_path)
+    _fake_codex(monkeypatch, "codex-cli 0.149.0-alpha.4.1")
+
+    with pytest.raises(CodexConfigError, match="does not let an agent role choose"):
+        apply_integration_plan(plan, codex_command="/usr/bin/codex")
+
+    assert not (tmp_path / "agents" / "worker.toml").exists()

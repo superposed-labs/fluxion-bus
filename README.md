@@ -377,7 +377,17 @@ fluxion-provider init
 fluxion-provider serve
 ```
 
-To configure Codex to route sub-agents to Fluxion:
+> **Routing Codex's own sub-agents is discontinued on Codex 0.149 and later.**
+> Codex stopped letting an agent role choose its `model_provider` (upstream
+> commit `1a6e07a4fe`, #39299 — deliberate hardening, with a test that keeps it
+> closed), so a `fluxion_worker` spawn inherits the parent session's provider,
+> runs on your own OpenAI model, and never reaches the gateway. Nothing errors.
+> Fluxion refuses to install the integration on those versions. Use
+> `mcp__fluxion__run_subagent` instead; it launches local agents directly and is
+> unaffected. Details in
+> [Provider Gateway](docs/provider-gateway.md#client-codex).
+
+On Codex 0.148 and earlier, to route Codex's sub-agents to Fluxion:
 
 1. Open **Fluxion Preferences → Provider Routing**.
 2. Confirm that **Provider Gateway** is running.

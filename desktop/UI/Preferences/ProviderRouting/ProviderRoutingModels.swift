@@ -193,11 +193,22 @@ struct ProviderCodexState: Decodable {
     let managedBlock: Bool
     let configPath: String
     let roles: [ProviderCodexRoleState]
+    /// Whether the installed Codex still lets a role choose its `model_provider`.
+    /// `nil` when the version could not be read. `false` means every file can be
+    /// present and healthy while nothing routes, so it has to outrank `installed`
+    /// everywhere that reports status.
+    let routesSubAgents: Bool?
+    let cliVersion: String?
+
+    /// Installed, and on a Codex that will actually honour it.
+    var routingUsable: Bool { installed && routesSubAgents != false }
 
     enum CodingKeys: String, CodingKey {
         case home, installed, roles
         case managedBlock = "managed_block"
         case configPath = "config_path"
+        case routesSubAgents = "routes_sub_agents"
+        case cliVersion = "cli_version"
     }
 }
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from fluxion.availability import PROVIDERS, detect_executor
+from fluxion.codex_command import resolve_codex_command
 from fluxion.config.settings import Settings
 from fluxion.executors.registry import executor_read_only_support
 from fluxion.mcp_server.model_catalog import list_agent_models_view
@@ -711,10 +712,17 @@ def _codex_state(codex_home: Path | None) -> dict[str, Any]:
                 "path": str(role_path),
             }
         )
+    # A build that ignores `model_provider` leaves every file in place and every
+    # role registered, so `installed` stays true while nothing routes. Report the
+    # capability next to it rather than letting a green checkmark stand alone.
+    version = codex_config.read_codex_version(resolve_codex_command() or "codex")
+    supported = codex_config.supports_role_model_provider(version)
     return {
         "home": str(home),
         "config_path": str(config_path),
         "managed_block": managed,
         "installed": managed and all(item["installed"] and item["readable"] for item in roles),
         "roles": roles,
+        "cli_version": ".".join(str(part) for part in version) if version else "",
+        "routes_sub_agents": supported,
     }

@@ -435,6 +435,9 @@
 "preferences.provider.codex.not_installed" = "Fluxion 尚未完整注册到 %@。";
 "preferences.provider.codex.healthy" = "健康";
 "preferences.provider.codex.needs_repair" = "需修复";
+"preferences.provider.codex.unsupported" = "已不支持";
+"preferences.provider.codex.unsupported_summary" = "Codex %@ 不再允许角色自选 provider · 子 Agent 会留在本会话的模型上";
+"preferences.provider.codex.unsupported_footer" = "Codex 0.149 移除了角色级的 model_provider 覆盖，fluxion_worker 子 Agent 会跑在你自己的 OpenAI 模型上，永远到不了网关。请改用 Fluxion MCP 的 run_subagent 工具。";
 "preferences.provider.codex.idle" = "已停用";
 "preferences.provider.codex.manage" = "管理";
 "preferences.provider.codex.hide" = "隐藏";
