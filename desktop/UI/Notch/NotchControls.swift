@@ -287,6 +287,9 @@ struct CircularProgressRing: View {
                     Text(subtitle.uppercased())
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.8)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: isDual ? 56 : 72)
                         .foregroundColor(isDual ? color.opacity(0.75) : Color.white.opacity(0.42))
                         .padding(.top, isDual && secondaryPool != nil ? 2 : 3)
                     if isDual, let other = secondaryPool {
