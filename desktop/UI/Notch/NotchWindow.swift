@@ -121,30 +121,18 @@ func notchWindowRowTitle(_ snapshot: QuotaWindowSnapshot?) -> String {
 }
 
 func notchRingSubtitle(for snapshot: QuotaWindowSnapshot) -> String {
-    let m = snapshot.window.windowMinutes
-    let raw = ((snapshot.window.label ?? "") + " " + (snapshot.window.key ?? "")).lowercased()
-    let is5h = m == 300 || raw.contains("5h") || raw.contains("5-hour")
-    let isWeekly = m == 10080 || raw.contains("7d") || raw.contains("weekly") || raw.contains("week")
-
-    if snapshot.idle {
-        if is5h {
-            return L10n.tr("notch.five_hour_window")
-        }
-        if isWeekly {
-            return "WEEKLY WINDOW"
-        }
-        let length = QuotaFormatter.windowLengthText(windowMinutes: snapshot.window.windowMinutes, fallbackLabel: nil)
-        return "\(length.uppercased()) WINDOW"
-    } else {
-        if is5h {
-            return L10n.tr("notch.five_hour_left")
-        }
-        if isWeekly {
-            return L10n.tr("notch.weekly_left")
-        }
-        let length = QuotaFormatter.windowLengthText(windowMinutes: snapshot.window.windowMinutes, fallbackLabel: nil)
-        return "\(length.uppercased()) LEFT"
-    }
+    let fallback = [snapshot.window.label, snapshot.window.key]
+        .compactMap { $0 }
+        .joined(separator: " ")
+    let length = QuotaFormatter.windowLengthText(
+        windowMinutes: snapshot.window.windowMinutes,
+        fallbackLabel: fallback
+    )
+    // The ring's headline is always remaining quota, so keep the subtitle as
+    // the stable duration + metric ("5H LEFT", "7D LEFT", "30D LEFT").
+    // Switching idle windows to "... WINDOW" made the weekly label both wider
+    // and visually jumpy even though the percentage's meaning never changed.
+    return "\(length.uppercased()) LEFT"
 }
 
 func notchSoloCardNonFiveHourTitle(for snapshot: QuotaWindowSnapshot?) -> String {

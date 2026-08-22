@@ -954,7 +954,7 @@ extension NotchIslandView {
         let lockReason = (u.weekZero && u.fiveZero) ? L10n.tr("notch.all_spent") : (u.weekZero ? L10n.tr("notch.weekly_cap") : L10n.tr("notch.five_hour_empty"))
         let subtitle = (u.mode == .locked || u.mode == .recovering)
             ? (u.mode == .recovering ? L10n.tr("notch.recovering.upper") : lockReason)
-            : (u.five.idle ? L10n.tr("notch.five_hour_window") : L10n.tr("notch.five_hour_left"))
+            : notchRingSubtitle(for: u.five)
         // When locked, headline the blocking window's countdown (weekly outlasts 5h).
         let lockTimer = u.weekZero ? timerString(for: u.weekly) : timerString(for: u.five)
         VStack(spacing: 0) {
