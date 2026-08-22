@@ -322,6 +322,13 @@ fluxion-provider serve
 fluxion-provider install-codex-config
 ```
 
+> **Codex 0.149 及以后版本已不再支持路由 Codex 自己的子 Agent。** Codex 不再允许
+> agent role 自选 `model_provider`（上游提交 `1a6e07a4fe`、#39299，是带回归测试的
+> 刻意收紧），子 Agent 会继承父会话的 provider，跑在你自己的 OpenAI 模型上，永远
+> 到不了网关，而且全程不报错。Fluxion 在这些版本上会拒绝安装。请改用
+> `mcp__fluxion__run_subagent`——它直接拉起本地 Agent，不受影响。详见
+> [Provider 网关指南](docs/provider-gateway.md#client-codex)。
+
 详细信息、安全鉴权及诊断工具请参阅 [Provider 网关指南](docs/provider-gateway.md)。
 
 ## 文档目录

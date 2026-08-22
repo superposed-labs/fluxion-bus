@@ -169,13 +169,20 @@ When editing an existing config file, add the `fluxion` entry without
 disturbing other servers.
 
 This step registers the Fluxion MCP server only. It does not install Fluxion's
-native Codex roles. A Codex user who also wants Codex's own `spawn_agent` to
-route `fluxion_worker`, `fluxion_explorer`, `fluxion_reviewer`, or
-`fluxion_auto` through the Provider Gateway should complete the separate
-[Codex Integration installation](provider-gateway.md#client-codex). In the
-macOS app, that is **Preferences → Provider Routing → Codex Integration →
-Install / Repair**. The two integrations are optional and can be used
-independently.
+native Codex roles — and on Codex 0.149 and later it does not need to, because
+that integration no longer works. Codex stopped letting an agent role choose its
+own `model_provider`, so `spawn_agent` with `fluxion_worker` inherits the parent
+session's provider and never reaches the Provider Gateway, silently. Fluxion
+refuses to install it on those versions; see
+[Client: Codex](provider-gateway.md#client-codex) for the detail and the
+evidence. On Codex 0.148 and earlier the separate
+[Codex Integration installation](provider-gateway.md#client-codex) is still
+available — in the macOS app, **Preferences → Provider Routing → Codex
+Integration → Install / Repair**.
+
+The MCP registration you just made is the supported way to run Fluxion agents
+from Codex on any version: `mcp__fluxion__run_subagent` launches a local agent
+directly and does not depend on Codex's provider resolution.
 
 MCP tools load when the client starts a session, so the registration cannot be
 exercised from the current session. Verification of the registration itself

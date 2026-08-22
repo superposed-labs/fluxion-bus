@@ -88,6 +88,34 @@ A request with no such header — every Anthropic Messages request — takes the
 
 ## Client: Codex
 
+> **Discontinued on Codex 0.149 and later.** Codex no longer lets an agent role
+> choose its own `model_provider`; a sub-agent inherits the provider of the
+> session that spawned it, so `spawn_agent` with `fluxion_worker` runs on your
+> own OpenAI model and bills that account while the gateway sits idle. Nothing
+> errors — the role registers and the sub-agent answers, just not from the model
+> you chose.
+>
+> This is deliberate upstream hardening, not a bug to wait out: codex commit
+> `1a6e07a4fe` ("Restrict agent roles to bounded configuration overrides",
+> #39299) replaced role application with an allowlist covering
+> `developer_instructions`, `model`, reasoning effort/summary/verbosity,
+> `personality`, `service_tier`, and capability *reductions* — and its
+> `apply_role_cannot_expand_parent_authority` test asserts a role controls none
+> of `model_provider`, `openai_base_url`, `chatgpt_base_url`, `approval_policy`,
+> `sandbox_mode`, `notify`, `apps`, `mcp_servers`. Pointing a child agent's
+> traffic at another endpoint is the thing that test exists to prevent. No
+> config-level workaround exists: the role file, the `[agents.<name>]
+> .config_file` overlay, and a `[profiles.<name>]` selection were each tried
+> against a real 0.149 binary and each produced `model_provider = openai`.
+>
+> Fluxion therefore refuses to install this integration on 0.149 and later.
+> **Use [`run_subagent`](#mcp-registration-and-codex-integration-are-different)
+> from the Fluxion MCP server instead** — it launches local agents directly and
+> does not depend on Codex's provider resolution at all.
+>
+> The instructions below still apply to Codex 0.148 and earlier, where the
+> role-level override is honoured.
+
 ### Install
 
 The recommended path on macOS is the Fluxion app:
@@ -134,10 +162,14 @@ Fluxion roles.
 Neither installation implies the other, and users may enable either one
 independently:
 
-| Integration | How it is invoked | What must be installed |
-| :--- | :--- | :--- |
-| Fluxion MCP | `mcp__fluxion__run_subagent` | MCP server registration |
-| Native Codex roles | `spawn_agent` with `fluxion_worker`, etc. | Codex Integration and Provider Gateway |
+| Integration | How it is invoked | What must be installed | Status |
+| :--- | :--- | :--- | :--- |
+| Fluxion MCP | `mcp__fluxion__run_subagent` | MCP server registration | Supported |
+| Native Codex roles | `spawn_agent` with `fluxion_worker`, etc. | Codex Integration and Provider Gateway | Codex ≤ 0.148 only |
+
+On Codex 0.149 and later only the MCP row works. It is unaffected by the change
+above because it never asks Codex to route anything: Fluxion launches the local
+agent itself.
 
 ### Verify the installation
 
@@ -410,6 +442,8 @@ positive integers.
 **`Agent errored: … the delegated task arrived encrypted`.** The parent is running a v2 model. Start a new session on a v1 model, or keep the model and run `fluxion-provider install-codex-catalog`. Changing models inside the same conversation does not help — the version is fixed when the thread starts. See [The parent model must use multi-agent v1](#the-parent-model-must-use-multi-agent-v1).
 
 **The sub-agent never ran at all, and nothing errored.** The plain-language role name selected Codex's built-in role. Name `fluxion_worker` explicitly.
+
+**The sub-agent ran, answered well, and the gateway logged nothing.** On Codex 0.149 and later, a role can no longer choose its provider, so the sub-agent inherited the parent session's and never contacted the gateway — see the notice under [Client: Codex](#client-codex). Confirm it from the rollout rather than from the answer: the sub-agent's `session_meta.model_provider` reads `openai` instead of `fluxion_worker`. That field is written when the thread is created, before any request goes out, so `openai` means the provider was never selected — not that it was selected and unreachable. `fluxion-provider preferences` reports the same thing as `codex.routes_sub_agents: false`.
 
 **A model vanished from Codex, or a new one never showed up.** If you set `model_catalog_json`, that file *is* your model list — it replaces the server's rather than extending it. `fluxion-provider refresh-codex-catalog --check` compares it against `~/.codex/models_cache.json` and names what is missing.
 

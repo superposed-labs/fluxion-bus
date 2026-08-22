@@ -322,6 +322,15 @@ Codex クライアントを一括設定する：
 fluxion-provider install-codex-config
 ```
 
+> **Codex 0.149 以降では、Codex 自身のサブエージェントのルーティングは提供を終了しました。**
+> Codex はエージェントロールが独自の `model_provider` を指定することを許可しなくなり
+> （上流コミット `1a6e07a4fe`、#39299。回帰テスト付きの意図的な制限です）、サブエージェントは
+> 親セッションの provider を継承します。その結果、ご自身の OpenAI モデルで実行されて
+> ゲートウェイには到達せず、しかもエラーは一切出ません。Fluxion はこれらのバージョンでは
+> インストールを拒否します。代わりに `mcp__fluxion__run_subagent` をご利用ください。
+> ローカルエージェントを直接起動するため影響を受けません。詳細は
+> [Provider ゲートウェイガイド](docs/provider-gateway.md#client-codex) を参照してください。
+
 詳細、セキュリティ認証、診断ツールについては [Provider ゲートウェイガイド](docs/provider-gateway.md) を参照してください。
 
 ## ドキュメント

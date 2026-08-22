@@ -31,6 +31,7 @@ rejected key costs the user their editor.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -189,6 +190,122 @@ def read_only_roles() -> frozenset[str]:
 
 def is_read_only_role(role: str) -> bool:
     return role.strip().lower() in read_only_roles()
+
+
+# The first Codex build in which an agent role may no longer set its own
+# `model_provider`. This is a deliberate security boundary, not a regression —
+# do not plan around it being lifted.
+#
+# Everything this module generates rests on one line: `model_provider` in the
+# role file. Codex closed that door in `1a6e07a4fe`, "Restrict agent roles to
+# bounded configuration overrides" (#39299, 2026-08-18), whose stated purpose is
+# that "agent roles should customize a child agent without expanding the
+# authority or changing the provider configuration inherited from its parent
+# session". A sub-agent's provider is now copied from the live parent turn and
+# nothing downstream may alter it:
+#
+#     // core/src/tools/handlers/multi_agents_common.rs
+#     config.model_provider = turn.provider.info().clone();
+#
+# Roles are applied through `AgentRoleOverrides` (core/src/agent/role.rs), a
+# hand-written allowlist — `developer_instructions`, `model`, reasoning effort,
+# summary, verbosity, `personality`, `service_tier`, plus features and skills it
+# may only switch *off*. Everything else in a role file is read and dropped. The
+# commit before it had the opposite default (`preserve_current_provider =
+# role_layer_toml.get("model_provider").is_none()`), which is exactly the lever
+# Fluxion was built on.
+#
+# The threat model names us. `role_tests.rs::apply_role_cannot_expand_parent_
+# authority` writes a role file it calls "hostile" and asserts a role controls
+# none of `openai_base_url`, `chatgpt_base_url`, `model_provider`,
+# `approval_policy`, `sandbox_mode`, `notify`, `apps`, `mcp_servers`. Pointing a
+# child agent's traffic at a local HTTP endpoint is the attack that test exists
+# to stop; that Fluxion does it with the user's consent is not something Codex
+# can tell from the file.
+#
+# Bisected independently before the source was read: across 79 real sub-agent
+# rollouts, every spawn up to codex-cli 0.148.0-alpha.15 recorded
+# `session_meta.model_provider = fluxion_worker`, and every spawn from
+# 0.149.0-alpha.4.1 on records `openai`, with the config byte-identical across
+# the boundary.
+#
+# No config-level workaround exists, confirmed by experiment against
+# 0.149.0-alpha.4.1 and then by reading the source. Three spellings were tried,
+# each spawning a real sub-agent under `multi_agent_version = v1` with a
+# `gpt-5.6-sol` parent, and each landing on `model_provider = openai`:
+#
+#   - the role file this module writes (`model_provider` in agents/<role>.toml);
+#   - `[agents.<name>].config_file` pointing at a config overlay — its `model`
+#     and `developer_instructions` *do* apply, which is how we know the overlay
+#     was read, and its `model_provider` does not;
+#   - an overlay selecting a `[profiles.<name>]` that carries the provider —
+#     dead twice over, since profile resolution was removed in `fd72e99384` and
+#     `spawn_agent` takes no profile argument.
+#
+# So there is nothing to migrate to. Refusing the install is the honest move: the
+# alternative is writing a config that reads as if it routes and quietly bills
+# the user's OpenAI account instead.
+FIRST_UNSUPPORTED_CODEX_VERSION = (0, 149, 0)
+
+_ROLE_PROVIDER_UNSUPPORTED = (
+    "Codex {version} does not let an agent role choose its own `model_provider`: a "
+    "sub-agent inherits the parent session's provider, and Codex dropped the role-level "
+    "override deliberately (codex 1a6e07a4fe, #39299) so that a role file cannot "
+    "redirect a child agent's traffic. Every Fluxion sub-agent would therefore run on "
+    "the parent session's model and bill that account instead of reaching the gateway, "
+    "with no error anywhere. Installing this configuration would not route anything, "
+    "and no config-level workaround exists — this is a security boundary, not a bug to "
+    "wait out. Use Fluxion's MCP `run_subagent` tool instead, which does not depend on "
+    "Codex role providers. Pass allow_unsupported=True to install anyway (the role "
+    "files still carry model, effort, and instructions)."
+)
+
+
+def parse_codex_version(text: str) -> tuple[int, int, int] | None:
+    """Pull the release triple out of `codex --version` output.
+
+    Pre-release suffixes are dropped rather than ordered: `0.149.0-alpha.4.1`
+    and `0.149.0` are the same build family for our purposes, and the regression
+    landed in the alphas first.
+    """
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def supports_role_model_provider(version: tuple[int, int, int] | None) -> bool | None:
+    """Whether this Codex lets an agent role choose its own `model_provider`.
+
+    Returns None for a version we could not read. Unknown is reported rather
+    than guessed: refusing an install over an unparseable version string would
+    break users whose build is fine, and assuming support would restore exactly
+    the silence this check exists to end.
+    """
+    if version is None:
+        return None
+    return version < FIRST_UNSUPPORTED_CODEX_VERSION
+
+
+def read_codex_version(
+    command: str,
+    *,
+    timeout_seconds: float = 10,
+) -> tuple[int, int, int] | None:
+    """Ask a real binary for its version, or None when it cannot be asked."""
+    try:
+        completed = subprocess.run(
+            [command, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # `codex --version` exits non-zero on some builds while still printing the
+    # version, so the output is parsed regardless of the return code.
+    return parse_codex_version(f"{completed.stdout}\n{completed.stderr}")
 
 
 class CodexConfigError(RuntimeError):
@@ -514,13 +631,25 @@ def validate_integration_plan(
     *,
     codex_command: str | None = None,
     timeout_seconds: float = 20,
+    allow_unsupported: bool = False,
 ) -> str:
-    """Validate the exact planned tree with a real Codex binary."""
+    """Validate the exact planned tree with a real Codex binary.
+
+    Two different questions, in the order that matters. Whether the config
+    *parses* is checked second; whether this Codex would *act on it* is checked
+    first, because a build that ignores `model_provider` accepts our file
+    happily and then routes nothing.
+    """
     command = codex_command or resolve_codex_command()
     if not command:
         raise CodexConfigError(
             "Codex CLI was not found. Install or open Codex once, then try again."
         )
+    if not allow_unsupported:
+        version = read_codex_version(command)
+        if supports_role_model_provider(version) is False:
+            printable = ".".join(str(part) for part in version)  # type: ignore[union-attr]
+            raise CodexConfigError(_ROLE_PROVIDER_UNSUPPORTED.format(version=printable))
     with tempfile.TemporaryDirectory(prefix="fluxion-codex-validate-") as raw_home:
         home = Path(raw_home)
         target_config = home / "config.toml"
@@ -565,10 +694,17 @@ def apply_integration_plan(
     *,
     validate_with_codex: bool = True,
     codex_command: str | None = None,
+    allow_unsupported: bool = False,
 ) -> CodexIntegrationResult:
     """Apply a Preferences plan atomically and roll every changed file back."""
     validation_output = (
-        validate_integration_plan(plan, codex_command=codex_command) if validate_with_codex else ""
+        validate_integration_plan(
+            plan,
+            codex_command=codex_command,
+            allow_unsupported=allow_unsupported,
+        )
+        if validate_with_codex
+        else ""
     )
     targets = [item for item in plan.files if item.action in {"write", "rewrite"}]
     originals: dict[Path, bytes | None] = {}

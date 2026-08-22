@@ -645,6 +645,7 @@ def _codex_integration_apply(args: argparse.Namespace) -> int:
     result = codex_config.apply_integration_plan(
         plan,
         validate_with_codex=not args.skip_codex_validation,
+        allow_unsupported=args.allow_unsupported_codex,
     )
     print(
         json.dumps(
@@ -1012,6 +1013,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--skip-codex-validation",
         action="store_true",
         help="Skip validation by the installed Codex CLI (tests and recovery only).",
+    )
+    integration_apply_parser.add_argument(
+        "--allow-unsupported-codex",
+        action="store_true",
+        help=(
+            "Install even on a Codex build that ignores a role's model_provider. "
+            "Sub-agents will run on the parent session's model and bill that account "
+            "instead of routing through Fluxion."
+        ),
     )
     integration_apply_parser.set_defaults(handler=_codex_integration_apply)
 
