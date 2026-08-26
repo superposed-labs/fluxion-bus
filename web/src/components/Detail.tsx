@@ -223,7 +223,10 @@ function ClampedSummary({ text }: { text: string }): JSX.Element {
 
   return (
     <div className="detail-title" style={{ flex: 1 }}>
-      <div ref={bodyRef} className={expanded ? undefined : "detail-title-clamp"}>
+      <div
+        ref={bodyRef}
+        className={expanded ? "detail-title-expanded scroll" : "detail-title-clamp"}
+      >
         <MarkdownText
           text={text}
           empty={<span className="muted">{t("common.noSummary")}</span>}
