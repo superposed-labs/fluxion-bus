@@ -690,8 +690,12 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         let bareRing: CGFloat = model.gaugeValue == "inside" ? 18 : 12
         let presenter = NotchQuotaPresenter(now: Date())
         func statusUnitW(_ p: ProviderUsage) -> CGFloat {
+            let mode = presenter.quotaState(for: p).mode
+            if mode == .credits {
+                return 56
+            }
             guard hidesSide else { return 48 }
-            return presenter.quotaState(for: p).mode == .healthy ? bareRing : 48
+            return mode == .healthy ? bareRing : 48
         }
 
         switch model.silentStyle {
@@ -711,12 +715,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             }
         case "lowest":
             leftW = 0
+            let maxUnitW = model.providers.map(statusUnitW).max() ?? 48
             if hidesSide {
                 let allHealthy = !model.providers.isEmpty
                     && model.providers.allSatisfy { presenter.quotaState(for: $0).mode == .healthy }
-                rightW = allHealthy ? bareRing : 48
+                rightW = allHealthy ? bareRing : maxUnitW
             } else {
-                rightW = 48
+                rightW = maxUnitW
             }
         default: // "all"
             if notchUsesSoloDualWindowGlance(model.providers), let provider = model.providers.first {
@@ -747,7 +752,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 // (a blocked pool's countdown or credits) restores the lanes.
                 let state = presenter.quotaState(for: provider)
                 let bad = state.mode != .healthy || !state.blockedPools.isEmpty
-                let unit = (hidesSide && !bad) ? bareRing : 48
+                let unit: CGFloat = state.mode == .credits ? 56 : ((hidesSide && !bad) ? bareRing : 48)
                 leftW = unit
                 rightW = unit
             } else if count == 1 {

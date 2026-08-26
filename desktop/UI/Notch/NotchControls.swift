@@ -226,23 +226,25 @@ struct CircularProgressRing: View {
                             .tracking(0.8)
                     }
                 } else if mode == .credits, let creds = credits {
-                    HStack(spacing: 4) {
-                        CoinIcon(size: 10)
-                        Text(
-                            QuotaFormatter.formatCreditBalance(
-                                creds,
-                                currency: creditsIsDollar ? "USD" : nil
-                            )
-                        )
-                            .font(.system(size: 21, weight: .bold, design: .default))
+                    let balanceText = QuotaFormatter.formatCreditBalance(
+                        creds,
+                        currency: creditsIsDollar ? "USD" : nil
+                    )
+                    Text(balanceText)
+                        .font(.system(size: balanceText.count > 6 ? 17 : 20, weight: .bold, design: .default))
                         .foregroundColor(.white)
                         .tracking(-0.5)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.horizontal, 8)
+                    HStack(spacing: 3) {
+                        CoinIcon(size: 7)
+                        Text(L10n.tr("notch.on_credits"))
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(Color(NSColor.systemGreen))
+                            .tracking(0.8)
                     }
-                    Text(L10n.tr("notch.on_credits"))
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color(NSColor.systemGreen))
-                        .tracking(0.8)
-                        .padding(.top, 3)
+                    .padding(.top, 3)
                 } else if mode == .locked {
                     VStack(spacing: 4) {
                         Image(systemName: "lock.fill")

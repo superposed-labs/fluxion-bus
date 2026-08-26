@@ -661,14 +661,16 @@ extension NotchIslandView {
         let visual = providerVisual(for: p.provider)
         let state = quotaState(for: p)
         return HStack(spacing: 5) {
-            glanceGauge(
-                mode: state.mode,
-                remaining: state.bindingRemaining,
-                brandColor: visual.brandColor,
-                label: gaugeNumeralInside && state.mode == .healthy
-                    ? QuotaFormatter.remainingPercentText(state.bindingRemaining) : nil,
-                size: gaugeNumeralInside ? 18 : 12
-            )
+            if state.mode != .credits {
+                glanceGauge(
+                    mode: state.mode,
+                    remaining: state.bindingRemaining,
+                    brandColor: visual.brandColor,
+                    label: gaugeNumeralInside && state.mode == .healthy
+                        ? QuotaFormatter.remainingPercentText(state.bindingRemaining) : nil,
+                    size: gaugeNumeralInside ? 18 : 12
+                )
+            }
 
             if showName {
                 Text(providerDisplayName(for: p.provider))
@@ -684,7 +686,7 @@ extension NotchIslandView {
                     .fixedSize(horizontal: true, vertical: false)
             } else if state.mode == .credits, let credits = state.credits {
                 HStack(spacing: 3) {
-                    CoinIcon(size: 7)
+                    CoinIcon(size: 8)
                     Text(
                         QuotaFormatter.formatCompactCreditBalance(
                             credits,
@@ -815,16 +817,18 @@ extension NotchIslandView {
     @ViewBuilder
     func poolStatusLabel(_ u: SoloPoolUnit) -> some View {
         HStack(spacing: 5) {
-            glanceGauge(
-                mode: u.mode,
-                remaining: u.remaining,
-                brandColor: u.color,
-                label: gaugeNumeralInside && u.mode == .healthy ? "\(Int(u.remaining))" : nil,
-                size: gaugeNumeralInside ? 18 : 12
-            )
+            if u.mode != .credits {
+                glanceGauge(
+                    mode: u.mode,
+                    remaining: u.remaining,
+                    brandColor: u.color,
+                    label: gaugeNumeralInside && u.mode == .healthy ? "\(Int(u.remaining))" : nil,
+                    size: gaugeNumeralInside ? 18 : 12
+                )
+            }
             if u.mode == .credits, let credits = u.credits {
                 HStack(spacing: 3) {
-                    CoinIcon(size: 7)
+                    CoinIcon(size: 8)
                     Text("\(Int(credits))")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(Color(NSColor.systemGreen))
