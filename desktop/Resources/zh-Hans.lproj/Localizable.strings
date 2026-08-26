@@ -287,6 +287,7 @@
 "preferences.notify.wechat.desc" = "配额窗口重置时通知给 bot 发过消息的微信用户。";
 "preferences.notify.line.desc" = "配额窗口重置时通知允许的 LINE 用户。";
 "preferences.notify.requires_channel" = "需先在「消息」设置中启用 %@。";
+"preferences.notify.paused_channel" = "%@ 已禁用，提醒已暂停；重新启用后将恢复发送。";
 "preferences.notify.macos.desc" = "配额重置、点数发放和过期预警时在 macOS 通知中心显示提醒。";
 "notification.quota_reset.title" = "配额重置";
 "notification.credit_grant.title" = "点数发放";

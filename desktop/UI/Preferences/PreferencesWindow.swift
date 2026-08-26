@@ -817,7 +817,10 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         toggle.isEnabled = channelOn
         var desc = L10n.tr(descKey)
         if !channelOn {
-            desc += " " + L10n.tr("preferences.notify.requires_channel", channelName)
+            let stateKey = toggle.state == .on
+                ? "preferences.notify.paused_channel"
+                : "preferences.notify.requires_channel"
+            desc += " " + L10n.tr(stateKey, channelName)
         }
         row.descLabel?.stringValue = desc
         row.titleLabel.textColor = channelOn ? Palette.primaryText : Palette.secondaryText

@@ -287,6 +287,7 @@
 "preferences.notify.wechat.desc" = "クォータウィンドウがリセットされた時に bot にメッセージした WeChat ユーザーへ通知します。";
 "preferences.notify.line.desc" = "クォータウィンドウがリセットされた時に許可済み LINE ユーザーへ通知します。";
 "preferences.notify.requires_channel" = "先に「メッセージ」設定で %@ を有効にしてください。";
+"preferences.notify.paused_channel" = "%@ が無効な間は通知を一時停止し、再度有効にすると配信を再開します。";
 "preferences.notify.macos.desc" = "クォータリセット・クレジット付与・失効警告時に macOS 通知センターへアラートを表示します。";
 "notification.quota_reset.title" = "クォータリセット";
 "notification.credit_grant.title" = "クレジット付与";

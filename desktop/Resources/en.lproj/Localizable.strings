@@ -290,6 +290,7 @@
 "preferences.notify.wechat.desc" = "Notify WeChat users who have messaged the bot when a quota window resets.";
 "preferences.notify.line.desc" = "Notify allowed LINE users when a quota window resets.";
 "preferences.notify.requires_channel" = "Enable %@ in Messaging settings first.";
+"preferences.notify.paused_channel" = "Paused while %@ is disabled; delivery resumes when it is re-enabled.";
 "preferences.notify.macos.desc" = "Show macOS Notification Center alerts on quota reset, credit grants, and expiry warnings.";
 "notification.quota_reset.title" = "Quota Reset";
 "notification.credit_grant.title" = "Credit Grant";
