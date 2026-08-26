@@ -501,15 +501,15 @@ class SchedulerDaemon:
     def _notify_anchor_failed(self, pool_key: str, attempts: int) -> None:
         body = t(self._ui_locale(), "autoping.anchor_failed", pool=pool_key, attempts=attempts)
         text = f"⚠️ [Fluxion Auto Ping] {body}"
-        if getattr(self._settings, "menu_slack_notify_refresh", False):
+        if self._should_notify_channel("slack"):
             self._notify_slack(text)
-        if getattr(self._settings, "menu_telegram_notify_refresh", False):
+        if self._should_notify_channel("telegram"):
             self._notify_telegram(text)
-        if getattr(self._settings, "menu_qqbot_notify_refresh", False):
+        if self._should_notify_channel("qqbot"):
             self._notify_qqbot(text)
-        if getattr(self._settings, "menu_feishu_notify_refresh", False):
+        if self._should_notify_channel("feishu"):
             self._notify_feishu(text)
-        if getattr(self._settings, "menu_wechat_notify_refresh", False):
+        if self._should_notify_channel("wechat"):
             self._notify_wechat(text)
         if self._should_notify_macos():
             self._notify_macos("Auto Ping Failed", text)
@@ -713,12 +713,12 @@ class SchedulerDaemon:
         if not getattr(self._settings, "notify_credit_grant", False):
             return
 
-        notify_slack = getattr(self._settings, "menu_slack_notify_refresh", False)
-        notify_telegram = getattr(self._settings, "menu_telegram_notify_refresh", False)
-        notify_qqbot = getattr(self._settings, "menu_qqbot_notify_refresh", False)
-        notify_feishu = getattr(self._settings, "menu_feishu_notify_refresh", False)
-        notify_wechat = getattr(self._settings, "menu_wechat_notify_refresh", False)
-        notify_line = getattr(self._settings, "menu_line_notify_refresh", False)
+        notify_slack = self._should_notify_channel("slack")
+        notify_telegram = self._should_notify_channel("telegram")
+        notify_qqbot = self._should_notify_channel("qqbot")
+        notify_feishu = self._should_notify_channel("feishu")
+        notify_wechat = self._should_notify_channel("wechat")
+        notify_line = self._should_notify_channel("line")
         notify_macos = self._should_notify_macos()
         if not (
             notify_slack
@@ -815,12 +815,12 @@ class SchedulerDaemon:
         if credits is None:
             return
 
-        notify_slack = getattr(self._settings, "menu_slack_notify_refresh", False)
-        notify_telegram = getattr(self._settings, "menu_telegram_notify_refresh", False)
-        notify_qqbot = getattr(self._settings, "menu_qqbot_notify_refresh", False)
-        notify_feishu = getattr(self._settings, "menu_feishu_notify_refresh", False)
-        notify_wechat = getattr(self._settings, "menu_wechat_notify_refresh", False)
-        notify_line = getattr(self._settings, "menu_line_notify_refresh", False)
+        notify_slack = self._should_notify_channel("slack")
+        notify_telegram = self._should_notify_channel("telegram")
+        notify_qqbot = self._should_notify_channel("qqbot")
+        notify_feishu = self._should_notify_channel("feishu")
+        notify_wechat = self._should_notify_channel("wechat")
+        notify_line = self._should_notify_channel("line")
         notify_macos = self._should_notify_macos()
         if not (
             notify_slack
@@ -993,7 +993,31 @@ class SchedulerDaemon:
             self._settings, "menu_macos_notify_refresh", True
         )
 
+    def _channel_enabled(self, channel: str) -> bool:
+        # Fail closed if an injected/legacy settings object does not expose the
+        # integration flag. Delivery requires an explicit enabled state.
+        return bool(getattr(self._settings, f"{channel}_enabled", False))
+
+    def _should_notify_channel(self, channel: str) -> bool:
+        """Return the effective notification state for an IM channel.
+
+        The reminder toggle is a durable user preference. Disabling the
+        integration pauses delivery without erasing that preference, so
+        re-enabling the integration restores future notifications.
+        """
+        return self._channel_enabled(channel) and bool(
+            getattr(self._settings, f"menu_{channel}_notify_refresh", False)
+        )
+
+    def _skip_disabled_channel(self, channel: str) -> bool:
+        if self._channel_enabled(channel):
+            return False
+        log.info("%s notification skipped: integration is disabled.", channel.capitalize())
+        return True
+
     def _notify_slack(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        if self._skip_disabled_channel("slack"):
+            return
         token = self._settings.slack_bot_token.strip()
         if not token:
             log.warning("Slack notification skipped: SLACK_BOT_TOKEN is not set.")
@@ -1068,6 +1092,8 @@ class SchedulerDaemon:
                 log.error("Failed to send Slack notification to %s: %s", ch, exc)
 
     def _notify_telegram(self, text: str, *, kind: str = "quota-reset") -> None:
+        if self._skip_disabled_channel("telegram"):
+            return
         token = self._settings.telegram_bot_token.strip()
         if not token:
             log.warning("Telegram notification skipped: TELEGRAM_BOT_TOKEN is not set.")
@@ -1110,6 +1136,8 @@ class SchedulerDaemon:
             log.info("Sent Telegram %s notification to %d user(s)", kind, sent)
 
     def _notify_wechat(self, text: str, *, kind: str = "quota-reset") -> None:
+        if self._skip_disabled_channel("wechat"):
+            return
         from fluxion.channels.wechat.context_store import ContextTokenStore
         from fluxion.channels.wechat.credential_store import CredentialStore
         from fluxion.channels.wechat.ilink_client import ILinkClient
@@ -1147,6 +1175,8 @@ class SchedulerDaemon:
             log.info("Sent WeChat %s notification to %d user(s)", kind, sent)
 
     def _notify_line(self, text: str, *, kind: str = "quota-reset") -> None:
+        if self._skip_disabled_channel("line"):
+            return
         token = self._settings.line_channel_access_token.strip()
         if not token:
             log.warning("LINE notification skipped: LINE_CHANNEL_ACCESS_TOKEN is not set.")
@@ -1189,6 +1219,8 @@ class SchedulerDaemon:
             log.info("Sent LINE %s notification to %d user(s)", kind, sent)
 
     def _notify_qqbot(self, text: str, *, kind: str = "quota-reset") -> None:
+        if self._skip_disabled_channel("qqbot"):
+            return
         app_id = self._settings.qqbot_app_id.strip()
         client_secret = self._settings.qqbot_client_secret.strip()
         if not app_id or not client_secret:
@@ -1222,6 +1254,8 @@ class SchedulerDaemon:
             log.info("Sent QQ %s notification to %d user(s)", kind, sent)
 
     def _notify_feishu(self, text: str, *, kind: str = "quota-reset") -> None:
+        if self._skip_disabled_channel("feishu"):
+            return
         app_id = self._settings.feishu_app_id.strip()
         app_secret = self._settings.feishu_app_secret.strip()
         if not app_id or not app_secret:
@@ -1268,12 +1302,12 @@ class SchedulerDaemon:
         log.info("firing schedule %s (%s): %s", rule.id, rule.name, reason)
 
         # Send quota-reset notifications to whichever channels are enabled.
-        notify_slack = getattr(self._settings, "menu_slack_notify_refresh", False)
-        notify_telegram = getattr(self._settings, "menu_telegram_notify_refresh", False)
-        notify_qqbot = getattr(self._settings, "menu_qqbot_notify_refresh", False)
-        notify_feishu = getattr(self._settings, "menu_feishu_notify_refresh", False)
-        notify_wechat = getattr(self._settings, "menu_wechat_notify_refresh", False)
-        notify_line = getattr(self._settings, "menu_line_notify_refresh", False)
+        notify_slack = self._should_notify_channel("slack")
+        notify_telegram = self._should_notify_channel("telegram")
+        notify_qqbot = self._should_notify_channel("qqbot")
+        notify_feishu = self._should_notify_channel("feishu")
+        notify_wechat = self._should_notify_channel("wechat")
+        notify_line = self._should_notify_channel("line")
         notify_macos = self._should_notify_macos()
         if rule.trigger.type == "quota_refresh" and (
             notify_slack

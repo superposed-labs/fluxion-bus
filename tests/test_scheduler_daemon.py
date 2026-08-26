@@ -60,6 +60,31 @@ def _daemon(tmp_path, rule, *, runner=None, usage=None, settings=None):
     return daemon, store, runner, usage
 
 
+def test_disabled_im_integrations_pause_notifications_without_clearing_preferences(tmp_path):
+    channels = ("slack", "telegram", "qqbot", "feishu", "wechat", "line")
+    values = {"data_dir": tmp_path}
+    for channel in channels:
+        values[f"menu_{channel}_notify_refresh"] = True
+        values[f"{channel}_enabled"] = False
+
+    daemon, _store, _runner, _usage_client = _daemon(
+        tmp_path, [], settings=types.SimpleNamespace(**values)
+    )
+
+    for channel in channels:
+        assert not daemon._should_notify_channel(channel)
+        # Final sender-level protection must run before reading credentials or
+        # constructing a client, so even a future call site cannot bypass the
+        # disabled integration state.
+        getattr(daemon, f"_notify_{channel}")("should not send")
+
+    # The reminder preference remains on. Re-enabling the integration restores
+    # future delivery without requiring the user to configure the reminder again.
+    daemon._settings.telegram_enabled = True
+    assert daemon._settings.menu_telegram_notify_refresh
+    assert daemon._should_notify_channel("telegram")
+
+
 def _codex_5h(used, *, span_hours=5.0):
     """Codex 5h usage. span_hours≈5 => drifting/idle; small => anchored."""
     from datetime import datetime, timedelta
@@ -289,6 +314,7 @@ def test_daemon_slack_notification_on_quota_refresh(tmp_path, monkeypatch):
 
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
+        slack_enabled=True,
         menu_slack_notify_refresh=True,
         scheduler_slack_channel="C999999",
         slack_bot_token="xoxb-fake",
@@ -363,6 +389,7 @@ def test_daemon_slack_notification_dm_fallback(tmp_path):
 
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
+        slack_enabled=True,
         menu_slack_notify_refresh=True,
         scheduler_slack_channel="",
         slack_bot_token="xoxb-fake",
@@ -432,6 +459,7 @@ def test_daemon_slack_notification_dm_fallback_failure(tmp_path):
 
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
+        slack_enabled=True,
         menu_slack_notify_refresh=True,
         scheduler_slack_channel="",
         slack_bot_token="xoxb-fake",
@@ -493,6 +521,7 @@ def test_daemon_wechat_notification_on_quota_refresh(tmp_path, monkeypatch):
     usage = _FakeUsage()
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
+        wechat_enabled=True,
         menu_wechat_notify_refresh=True,
         wechat_allowed_users={"allowed-user"},
     )
@@ -816,6 +845,12 @@ def test_codex_credit_grant_notifications(tmp_path, monkeypatch):
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
         notify_credit_grant=True,
+        slack_enabled=True,
+        telegram_enabled=True,
+        qqbot_enabled=True,
+        feishu_enabled=True,
+        wechat_enabled=True,
+        line_enabled=True,
         menu_slack_notify_refresh=True,
         menu_telegram_notify_refresh=True,
         menu_qqbot_notify_refresh=True,
@@ -860,6 +895,7 @@ def test_codex_credit_grant_detects_through_masking(tmp_path, monkeypatch):
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
         notify_credit_grant=True,
+        slack_enabled=True,
         menu_slack_notify_refresh=True,
     )
     daemon, _store, _runner, usage = _daemon(tmp_path, [], settings=settings)
@@ -882,6 +918,7 @@ def test_codex_credit_grant_persists_across_restart(tmp_path, monkeypatch):
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
         notify_credit_grant=True,
+        slack_enabled=True,
         menu_slack_notify_refresh=True,
     )
 
@@ -914,6 +951,12 @@ def test_codex_credit_expiry_notifications(tmp_path, monkeypatch):
     settings = types.SimpleNamespace(
         data_dir=tmp_path,
         notify_credit_expiry=True,
+        slack_enabled=True,
+        telegram_enabled=True,
+        qqbot_enabled=True,
+        feishu_enabled=True,
+        wechat_enabled=True,
+        line_enabled=True,
         menu_slack_notify_refresh=True,
         menu_telegram_notify_refresh=True,
         menu_qqbot_notify_refresh=True,
