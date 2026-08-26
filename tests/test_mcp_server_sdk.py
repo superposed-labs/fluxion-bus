@@ -136,7 +136,9 @@ def test_unhandled_tool_exception_raises_tool_error(mcp_server, monkeypatch):
 
     # 2.x surfaces an unhandled tool exception as ToolError on a direct call;
     # over a session it is reported to the host as an is_error result.
-    with pytest.raises(ToolError, match="store unavailable"):
+    # Depending on the mcp SDK version, ToolError either carries the original
+    # exception message or wraps it with the tool name ("Error executing tool ...").
+    with pytest.raises(ToolError, match=r"store unavailable|Error executing tool get_task_status"):
         asyncio.run(mcp_server.call_tool("get_task_status", {"run_id": "t1"}))
 
 
