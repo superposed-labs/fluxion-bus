@@ -9,6 +9,19 @@ milestones.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-26
+
+### Fixed
+
+- **Scheduler notifications paused when IM disabled** — quota reset, credit
+  grant/expiry, and auto-ping failure notifications are now paused when the
+  corresponding IM channel gateway is disabled, preserving configured
+  preferences for when the channel is re-enabled.
+- **Web task summary overflow** — expanded task summaries in the web console
+  now scroll properly instead of clipping content.
+- **Notch credit balance clipping** — credit balance text no longer clips
+  under the notch area, and the ring border renders correctly.
+
 ## [1.4.0] - 2026-08-23
 
 ### Added
@@ -406,7 +419,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.0...v1.3.1
