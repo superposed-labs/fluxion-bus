@@ -9,6 +9,16 @@ milestones.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-01
+
+### Added
+
+- **Managed workspace access and permission requests** — added a managed
+  workspace access control and authorization system. MCP subagents can now
+  request scoped workspace permissions with interactive authorization wait
+  support, managed via a new Workspace Access panel in Desktop Preferences,
+  Web API, and CLI.
+
 ## [1.4.1] - 2026-08-26
 
 ### Fixed
@@ -419,7 +429,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.1...v1.3.2
