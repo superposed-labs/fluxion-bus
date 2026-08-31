@@ -22,6 +22,19 @@ CDPATH="" cd -- "$(dirname -- "$0")/.."
 APP="desktop/Fluxion.app"
 SRC_PLIST="desktop/Resources/Info.plist"
 WEB_INDEX="src/fluxion/web/static/index.html"
+FLUXION_DISTRIBUTION="${FLUXION_DISTRIBUTION:-${FLUXION_ENABLE_SPARKLE:-0}}"
+FLUXION_BUNDLE_WORKTREE="${FLUXION_BUNDLE_WORKTREE:-0}"
+
+# Reject incompatible packaging modes before removing an existing app bundle.
+if [ "$FLUXION_DISTRIBUTION" = "1" ] && [ "$FLUXION_BUNDLE_WORKTREE" = "1" ]; then
+    echo "error: distribution builds cannot bundle an uncommitted worktree" >&2
+    exit 1
+fi
+if [ "${FLUXION_DEV_AUTO_UPGRADE:-0}" = "1" ] && [ "$FLUXION_BUNDLE_WORKTREE" != "1" ]; then
+    echo "error: FLUXION_DEV_AUTO_UPGRADE=1 requires FLUXION_BUNDLE_WORKTREE=1" >&2
+    echo "Use both only for an explicit managed-backend development deployment." >&2
+    exit 1
+fi
 
 if [ ! -f "$SRC_PLIST" ]; then
     echo "error: $SRC_PLIST not found" >&2
@@ -82,6 +95,16 @@ else
     plutil -remove SUFeedURL "$APP/Contents/Info.plist" 2>/dev/null || true
 fi
 cp desktop/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Warn if resources being copied from the worktree differ from the committed
+# backend snapshot (which is archived from HEAD).  This catches accidental
+# version inconsistencies in dev builds.
+if [ "$FLUXION_BUNDLE_WORKTREE" != "1" ] && git rev-parse HEAD >/dev/null 2>&1; then
+    if ! git diff --quiet HEAD -- desktop/Resources scripts src/fluxion/web/static 2>/dev/null; then
+        echo "⚠  WARNING: worktree has uncommitted changes in desktop/Resources, scripts, or web/static."
+        echo "   The backend archive is built from HEAD. Consider committing first or setting"
+        echo "   FLUXION_BUNDLE_WORKTREE=1 for a development build."
+    fi
+fi
 find desktop/Resources -maxdepth 1 -name "*.lproj" -type d -exec cp -R {} "$APP/Contents/Resources/" \;
 mkdir -p "$APP/Contents/Resources/Scripts"
 cp scripts/bootstrap-backend.sh "$APP/Contents/Resources/Scripts/bootstrap-backend.sh"
@@ -114,27 +137,61 @@ mkdir -p "$APP/Contents/Frameworks"
 ditto "$SPARKLE_FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Bundle a backend source snapshot so first-run setup can install without git
-# or network access. `git archive` packs committed files only, which keeps
-# local junk (.venv, data, untracked experiments) out of the distributed app.
-# Outside a git checkout the snapshot is skipped and the bootstrap script
-# falls back to the git-based installer.
+# or network access. The safe and reproducible default is committed files only.
+# A developer who explicitly needs a copied app to carry uncommitted backend
+# work can opt in with FLUXION_BUNDLE_WORKTREE=1. This is intentionally separate
+# from an ordinary local build: broad worktree packaging can include experiments
+# that have not been reviewed or committed.
 #
 # The REVISION marker (the last commit touching backend paths) is what makes an
 # installed app silently upgrade the managed backend to match its snapshot — so
-# only distribution builds write it. A dev or self-compiled app carrying its own
+# ordinary builds do not write it. A dev or self-compiled app carrying its own
 # ad-hoc revision would otherwise fight the official install (and other local
 # builds) over ~/.local/share/fluxion, reinstalling the backend on every launch
-# of a differently-built app. Mirrors the Sparkle gating above; override with
-# FLUXION_DISTRIBUTION=0/1.
-FLUXION_DISTRIBUTION="${FLUXION_DISTRIBUTION:-${FLUXION_ENABLE_SPARKLE:-0}}"
+# of a differently-built app. FLUXION_DEV_AUTO_UPGRADE=1 remains an explicit
+# development deployment escape hatch and requires FLUXION_BUNDLE_WORKTREE=1.
 BACKEND_DIR="$APP/Contents/Resources/Backend"
 if git rev-parse HEAD >/dev/null 2>&1; then
     echo "Bundling backend source snapshot..."
     mkdir -p "$BACKEND_DIR"
-    git archive --format=tar.gz --prefix=fluxion/ \
-        -o "$BACKEND_DIR/backend.tar.gz" HEAD
+    if [ "$FLUXION_BUNDLE_WORKTREE" = "1" ]; then
+        echo "Development override: including tracked and untracked worktree backend changes"
+        BACKEND_STAGE_DIR="$(mktemp -d -t fluxion-backend)"
+        cleanup_backend_stage() {
+            if [ -n "${BACKEND_STAGE_DIR:-}" ]; then
+                rm -rf "$BACKEND_STAGE_DIR"
+            fi
+        }
+        trap cleanup_backend_stage EXIT
+        git archive --format=tar --prefix=fluxion/ HEAD \
+            | tar -xf - -C "$BACKEND_STAGE_DIR"
+        BACKEND_PATHS=(src pyproject.toml README.md LICENSE NOTICE scripts web)
+        if ! git diff --quiet HEAD -- "${BACKEND_PATHS[@]}"; then
+            git diff --binary HEAD -- "${BACKEND_PATHS[@]}" \
+                | git -C "$BACKEND_STAGE_DIR/fluxion" apply --whitespace=nowarn -
+        fi
+        while IFS= read -r -d '' path; do
+            [ -n "$path" ] || continue
+            mkdir -p "$BACKEND_STAGE_DIR/fluxion/$(dirname "$path")"
+            cp -P "$path" "$BACKEND_STAGE_DIR/fluxion/$path"
+        done < <(git ls-files -z --others --exclude-standard -- "${BACKEND_PATHS[@]}")
+        tar -czf "$BACKEND_DIR/backend.tar.gz" -C "$BACKEND_STAGE_DIR" fluxion
+        cleanup_backend_stage
+        BACKEND_STAGE_DIR=""
+        trap - EXIT
+    else
+        git archive --format=tar.gz --prefix=fluxion/ \
+            -o "$BACKEND_DIR/backend.tar.gz" HEAD
+    fi
     if [ "$FLUXION_DISTRIBUTION" = "1" ]; then
         git log -1 --format=%H -- src/fluxion pyproject.toml scripts web > "$BACKEND_DIR/REVISION"
+    elif [ "${FLUXION_DEV_AUTO_UPGRADE:-0}" = "1" ]; then
+        # Opt-in marker for a self-compiled app that should refresh the
+        # managed backend on first launch. Hash the actual archive, not HEAD,
+        # so uncommitted and untracked backend fixes are included too.
+        printf 'worktree-%s\n' "$(shasum -a 256 "$BACKEND_DIR/backend.tar.gz" | awk '{print $1}')" \
+            > "$BACKEND_DIR/REVISION"
+        echo "Dev build: managed backend auto-upgrade marker enabled"
     else
         echo "Dev build: skipping Backend/REVISION (no silent backend upgrades)"
     fi
@@ -204,6 +261,17 @@ swiftc -O \
     desktop/UI/MainWindow.swift \
     desktop/UI/Preferences/PreferencesWindow.swift \
     desktop/UI/Preferences/PreferencesWindow+Sections.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessModels.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessIcons.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessControls.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessTableViews.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessProjectSheetViews.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessProjectSheet.swift \
+    desktop/UI/Preferences/WorkspaceAccess/WorkspaceAccessRequestSheets.swift \
+    desktop/UI/Preferences/WorkspaceAccess/PreferencesWindow+WorkspaceAccess.swift \
+    desktop/UI/Preferences/WorkspaceAccess/PreferencesWindow+WorkspaceAccessData.swift \
+    desktop/UI/Preferences/WorkspaceAccess/PreferencesWindow+WorkspaceAccessRequests.swift \
+    desktop/UI/Preferences/WorkspaceAccess/PreferencesWindow+WorkspaceAccessActions.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderRoutingModels.swift \
     desktop/UI/Preferences/ProviderRouting/ProviderRoutingComponents.swift \
     desktop/UI/Preferences/ProviderRouting/PreferencesWindow+ProviderRouting.swift \

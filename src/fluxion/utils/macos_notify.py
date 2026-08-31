@@ -14,9 +14,15 @@ No-op off macOS, so the file never accumulates records with no consumer.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Fluxion desktop targets macOS.
+    fcntl = None
 
 FILENAME = "macos_notifications.jsonl"
 
@@ -30,6 +36,11 @@ def queue(data_dir: Path, title: str, body: str, **extra: object) -> bool:
 
     Errors are reported to the caller rather than raised: a notification that
     cannot be queued must not take down the work that wanted to send it.
+
+    The consumer (macOS desktop app) uses rename-then-read to avoid losing
+    records appended between read and truncate.  An advisory ``LOCK_EX`` here
+    serialises the append against the rename so a half-written line is never
+    split across the old and new file.
     """
     if sys.platform != "darwin":
         return False
@@ -40,8 +51,20 @@ def queue(data_dir: Path, title: str, body: str, **extra: object) -> bool:
         "timestamp": datetime.now(UTC).isoformat(),
     }
     try:
-        with open(data_dir / FILENAME, "a", encoding="utf-8") as fp:
-            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+        data_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(
+            data_dir / FILENAME,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+            0o600,
+        )
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            os.write(fd, (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8"))
+        finally:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
     except OSError:
         return False
     return True

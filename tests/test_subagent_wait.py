@@ -312,6 +312,7 @@ def test_fastmcp_run_subagent_binding_preserves_timeout_sec(monkeypatch):
             _ServerRunner.latest = self
 
     class _ServerSettings(_ToolSettings):
+        mcp_authorization_wait_ms = 0
         projects = {}
         allowed_workspaces = []
         trusted_workspace_roots = []

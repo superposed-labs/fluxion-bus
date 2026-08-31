@@ -97,6 +97,7 @@ extension PreferencesWindow {
         let navEntries: [SidebarNavEntry] = [
             .item(id: "general", label: L10n.tr("preferences.nav.general"), icon: "slider.horizontal.3", color: NSColor.systemGray),
             .item(id: "agents", label: L10n.tr("preferences.nav.agents"), icon: "cpu", color: NSColor.systemIndigo),
+            .item(id: "workspace-access", label: L10n.tr("preferences.nav.workspace_access"), icon: "folder", color: NSColor(hex: "#A2845E")),
             .item(id: "automation", label: L10n.tr("preferences.nav.automation"), icon: "clock", color: NSColor.systemOrange),
             .header(title: L10n.tr("preferences.nav.group.gateways")),
             .item(id: "messaging", label: L10n.tr("preferences.nav.messaging"), icon: "message", color: NSColor.systemGreen),
@@ -234,6 +235,7 @@ extension PreferencesWindow {
         scrollView.verticalScroller = customScroller
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
         scrollView.drawsBackground = false
         scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -258,8 +260,10 @@ extension PreferencesWindow {
         NSLayoutConstraint.activate([
             rightPaneContainer.topAnchor.constraint(equalTo: clipView.topAnchor),
             rightPaneContainer.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
-            rightPaneContainer.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
-            rightPaneContainer.widthAnchor.constraint(equalTo: clipView.widthAnchor),
+            // Keep the document width tied to the fixed right pane rather
+            // than the clip view's changing visible width. Showing or hiding
+            // a legacy-style scroller must not move trailing controls.
+            rightPaneContainer.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
             rightPaneContainer.heightAnchor.constraint(greaterThanOrEqualTo: clipView.heightAnchor)
         ])
         
@@ -267,6 +271,7 @@ extension PreferencesWindow {
         let pageMeta = [
             ("general", L10n.tr("preferences.nav.general"), L10n.tr("preferences.page.general.desc")),
             ("agents", L10n.tr("preferences.nav.agents"), L10n.tr("preferences.page.agents.desc")),
+            ("workspace-access", L10n.tr("preferences.nav.workspace_access"), L10n.tr("preferences.page.workspace_access.desc")),
             ("automation", L10n.tr("preferences.nav.automation"), L10n.tr("preferences.page.automation.desc")),
             ("messaging", L10n.tr("preferences.nav.messaging"), L10n.tr("preferences.page.messaging.desc")),
             ("provider-routing", L10n.tr("preferences.nav.provider_routing"), L10n.tr("preferences.page.provider_routing.desc")),

@@ -22,7 +22,7 @@ src/fluxion/web/static/
 
 # macOS desktop app build output. The bundle is assembled by desktop/build.sh
 # from tracked sources under desktop/ and desktop/Resources/.
-desktop/Fluxion.app/
+desktop/Fluxion*.app/
 dist/
 
 # Vendored Sparkle framework, fetched + cached on demand by desktop/build.sh

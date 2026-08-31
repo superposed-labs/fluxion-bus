@@ -38,7 +38,10 @@ def test_queue_writes_one_record_with_extras(tmp_path):
 
 def test_queue_reports_failure_instead_of_raising(tmp_path):
     """A notification that cannot be sent must not take down its caller."""
-    assert macos_notify.queue(tmp_path / "no-such-dir", "t", "b") is False
+    # Use a regular file as the data_dir so the directory creation fails.
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+    assert macos_notify.queue(blocker, "t", "b") is False
 
 
 def test_the_same_finding_is_not_repeated(tmp_path):

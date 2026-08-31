@@ -33,11 +33,13 @@ EXPECTED_TOOLS = {
     "reconcile_tasks",
     "revert_subagent_run",
     "run_subagent",
+    "wait_for_authorization",
 }
 
 
 class _Settings:
     mcp_status_max_wait_ms = 60_000
+    mcp_authorization_wait_ms = 0
 
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -48,9 +50,18 @@ class _Settings:
         raise AssertionError("patched in test")
 
 
+class _WorkspaceAccess:
+    """Minimal stand-in for the workspace authorization service."""
+
+    def wait_for_request(self, request_id, *, timeout_sec=0.0):
+        del timeout_sec
+        return {"found": True, "authorization_request_id": request_id, "status": "pending"}
+
+
 class _Runner:
     def __init__(self, settings):
         del settings
+        self.workspace_access = _WorkspaceAccess()
 
     def submit(self, request):
         raise AssertionError("not used")
@@ -94,6 +105,24 @@ def test_run_subagent_schema_keeps_documented_arguments(mcp_server):
     for name in ("prompt", "agent", "project", "workspace", "profile", "mode", "model"):
         assert name in properties
     assert tools["run_subagent"].input_schema["required"] == ["prompt"]
+
+
+def test_wait_for_authorization_is_callable_end_to_end(mcp_server):
+    tools = {tool.name: tool for tool in asyncio.run(mcp_server.list_tools())}
+    schema = tools["wait_for_authorization"].input_schema
+    assert schema["required"] == ["authorization_request_id"]
+    assert "wait_ms" in schema["properties"]
+
+    result = asyncio.run(
+        mcp_server.call_tool("wait_for_authorization", {"authorization_request_id": "war-x"})
+    )
+
+    assert result.is_error is False
+    content = result.structured_content
+    assert content["status"] == "pending"
+    assert content["terminal"] is False
+    assert content["should_retry"] is False
+    assert content["next_tools"] == ["wait_for_authorization"]
 
 
 def test_call_tool_returns_structured_call_tool_result(mcp_server):

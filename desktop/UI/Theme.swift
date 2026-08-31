@@ -74,6 +74,22 @@ enum SidebarIcons {
                 ctx.fillEllipse(in: CGRect(x: 8 - 0.8, y: 8.5 - 0.8, width: 1.6, height: 1.6))
                 ctx.fillEllipse(in: CGRect(x: 8 - 0.8, y: 15.5 - 0.8, width: 1.6, height: 1.6))
 
+            case "workspace-access", "workspace":
+                let folderBody = CGPath(roundedRect: CGRect(x: 3, y: 7.5, width: 18, height: 11.5), cornerWidth: 1.8, cornerHeight: 1.8, transform: nil)
+                ctx.addPath(folderBody)
+                ctx.strokePath()
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 4.8, y: 7.5))
+                ctx.addLine(to: CGPoint(x: 4.8, y: 5.7))
+                ctx.addLine(to: CGPoint(x: 8.4, y: 5.7))
+                ctx.addLine(to: CGPoint(x: 10.2, y: 7.5))
+                ctx.strokePath()
+                ctx.strokeEllipse(in: CGRect(x: 14.6 - 2.0, y: 12.8 - 2.0, width: 4.0, height: 4.0))
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: 14.6, y: 14.8))
+                ctx.addLine(to: CGPoint(x: 14.6, y: 17.0))
+                ctx.strokePath()
+
             default:
                 break
             }

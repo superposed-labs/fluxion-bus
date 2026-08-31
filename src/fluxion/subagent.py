@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +16,7 @@ from fluxion.core.router import TaskRouter
 from fluxion.core.session_manager import SessionManager
 from fluxion.core.storage import JsonlStorage
 from fluxion.executors.registry import build_enabled_executors
+from fluxion.workspace import WorkspaceAccessService
 
 PROFILE_INSTRUCTIONS = {
     "inspect": """Profile: inspect.
@@ -89,6 +90,9 @@ class SubagentRunRequest:
     # Optional per-task model override (e.g. route an Antigravity ping to the
     # Gemini vs External Models quota pool). Executors that don't read it ignore it.
     model: str | None = None
+    # Workspace approval is intentionally separate from executor permissions.
+    client_id: str = "local"
+    authorization_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,12 @@ class SubagentRunResult:
     artifacts: list[str]
     log_file: str
     result: ExecutionResult
+    authorization_request_id: str = ""
+    workspace_access_policy: str = ""
+    workspace_access_source: str = ""
+    authorization_grant_id: str = ""
+    authorization_scope: str = ""
+    authorization_expires_at: str = ""
 
     def to_payload(self, *, include_stdout: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -138,6 +148,12 @@ class SubagentRunResult:
             "diff_summary": self.diff_summary,
             "artifacts": self.artifacts,
             "log_file": self.log_file,
+            "authorization_request_id": self.authorization_request_id or None,
+            "workspace_access_policy": self.workspace_access_policy,
+            "workspace_access_source": self.workspace_access_source,
+            "authorization_grant_id": self.authorization_grant_id or None,
+            "authorization_scope": self.authorization_scope or None,
+            "authorization_expires_at": self.authorization_expires_at or None,
         }
         if include_stdout:
             raw_result = asdict(self.result)
@@ -165,6 +181,12 @@ class SubagentRunHandle:
     effective_model: str = ""
     model_resolution_source: str = ""
     resumed_session_model: str = ""
+    authorization_request_id: str = ""
+    workspace_access_policy: str = ""
+    workspace_access_source: str = ""
+    authorization_grant_id: str = ""
+    authorization_scope: str = ""
+    authorization_expires_at: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         payload = {
@@ -189,6 +211,12 @@ class SubagentRunHandle:
             "effective_model": self.effective_model or "(executor default)",
             "resolved_model": "",
             "model_resolution_source": self.model_resolution_source,
+            "authorization_request_id": self.authorization_request_id or None,
+            "workspace_access_policy": self.workspace_access_policy,
+            "workspace_access_source": self.workspace_access_source,
+            "authorization_grant_id": self.authorization_grant_id or None,
+            "authorization_scope": self.authorization_scope or None,
+            "authorization_expires_at": self.authorization_expires_at or None,
         }
         if self.resumed_session_model and self.effective_model:
             if self.resumed_session_model != self.effective_model:
@@ -203,10 +231,15 @@ class SubagentRunHandle:
 
 
 class LocalChannelAdapter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        on_result: Callable[[str, ExecutionResult], None] | None = None,
+    ) -> None:
         self._done = threading.Event()
         self._lock = threading.Lock()
         self.result: ExecutionResult | None = None
+        self._on_result = on_result
         self.statuses: list[dict[str, str]] = []
         self.output_deltas: list[str] = []
         self.output_updated_at: datetime | None = None
@@ -221,8 +254,19 @@ class LocalChannelAdapter:
         self.statuses.append({"task_id": task_id, "status": status, "detail": detail or ""})
 
     def send_result(self, task_id: str, result: ExecutionResult, context: dict) -> None:
-        del task_id, context
-        self.result = result
+        del context
+        with self._lock:
+            if self.result is not None:
+                return
+            self.result = result
+        if self._on_result is not None:
+            try:
+                self._on_result(task_id, result)
+            except Exception:
+                # A bookkeeping failure must never hide the executor result
+                # from the caller. The expiry guard still closes an orphaned
+                # grant if this callback cannot persist its terminal state.
+                pass
         self._done.set()
 
     def send_typing(self, context: dict) -> None:
@@ -262,9 +306,14 @@ def run_subagent(
 
 
 class SubagentRunner:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        workspace_access: WorkspaceAccessService | None = None,
+    ) -> None:
         settings.validate(require_slack=False)
         self._settings = settings
+        self._workspace_access = workspace_access or WorkspaceAccessService(settings)
         self._gateway = build_gateway(settings)
         self._gateway.start()
         self._adapters_lock = threading.Lock()
@@ -276,11 +325,10 @@ class SubagentRunner:
         if result is None:
             raise TimeoutError("Timed out waiting for local task result.")
         changed_files = visible_changed_files(
-            workspace=self._settings.resolve_run_workspace(
-                raw_workspace=request.workspace,
-                project_key=request.project,
-                mode=request.mode,
-            ),
+            # The submitted task owns this canonical workspace snapshot.  A
+            # later permission edit must not invalidate changed-file reporting
+            # for work that was already accepted.
+            workspace=Path(handle.workspace),
             result=result,
         )
         return SubagentRunResult(
@@ -303,99 +351,161 @@ class SubagentRunner:
             artifacts=result.artifacts,
             log_file=result.log_file,
             result=result,
+            authorization_request_id=handle.authorization_request_id,
+            workspace_access_policy=handle.workspace_access_policy,
+            workspace_access_source=handle.workspace_access_source,
+            authorization_grant_id=handle.authorization_grant_id,
+            authorization_scope=handle.authorization_scope,
+            authorization_expires_at=handle.authorization_expires_at,
         )
 
     def submit(self, request: SubagentRunRequest) -> SubagentRunHandle:
         validate_request(request)
-        project = self._settings.resolve_project(request.project)
-        # Local import keeps availability detection off subagent's import graph.
-        from fluxion.availability import available_executors
-
-        agent = resolve_agent(
-            requested=request.agent,
-            project_default=project.default_executor if project is not None else "",
-            settings_default=effective_default_executor(self._settings),
-            enabled_agents=self._settings.enabled_executors,
-            available_agents=available_executors(self._settings),
-        )
-        workspace = self._settings.resolve_run_workspace(
+        # Resolve the project and workspace from a fresh managed/legacy
+        # snapshot.  This is the only authorization gate before a task enters
+        # GatewayCore; the gateway itself is deliberately not rebuilt when the
+        # JSON permission file changes.
+        project = self._workspace_access.resolve_project(request.project)
+        task_scope_id = f"task-{uuid4().hex}"
+        authorization = self._workspace_access.authorize_run_workspace(
             raw_workspace=request.workspace,
             project_key=request.project,
             mode=request.mode,
+            client_id=request.client_id,
+            authorization_request_id=request.authorization_request_id,
+            task_scope_id=task_scope_id,
+            request_if_denied=True,
         )
-        adapter = LocalChannelAdapter()
-        agent_path = agent_path_for_run(
-            parent_path=request.parent_path,
-            task_name=request.task_name,
-            fallback_thread=request.thread,
-        )
-        conversation_key = request.conversation_key or conversation_key_for_run(
-            workspace=workspace,
-            thread=request.thread,
-            session_policy=request.session_policy,
-        )
-        existing_session = self._gateway._sessions.get_executor_session_id(
-            conversation_key=conversation_key,
-            channel="local",
-            user_id=request.user,
-            executor_name=agent,
-        )
-        include_preamble = request.include_subagent_preamble
-        if existing_session:
-            # Always omit the preamble on resumed sessions to save tokens —
-            # the executor already has Fluxion context from the prior turn.
-            # This takes priority over any explicit caller value.
-            include_preamble = False
-        elif include_preamble is None:
-            # New session: include preamble by default.
-            include_preamble = True
+        workspace = authorization.require_allowed()
+        authorization_grant_id = authorization.authorization_grant_id
+        task: Task | None = None
+        submitted = False
+        try:
+            # Local import keeps availability detection off subagent's import graph.
+            from fluxion.availability import available_executors
 
-        task = Task.create(
-            channel="local",
-            user_id=request.user,
-            text=task_text(
-                request.prompt,
-                subagent=include_preamble,
-                profile=request.profile,
-                mode=request.mode,
-            ),
-            workspace=workspace,
-            metadata={
-                "executor": agent,
-                "conversation_key": conversation_key,
-                "model": request.model or "",
-                "requested_model": request.model or "",
-                "model_resolution_source": (
-                    "fluxion_ping_policy"
-                    if request.model
-                    and request.task_name
-                    and (
-                        request.task_name.startswith("ping-") or "ping" in request.task_name.lower()
-                    )
-                    else ("requested_override" if request.model else "executor_runtime")
+            agent = resolve_agent(
+                requested=request.agent,
+                project_default=(
+                    project.default_executor
+                    if project is not None
+                    else authorization.default_executor
                 ),
-                "prompt": " ".join(request.prompt).strip(),
-                "subagent": {
-                    "agent": agent,
-                    "project": project.key if project is not None else "",
-                    "workspace": str(workspace),
-                    "thread": request.thread,
-                    "task_name": request.task_name or "",
-                    "parent_path": request.parent_path,
-                    "agent_path": agent_path,
-                    "profile": request.profile,
-                    "mode": request.mode,
-                    "session_policy": request.session_policy,
+                settings_default=effective_default_executor(self._settings),
+                enabled_agents=self._settings.enabled_executors,
+                available_agents=available_executors(self._settings),
+            )
+            agent_path = agent_path_for_run(
+                parent_path=request.parent_path,
+                task_name=request.task_name,
+                fallback_thread=request.thread,
+            )
+            conversation_key = request.conversation_key or conversation_key_for_run(
+                workspace=workspace,
+                thread=request.thread,
+                session_policy=request.session_policy,
+            )
+            existing_session = self._gateway._sessions.get_executor_session_id(
+                conversation_key=conversation_key,
+                channel="local",
+                user_id=request.user,
+                executor_name=agent,
+            )
+            include_preamble = request.include_subagent_preamble
+            if existing_session:
+                # Always omit the preamble on resumed sessions to save tokens —
+                # the executor already has Fluxion context from the prior turn.
+                # This takes priority over any explicit caller value.
+                include_preamble = False
+            elif include_preamble is None:
+                # New session: include preamble by default.
+                include_preamble = True
+
+            task = Task.create(
+                channel="local",
+                user_id=request.user,
+                text=task_text(
+                    request.prompt,
+                    subagent=include_preamble,
+                    profile=request.profile,
+                    mode=request.mode,
+                ),
+                workspace=workspace,
+                metadata={
+                    "executor": agent,
+                    "conversation_key": conversation_key,
+                    "model": request.model or "",
+                    "requested_model": request.model or "",
+                    "model_resolution_source": (
+                        "fluxion_ping_policy"
+                        if request.model
+                        and request.task_name
+                        and (
+                            request.task_name.startswith("ping-")
+                            or "ping" in request.task_name.lower()
+                        )
+                        else ("requested_override" if request.model else "executor_runtime")
+                    ),
+                    "prompt": " ".join(request.prompt).strip(),
+                    "workspace_access": {
+                        "policy": authorization.policy,
+                        "source": authorization.source,
+                        "mode": request.mode,
+                        "client_id": request.client_id,
+                        "authorization_request_id": authorization.authorization_request_id,
+                        "authorization_grant_id": authorization_grant_id,
+                        "authorization_scope": authorization.authorization_scope,
+                        "authorization_expires_at": authorization.authorization_expires_at,
+                    },
+                    "subagent": {
+                        "agent": agent,
+                        "project": project.key if project is not None else "",
+                        "workspace": str(workspace),
+                        "thread": request.thread,
+                        "task_name": request.task_name or "",
+                        "parent_path": request.parent_path,
+                        "agent_path": agent_path,
+                        "profile": request.profile,
+                        "mode": request.mode,
+                        "session_policy": request.session_policy,
+                    },
                 },
-            },
-        )
-        accepted, reason = self._gateway.submit_task(
-            task=task,
-            channel_adapter=adapter,
-            channel_context={"channel": "local", "thread": request.thread},
-        )
-        if not accepted:
-            raise RuntimeError(reason)
+            )
+            if authorization_grant_id and not self._workspace_access.bind_task_authorization(
+                authorization_grant_id, task.id
+            ):
+                raise RuntimeError("Workspace task authorization could not be bound to the task.")
+
+            adapter = LocalChannelAdapter(
+                on_result=(
+                    lambda completed_task_id, _result, _gid=authorization_grant_id: (
+                        self._workspace_access.complete_task_authorization(
+                            _gid,
+                            task_id=completed_task_id,
+                        )
+                        if _gid
+                        else None
+                    )
+                )
+            )
+            accepted, reason = self._gateway.submit_task(
+                task=task,
+                channel_adapter=adapter,
+                channel_context={"channel": "local", "thread": request.thread},
+            )
+            if not accepted:
+                raise RuntimeError(reason)
+            submitted = True
+        except Exception:
+            if authorization_grant_id and not submitted:
+                try:
+                    self._workspace_access.abort_task_authorization(
+                        authorization_grant_id,
+                        task_id=task.id if task is not None else "",
+                    )
+                except Exception:
+                    pass
+            raise
         with self._adapters_lock:
             self._adapters[task.id] = adapter
         # Read back after submit: the gateway fills in a conversation-level
@@ -434,11 +544,21 @@ class SubagentRunner:
             effective_model=effective_model,
             model_resolution_source=model_resolution_source,
             resumed_session_model=resumed_session_model,
+            authorization_request_id=authorization.authorization_request_id,
+            workspace_access_policy=authorization.policy,
+            workspace_access_source=authorization.source,
+            authorization_grant_id=authorization_grant_id,
+            authorization_scope=authorization.authorization_scope,
+            authorization_expires_at=authorization.authorization_expires_at,
         )
 
     @property
     def gateway(self) -> GatewayCore:
         return self._gateway
+
+    @property
+    def workspace_access(self) -> WorkspaceAccessService:
+        return self._workspace_access
 
     def cancel(self, task_id: str) -> tuple[bool, str]:
         return self._gateway.cancel_task(task_id)

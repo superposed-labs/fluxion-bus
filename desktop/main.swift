@@ -882,6 +882,13 @@ struct PendingNotification: Codable {
     // "Allow" action. Absent on scheduler notifications.
     let channel: String?
     let userId: String?
+    // Workspace authorization notifications carry a separate, one-time-only
+    // action. They must never share the pending-user approval path.
+    let kind: String?
+    let authorizationRequestId: String?
+    let clientId: String?
+    let workspace: String?
+    let mode: String?
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -889,12 +896,21 @@ struct PendingNotification: Codable {
         case timestamp
         case channel
         case userId = "user_id"
+        case kind
+        case authorizationRequestId = "authorization_request_id"
+        case clientId = "client_id"
+        case workspace
+        case mode
     }
 }
 
 extension AppDelegate {
     static let pendingUserCategoryId = "FLUXION_PENDING_USER"
     static let pendingAllowActionId = "FLUXION_PENDING_ALLOW"
+    static let workspaceAccessCategoryId = "FLUXION_WORKSPACE_ACCESS"
+    static let workspaceAccessAllowOnceActionId = "FLUXION_WORKSPACE_ALLOW_ONCE"
+    static let workspaceAccessAllowProjectActionId = "FLUXION_WORKSPACE_ALLOW_PROJECT"
+    static let workspaceAccessDetailsActionId = "FLUXION_WORKSPACE_VIEW_DETAILS"
 
     /// Declare the pending-user category so its notifications carry an
     /// "Allow" button (revealed on hover/long-press of the banner).
@@ -907,6 +923,27 @@ extension AppDelegate {
         let pendingUser = UNNotificationCategory(
             identifier: AppDelegate.pendingUserCategoryId,
             actions: [allow],
+            intentIdentifiers: [],
+            options: []
+        )
+        let allowWorkspaceOnce = UNNotificationAction(
+            identifier: AppDelegate.workspaceAccessAllowOnceActionId,
+            title: L10n.tr("preferences.workspace_access.allow_once"),
+            options: [.authenticationRequired]
+        )
+        let allowWorkspaceProject = UNNotificationAction(
+            identifier: AppDelegate.workspaceAccessAllowProjectActionId,
+            title: L10n.tr("preferences.workspace_access.requests.btn_add_project"),
+            options: [.authenticationRequired]
+        )
+        let workspaceDetails = UNNotificationAction(
+            identifier: AppDelegate.workspaceAccessDetailsActionId,
+            title: L10n.tr("preferences.workspace_access.view_details"),
+            options: [.foreground]
+        )
+        let workspaceAccess = UNNotificationCategory(
+            identifier: AppDelegate.workspaceAccessCategoryId,
+            actions: [allowWorkspaceProject, allowWorkspaceOnce, workspaceDetails],
             intentIdentifiers: [],
             options: []
         )
@@ -933,7 +970,7 @@ extension AppDelegate {
             options: []
         )
         UNUserNotificationCenter.current().setNotificationCategories([
-            pendingUser, reminderCoverage, updateAvailable,
+            pendingUser, workspaceAccess, reminderCoverage, updateAvailable,
         ])
     }
 
@@ -960,6 +997,14 @@ extension AppDelegate {
         let userId = (info["user_id"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let reminderProviders = info["reminder_providers"] as? [String] ?? []
+        let workspaceRequestId = (info["authorization_request_id"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let workspaceClientId = (info["client_id"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let workspacePath = (info["workspace"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let workspaceMode = (info["mode"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let actionIdentifier = response.actionIdentifier
         let isUpdateNotification =
             (info[UpdaterController.notificationUserInfoKey] as? Bool == true)
@@ -985,6 +1030,67 @@ extension AppDelegate {
                     // setting, so the offer is never a dead end.
                     PreferencesWindow.shared.show()
                     PreferencesWindow.shared.switchPage(to: "automation")
+                default:
+                    break
+                }
+                return
+            }
+            if !workspaceRequestId.isEmpty {
+                switch actionIdentifier {
+                case AppDelegate.workspaceAccessAllowProjectActionId:
+                    if workspacePath.isEmpty || workspaceMode.isEmpty || workspaceClientId.isEmpty {
+                        PreferencesWindow.shared.showWorkspaceAccessRequestDetails(
+                            workspaceRequestId
+                        )
+                    } else {
+                        PreferencesWindow.shared.allowWorkspaceAccessAsProject(
+                            workspaceRequestId,
+                            validationPath: workspacePath,
+                            validationMode: workspaceMode,
+                            validationClientId: workspaceClientId,
+                            presentResult: false
+                        ) { success, message in
+                            self.deliverWorkspaceAccessActionResult(
+                                success: success,
+                                permanent: true,
+                                requestId: workspaceRequestId,
+                                clientId: workspaceClientId,
+                                workspace: workspacePath,
+                                mode: workspaceMode,
+                                errorMessage: message
+                            )
+                        }
+                    }
+                case AppDelegate.workspaceAccessAllowOnceActionId:
+                    if workspacePath.isEmpty || workspaceMode.isEmpty || workspaceClientId.isEmpty {
+                        // Older queued notifications may not carry the full
+                        // authorization context. Never approve those by ID
+                        // alone; open the review sheet instead.
+                        PreferencesWindow.shared.showWorkspaceAccessRequestDetails(
+                            workspaceRequestId
+                        )
+                    } else {
+                        PreferencesWindow.shared.approveWorkspaceAccessRequest(
+                            workspaceRequestId,
+                            validationPath: workspacePath,
+                            validationMode: workspaceMode,
+                            validationClientId: workspaceClientId,
+                            presentResult: false
+                        ) { success, message in
+                            self.deliverWorkspaceAccessActionResult(
+                                success: success,
+                                permanent: false,
+                                requestId: workspaceRequestId,
+                                clientId: workspaceClientId,
+                                workspace: workspacePath,
+                                mode: workspaceMode,
+                                errorMessage: message
+                            )
+                        }
+                    }
+                case AppDelegate.workspaceAccessDetailsActionId,
+                     UNNotificationDefaultActionIdentifier:
+                    PreferencesWindow.shared.showWorkspaceAccessRequestDetails(workspaceRequestId)
                 default:
                     break
                 }
@@ -1055,6 +1161,44 @@ extension AppDelegate {
         }
     }
 
+    private func deliverWorkspaceAccessActionResult(
+        success: Bool,
+        permanent: Bool,
+        requestId: String,
+        clientId: String,
+        workspace: String,
+        mode: String,
+        errorMessage: String
+    ) {
+        let projectName = (workspace as NSString).lastPathComponent
+        if success {
+            deliverLocalNotification(
+                title: permanent
+                    ? L10n.tr(
+                        "notification.workspace_access.project_allowed.title",
+                        projectName
+                    )
+                    : L10n.tr("notification.workspace_access.task_allowed.title"),
+                body: permanent
+                    ? L10n.tr("notification.workspace_access.project_allowed.body")
+                    : L10n.tr("notification.workspace_access.task_allowed.body")
+            )
+            return
+        }
+
+        deliverLocalNotification(
+            title: L10n.tr("notification.workspace_access.failed.title"),
+            body: L10n.tr("notification.workspace_access.failed.body", errorMessage),
+            userInfo: [
+                "kind": "workspace_access_request",
+                "authorization_request_id": requestId,
+                "client_id": clientId,
+                "workspace": workspace,
+                "mode": mode,
+            ]
+        )
+    }
+
     var macOSNotificationsPath: String {
         (dataDirPath as NSString).appendingPathComponent("macos_notifications.jsonl")
     }
@@ -1113,20 +1257,36 @@ extension AppDelegate {
     }
 
     /// Read and deliver any pending notifications written by the scheduler
-    /// daemon to `data/macos_notifications.jsonl`, then truncate the file.
+    /// daemon to `data/macos_notifications.jsonl`, then remove the consumed file.
+    ///
+    /// The file is atomically renamed before reading so that concurrent appends
+    /// from the Python backend create a new file instead of racing with the
+    /// truncation.
     func checkAndDeliverPendingNotifications() {
         guard (envVals["FLUXION_MENU_MACOS_NOTIFY_REFRESH"] ?? "true").lowercased() != "false" else {
             return
         }
         let path = macOSNotificationsPath
         guard FileManager.default.fileExists(atPath: path) else { return }
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8),
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+
+        // Atomically claim the current queue file by renaming it.  Any new
+        // records appended by the Python side after this point land in a fresh
+        // file at `path` and will be picked up on the next poll cycle.
+        let consumed = path + ".consumed"
+        do {
+            // Remove a stale consumed file left behind by a crash, if any.
+            try? FileManager.default.removeItem(atPath: consumed)
+            try FileManager.default.moveItem(atPath: path, toPath: consumed)
+        } catch {
+            // Another watcher won the rename — nothing to do this cycle.
             return
         }
-        // Truncate immediately so concurrent writes from the scheduler are not lost.
-        // We hold the lines in memory and deliver after truncation.
-        try? "".write(toFile: path, atomically: true, encoding: .utf8)
+        guard let content = try? String(contentsOfFile: consumed, encoding: .utf8),
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            try? FileManager.default.removeItem(atPath: consumed)
+            return
+        }
+        try? FileManager.default.removeItem(atPath: consumed)
 
         let decoder = JSONDecoder()
         for line in content.components(separatedBy: .newlines) {
@@ -1149,9 +1309,80 @@ extension AppDelegate {
                     userInfo: ["channel": channelKey, "user_id": userId],
                     categoryIdentifier: AppDelegate.pendingUserCategoryId
                 )
+            } else if note.kind == "workspace_access_request",
+                      let requestId = note.authorizationRequestId,
+                      !requestId.isEmpty {
+                let mode = note.mode ?? "read-only"
+                let workspace = note.workspace ?? note.body
+                let clientId = note.clientId ?? ""
+                let requester = workspaceRequesterDisplayName(clientId)
+                let access = workspaceAccessDisplayName(mode)
+                let projectName = (workspace as NSString).lastPathComponent
+                deliverLocalNotification(
+                    title: L10n.tr(
+                        "notification.workspace_access.title",
+                        requester,
+                        projectName.isEmpty ? workspace : projectName
+                    ),
+                    body: L10n.tr(
+                        "notification.workspace_access.body",
+                        access,
+                        abbreviatedWorkspacePath(workspace)
+                    ),
+                    userInfo: [
+                        "kind": "workspace_access_request",
+                        "authorization_request_id": requestId,
+                        "client_id": clientId,
+                        "workspace": workspace,
+                        "mode": mode,
+                    ],
+                    categoryIdentifier: AppDelegate.workspaceAccessCategoryId
+                )
             } else {
                 deliverLocalNotification(title: note.title, body: note.body)
             }
+        }
+    }
+
+    private func abbreviatedWorkspacePath(_ workspace: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        if workspace == home {
+            return "~"
+        }
+        let prefix = home + "/"
+        if workspace.hasPrefix(prefix) {
+            return "~/" + String(workspace.dropFirst(prefix.count))
+        }
+        return workspace
+    }
+
+    private func workspaceRequesterDisplayName(_ raw: String) -> String {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "codex":
+            return "Codex"
+        case "claude", "claude code":
+            return "Claude Code"
+        case "antigravity":
+            return "Antigravity"
+        case "mcp":
+            return "Fluxion MCP"
+        case "web":
+            return "Fluxion Web"
+        case "settings":
+            return "Fluxion"
+        case "":
+            return L10n.tr("notification.workspace_access.unknown_agent")
+        default:
+            return raw
+        }
+    }
+
+    private func workspaceAccessDisplayName(_ raw: String) -> String {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "workspace-write", "read-write", "write":
+            return L10n.tr("preferences.workspace_access.access.read_write")
+        default:
+            return L10n.tr("preferences.workspace_access.access.read_only")
         }
     }
 }

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import time
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from fluxion.config.settings import Settings
+from fluxion.config.settings.models import WorkspaceAuthorizationError
 from fluxion.mcp_server.diagnostics import force_cancel_view, reconcile_view, status_view
 from fluxion.mcp_server.logs import _output_view
 from fluxion.mcp_server.model_catalog import list_agent_models_view
-from fluxion.mcp_server.payloads import _error_payload, _timed_out_still_running_payload
+from fluxion.mcp_server.payloads import (
+    _authorization_wait_view,
+    _error_payload,
+    _timed_out_still_running_payload,
+)
 from fluxion.mcp_server.threads import _resolve_thread
 from fluxion.mcp_server.views import (
     _TERMINAL_STATUSES,
@@ -40,8 +48,11 @@ def run_subagent_tool(
     include_stdout: bool = False,
     include_subagent_preamble: bool | None = None,
     model: str = "",
+    client_id: str = "mcp",
+    authorization_request_id: str = "",
     wait_for_result: bool = False,
     timeout_sec: int = 300,
+    authorization_wait_ms: int = 0,
 ) -> dict[str, Any]:
     resolved_thread = _resolve_thread(thread)
     request = SubagentRunRequest(
@@ -58,9 +69,34 @@ def run_subagent_tool(
         conversation_key=conversation_key or None,
         include_subagent_preamble=include_subagent_preamble,
         model=model or None,
+        client_id=client_id,
+        authorization_request_id=authorization_request_id or None,
     )
     try:
-        handle = runner.submit(request)
+        try:
+            handle = runner.submit(request)
+        except Exception as exc:
+            decided = _authorization_after_wait(
+                error=exc,
+                runner=runner,
+                authorization_wait_ms=authorization_wait_ms,
+            )
+            status = str((decided or {}).get("status") or "")
+            request_id = str((decided or {}).get("authorization_request_id") or "")
+            if status not in {"approved", "project-allowed"}:
+                decided_error = _decided_authorization_error(exc, status)
+                if decided_error is None:
+                    raise
+                raise decided_error from exc
+            # The user approved while we waited, so replay the identical request
+            # once with the grant they just created. "project-allowed" means they
+            # made the workspace a permanent project instead, and that closed
+            # request id would no longer match.
+            request = replace(
+                request,
+                authorization_request_id=(request_id if status == "approved" else None),
+            )
+            handle = runner.submit(request)
         reset_cache()
         if not wait_for_result:
             payload = handle.to_payload()
@@ -103,11 +139,7 @@ def run_subagent_tool(
                 "resolved_model": result.resolved_model,
                 "model_resolution_source": result.model_resolution_source,
                 "changed_files": visible_changed_files(
-                    workspace=settings.resolve_run_workspace(
-                        raw_workspace=workspace,
-                        project_key=project,
-                        mode=mode,
-                    ),
+                    workspace=Path(handle.workspace),
                     result=result,
                 ),
                 "risk_flags": result.risk_flags,
@@ -132,8 +164,133 @@ def run_subagent_tool(
             parent_path=parent_path,
             profile=profile,
             mode=mode,
+            client_id=client_id,
+            authorization_request_id=authorization_request_id,
             settings=settings,
+            workspace_access=getattr(runner, "workspace_access", None),
         )
+
+
+def _authorization_after_wait(
+    *, error: Exception, runner: SubagentRunner, authorization_wait_ms: int
+) -> dict[str, Any] | None:
+    """Absorb the user's approval click into the call that provoked it.
+
+    The user is normally at the keyboard when they trigger a task, so waiting
+    here turns the common case into one successful call instead of depending on
+    the caller to come back for it. The wait is bounded and happens once: a user
+    who is away still gets the pending payload, and the caller waits explicitly
+    with wait_for_authorization from there.
+
+    Returns the request as it stood when the wait ended, or None when there is
+    nothing to wait for.
+    """
+    if authorization_wait_ms <= 0:
+        return None
+    authorization = getattr(error, "authorization", None)
+    if authorization is None or not getattr(authorization, "pending", False):
+        return None
+    request_id = str(getattr(authorization, "authorization_request_id", "") or "")
+    service = getattr(runner, "workspace_access", None)
+    if not request_id or service is None:
+        return None
+    try:
+        return service.wait_for_request(request_id, timeout_sec=authorization_wait_ms / 1000.0)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _decided_authorization_error(
+    error: Exception, status: str
+) -> WorkspaceAuthorizationError | None:
+    """Restate a rejection the user answered while this call was waiting.
+
+    Without this the payload would still read `pending`, telling the caller to
+    go wait for a decision that has already been made against it.
+    """
+    policy = {"denied": "one-time-denied", "expired": "one-time-expired"}.get(status)
+    authorization = getattr(error, "authorization", None)
+    if policy is None or authorization is None:
+        return None
+    reason = (
+        "The user declined this workspace authorization request."
+        if status == "denied"
+        else "This authorization request expired before it was answered."
+    )
+    return WorkspaceAuthorizationError(
+        replace(
+            authorization,
+            reason=reason,
+            policy=policy,
+            pending=False,
+            pending_status=status,
+        )
+    )
+
+
+def wait_for_authorization_tool(
+    *,
+    workspace_access: Any | None,
+    authorization_request_id: str,
+    wait_ms: int = 0,
+    max_wait_ms: int = 60_000,
+) -> dict[str, Any]:
+    """Long-poll one workspace authorization request until the user decides.
+
+    The wait is capped the same way get_task_status caps its own long poll: a
+    human may take minutes to click, but a single MCP call must stay under the
+    client's request timeout, so an unanswered request comes back still pending
+    and the caller decides whether to keep waiting.
+    """
+    request_id = (authorization_request_id or "").strip()
+    capped = min(max(0, int(wait_ms or 0)), max(0, int(max_wait_ms)))
+    if not request_id:
+        return _authorization_wait_view(
+            {
+                "found": False,
+                "authorization_request_id": "",
+                "request_id": "",
+                "status": "not-found",
+                "summary": (
+                    "Pass the authorization_request_id returned by the rejected run_subagent call."
+                ),
+            },
+            waited_ms=0,
+            wait_cap_ms=capped,
+        )
+    if workspace_access is None:
+        return {
+            "found": False,
+            "authorization_request_id": request_id,
+            "status": "unavailable",
+            "pending": False,
+            "terminal": True,
+            "should_retry": False,
+            "waited_ms": 0,
+            "next_action": (
+                "This Fluxion MCP server has no workspace access service, so "
+                "authorization requests cannot be tracked. Approve the workspace in "
+                "Fluxion Preferences and retry the task."
+            ),
+            "next_tools": ["run_subagent"],
+        }
+    started = time.monotonic()
+    try:
+        request = workspace_access.wait_for_request(request_id, timeout_sec=capped / 1000.0)
+    except ValueError as exc:
+        return _authorization_wait_view(
+            {
+                "found": False,
+                "authorization_request_id": request_id,
+                "request_id": request_id,
+                "status": "not-found",
+                "summary": str(exc),
+            },
+            waited_ms=0,
+            wait_cap_ms=capped,
+        )
+    waited_ms = int((time.monotonic() - started) * 1000)
+    return _authorization_wait_view(request, waited_ms=waited_ms, wait_cap_ms=capped)
 
 
 def create_server():
@@ -153,6 +310,10 @@ def create_server():
     runner = SubagentRunner(settings)
     mcp = MCPServer("Fluxion")
 
+    def current_settings() -> Settings:
+        reload_settings = getattr(Settings, "reload", None)
+        return reload_settings() if callable(reload_settings) else Settings.load()
+
     @mcp.tool()
     def run_subagent(
         prompt: str,
@@ -168,6 +329,8 @@ def create_server():
         include_stdout: bool = False,
         include_subagent_preamble: bool | None = None,
         model: str = "",
+        client_id: str = "mcp",
+        authorization_request_id: str = "",
         wait_for_result: bool = False,
         timeout_sec: int = 300,
     ) -> dict[str, Any]:
@@ -193,6 +356,18 @@ def create_server():
         profile/mode: for edit/fix/implement tasks set profile=implement and
         mode=workspace-write; the defaults profile=inspect / mode=read-only are
         intentionally read-only.
+
+        Workspace authorization: an unapproved workspace makes this call wait in
+        place for the user to approve the notification Fluxion just raised (up to
+        FLUXION_MCP_AUTHORIZATION_WAIT_MS, default 60s), then run normally — so an
+        approved task usually needs no follow-up at all. If the user has not
+        answered by then it returns error_code=WORKSPACE_NOT_AUTHORIZED with
+        pending=true and an authorization_request_id. That is a pending HUMAN
+        decision, not a transient failure, so retrying right away cannot succeed:
+        call wait_for_authorization with that id instead of ending your turn to ask
+        the user to report back. Retry this call only when the wait reports approved
+        (pass the same id) or project-allowed (pass no id). If it reports denied,
+        report the refusal instead of re-requesting.
 
         task_name: optional free-form label for the run. It is shown as-is in the
         UI and also slugified into the agent-path segment (lowercased, non
@@ -246,9 +421,50 @@ def create_server():
             session_policy=session_policy,
             include_subagent_preamble=include_subagent_preamble,
             model=model,
+            client_id=client_id,
+            authorization_request_id=authorization_request_id,
             wait_for_result=wait_for_result,
             timeout_sec=timeout_sec,
             include_stdout=include_stdout,
+            authorization_wait_ms=current_settings().mcp_authorization_wait_ms,
+        )
+
+    @mcp.tool()
+    def wait_for_authorization(authorization_request_id: str, wait_ms: int = 0) -> dict[str, Any]:
+        """Wait for the user's decision on a pending workspace authorization request.
+
+        When run_subagent returns error_code=WORKSPACE_NOT_AUTHORIZED with pending=true,
+        the workspace is waiting on a HUMAN: Fluxion has raised a notification and the
+        user must approve it. Retrying the task immediately cannot succeed. Call this
+        tool with the returned authorization_request_id instead of ending your turn to
+        ask the user to report back — they approve while this call is waiting.
+
+        Pass wait_ms > 0 to long-poll: the call blocks until the request leaves
+        "pending" or the wait elapses. wait_ms is capped at
+        FLUXION_MCP_STATUS_MAX_WAIT_MS (default 60000 = 60s) to stay under the MCP
+        client's per-call request timeout, so an unanswered request just comes back
+        pending — call again to keep waiting, and tell the user you are waiting on
+        their approval.
+
+        Act on `status`, not on the fact that the call returned:
+        - approved: retry the original run_subagent with the same
+          authorization_request_id (the returned retry_authorization_request_id).
+        - project-allowed: the user granted the workspace permanently; retry the task
+          WITHOUT authorization_request_id.
+        - pending: still undecided; keep waiting or ask the user. Do NOT retry.
+        - denied: the user refused. Do NOT retry and do NOT raise the same request
+          again; report the refusal.
+        - expired / consumed / active / not-found: this request id is finished. Submit
+          a fresh run_subagent without an authorization_request_id if the work is still
+          wanted.
+
+        `next_action` states the same thing in one sentence; `should_retry` is true only
+        when retrying will actually be authorized."""
+        return wait_for_authorization_tool(
+            workspace_access=getattr(runner, "workspace_access", None),
+            authorization_request_id=authorization_request_id,
+            wait_ms=wait_ms,
+            max_wait_ms=current_settings().mcp_status_max_wait_ms,
         )
 
     @mcp.tool()
@@ -264,16 +480,60 @@ def create_server():
         pricing context only and may not be valid as a model override. Provider, base
         URL, and auth remain settings-level config.
         """
-        return list_agent_models_view(agent=agent, project=project, settings=settings)
+        latest_settings = current_settings()
+        effective_agent = agent
+        catalog_project = project
+        if project and project not in latest_settings.projects:
+            try:
+                managed_project = runner.workspace_access.resolve_project(project)
+            except Exception:
+                managed_project = None
+            if managed_project is not None:
+                if (agent or "").strip().lower() in {"", "auto", "default"}:
+                    effective_agent = managed_project.default_executor or agent
+                # The catalog only needs the managed project's default above;
+                # Settings.resolve_project cannot resolve App-owned entries.
+                catalog_project = ""
+        return list_agent_models_view(
+            agent=effective_agent,
+            project=catalog_project,
+            settings=latest_settings,
+        )
 
     @mcp.tool()
     def list_projects() -> dict[str, Any]:
         """List configured Fluxion projects available for sub-agent runs."""
-        projects = [
-            project.to_public_dict()
-            for project in sorted(settings.projects.values(), key=lambda item: item.key)
-        ]
-        result: dict[str, Any] = {"projects": projects}
+        access_service = getattr(runner, "workspace_access", None)
+        latest_settings = current_settings()
+        project_by_key = {
+            project.key: project.to_public_dict() for project in latest_settings.projects.values()
+        }
+        if access_service is not None:
+            try:
+                access_state = access_service.list_workspaces()
+                for entry in access_state.get("workspaces", []):
+                    if not entry.get("managed"):
+                        continue
+                    project_by_key[str(entry["key"])] = {
+                        "key": str(entry["key"]),
+                        "workspace": str(entry["path"]),
+                        "default_executor": str(entry.get("default_executor") or ""),
+                        "description": str(entry.get("description") or ""),
+                        "access": str(entry.get("access") or ""),
+                        "source": str(entry.get("source") or "app"),
+                    }
+                result: dict[str, Any] = {
+                    "projects": [project_by_key[key] for key in sorted(project_by_key)]
+                }
+                result["workspaces"] = access_state.get("workspaces", [])
+                result["workspace_runtime_context"] = access_state.get("runtime_context", {})
+            except Exception:
+                # Listing permissions is informative; it must not make the
+                # existing project discovery tool unavailable.
+                result = {"projects": [project_by_key[key] for key in sorted(project_by_key)]}
+        else:
+            result = {"projects": [project_by_key[key] for key in sorted(project_by_key)]}
+        projects = result["projects"]
         if not projects:
             result["hint"] = (
                 "No projects are configured. You can still run_subagent by passing an "
@@ -286,7 +546,7 @@ def create_server():
     def get_project(project: str) -> dict[str, Any]:
         """Return one configured Fluxion project by key."""
         try:
-            resolved = settings.resolve_project(project)
+            resolved = runner.workspace_access.resolve_project(project)
         except Exception as exc:
             return {"found": False, "project": project, "summary": str(exc)}
         if resolved is None:
