@@ -82,6 +82,7 @@ class Settings:
     change_set_max_file_bytes: int
     change_set_max_total_bytes: int
     mcp_status_max_wait_ms: int
+    mcp_authorization_wait_ms: int
     status_updates: set[str]
     upload_log_on_success: bool
     locale_mode: str
@@ -314,6 +315,22 @@ class Settings:
                 _parse_int(
                     os.environ.get("FLUXION_MCP_STATUS_MAX_WAIT_MS"),
                     default=60_000,
+                ),
+            ),
+            # How long an MCP run_subagent call waits in place for the user to
+            # answer a workspace approval it just raised. The user is normally
+            # at the keyboard when they trigger a task, so absorbing that click
+            # turns the common case into one successful call instead of relying
+            # on the caller to come back for it. 0 disables the inline wait and
+            # returns the pending rejection immediately.
+            mcp_authorization_wait_ms=min(
+                300_000,
+                max(
+                    0,
+                    _parse_int(
+                        os.environ.get("FLUXION_MCP_AUTHORIZATION_WAIT_MS"),
+                        default=60_000,
+                    ),
                 ),
             ),
             status_updates=_parse_status_updates(
@@ -552,36 +569,23 @@ class Settings:
         project_key: str | None = None,
         mode: str = "read-only",
     ) -> WorkspaceAuthorization:
-        project = self.resolve_project(project_key)
-        if project is None:
-            path = self._resolve_workspace_path(raw_workspace, base=self.workspace_root)
-            return self._authorize_workspace_path(
-                path=path,
-                mode=mode,
-                project=None,
-            )
+        # Workspace authorization is a first-class service.  Keep this
+        # compatibility method so existing channels and callers retain their
+        # public Settings API while MCP/Web runners can share a hot-loaded
+        # service instance.  The service reads the managed JSON file on every
+        # authorization and reloads legacy settings when available.
+        from fluxion.workspace.access import WorkspaceAccessService
 
-        workspace_value = (raw_workspace or "").strip()
-        if not workspace_value or workspace_value == ".":
-            path = project.workspace
-        else:
-            path = self._resolve_workspace_path(workspace_value, base=project.workspace)
-
-        if not path.exists() or not path.is_dir():
-            return WorkspaceAuthorization(
-                allowed=False,
-                reason=f"Workspace does not exist or is not a directory: {path}",
-                policy="missing",
-                workspace=path,
-            )
-        if not _is_within(path, project.workspace):
-            return WorkspaceAuthorization(
-                allowed=False,
-                reason=f"Workspace for project {project.key} must be inside {project.workspace}",
-                policy="project-boundary",
-                workspace=path,
-            )
-        return self._authorize_workspace_path(path=path, mode=mode, project=project)
+        return WorkspaceAccessService(
+            self,
+            settings_loader=type(self).reload,
+        ).authorize_run_workspace(
+            raw_workspace=raw_workspace,
+            project_key=project_key,
+            mode=mode,
+            client_id="settings",
+            request_if_denied=False,
+        )
 
     def _resolve_workspace_path(self, raw_workspace: str | None, *, base: Path) -> Path:
         if raw_workspace:

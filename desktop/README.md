@@ -23,6 +23,28 @@ the Web frontend on every invocation. If `src/fluxion/web/static/index.html`
 is missing, it exits before replacing an existing app and prints the commands
 needed to generate the assets.
 
+The bundled backend snapshot is reproducible by default: it contains committed
+files from `HEAD`, not unrelated edits or untracked experiments in the current
+worktree. During normal development, run the app against the checkout with
+`FLUXION_REPO_PATH` as described below. If a copied development app specifically
+needs to carry uncommitted backend work, opt in explicitly:
+
+```bash
+FLUXION_BUNDLE_WORKTREE=1 ./desktop/build.sh
+```
+
+That flag only changes the bundled snapshot; it does not overwrite an existing
+managed backend. For an intentional one-off deployment to
+`~/.local/share/fluxion`, both safeguards must be enabled:
+
+```bash
+FLUXION_BUNDLE_WORKTREE=1 FLUXION_DEV_AUTO_UPGRADE=1 ./desktop/build.sh
+```
+
+The latter is a development escape hatch. Opening that app replaces the shared
+managed backend on launch, so it should not be used for release packages or as
+the normal source-development workflow.
+
 ## Release package
 
 For user-facing distribution, build a precompiled app bundle and DMG:

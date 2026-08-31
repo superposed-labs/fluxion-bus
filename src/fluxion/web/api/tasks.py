@@ -29,6 +29,8 @@ class TaskRunInput(BaseModel):
     session_policy: str = "auto"
     conversation_key: str = ""
     model: str = ""
+    client_id: str = "web"
+    authorization_request_id: str = ""
 
 
 def executor_settings_fingerprint(settings: Settings) -> tuple[Any, ...]:
@@ -65,6 +67,12 @@ def _current_runner(request: Request) -> tuple[SubagentRunner | None, Settings |
         request.app.state.subagent_settings = settings
         request.app.state.subagent_settings_fingerprint = next_fingerprint
         request.app.state.subagent_runner = runner
+    else:
+        # Permission and other non-executor settings can refresh without
+        # rebuilding GatewayCore. The runner's WorkspaceAccessService takes
+        # its own fresh authorization snapshot for every submission.
+        settings = next_settings
+        request.app.state.subagent_settings = settings
     return runner, settings
 
 
@@ -147,10 +155,21 @@ def run_task(payload: TaskRunInput, request: Request) -> dict[str, Any]:
         session_policy=payload.session_policy,
         conversation_key=payload.conversation_key,
         model=payload.model,
+        client_id=payload.client_id or "web",
+        authorization_request_id=payload.authorization_request_id,
         wait_for_result=False,
+        # No inline wait for a workspace approval here: this handler runs on a
+        # threadpool worker, so holding it open for a human click would spend a
+        # server worker per waiting client. HTTP callers poll
+        # GET /api/workspaces/requests/{id} instead.
+        authorization_wait_ms=0,
     )
     if result.get("success") is False:
-        raise HTTPException(status_code=400, detail=str(result.get("summary") or "Task rejected"))
+        status_code = 403 if result.get("error_code") == "WORKSPACE_NOT_AUTHORIZED" else 400
+        # Keep the structured authorization_request_id/pending fields in the
+        # HTTP response.  The caller is responsible for retrying after App
+        # approval; the server never replays a rejected task automatically.
+        raise HTTPException(status_code=status_code, detail=result)
     return result
 
 

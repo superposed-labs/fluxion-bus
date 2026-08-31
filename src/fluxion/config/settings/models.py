@@ -28,8 +28,34 @@ class WorkspaceAuthorization:
     reason: str
     policy: str
     workspace: Path
+    access: str = "read-only"
+    source: str = ""
+    authorization_request_id: str = ""
+    pending: bool = False
+    pending_status: str = ""
+    client_id: str = ""
+    default_executor: str = ""
+    # A task-scoped approval is activated only after the exact retry reaches
+    # the task gate.  The runner binds this grant to the created task and
+    # retires it when the task publishes its terminal result.
+    authorization_grant_id: str = ""
+    authorization_scope: str = ""
+    authorization_expires_at: str = ""
 
     def require_allowed(self) -> Path:
         if not self.allowed:
-            raise ValueError(self.reason)
+            raise WorkspaceAuthorizationError(self)
         return self.workspace
+
+
+class WorkspaceAuthorizationError(ValueError):
+    """A run was rejected because its workspace authorization was insufficient.
+
+    Keeping the structured authorization on the exception lets MCP and Web
+    callers return a retryable request id without parsing a human-readable
+    error string.
+    """
+
+    def __init__(self, authorization: WorkspaceAuthorization) -> None:
+        self.authorization = authorization
+        super().__init__(authorization.reason)

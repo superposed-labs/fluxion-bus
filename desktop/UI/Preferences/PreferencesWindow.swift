@@ -180,6 +180,37 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var notchExpandedSection: NSStackView!
     var notchBehaviorSection: NSStackView!
     var apiModelsSection: NSStackView!
+
+    // Workspace Access
+    var workspaceAccessContainer: NSStackView!
+    var workspaceAccessRequestsCard: AccentBannerCardView!
+    var workspaceAccessRequestsStack: NSStackView!
+    var workspaceAccessSearchField: NSSearchField!
+    var workspaceAccessCountLabel: NSTextField!
+    var workspaceAccessFilterSegmented: NSSegmentedControl!
+    var workspaceAccessTableCard: CardView!
+    var workspaceAccessTable: NSTableView!
+    var workspaceAccessTableScrollView: NSScrollView!
+    var workspaceAccessTableHeightConstraint: NSLayoutConstraint?
+    var workspaceAccessSystemCard: CardView!
+    var workspaceAccessSystemStack: NSStackView!
+    var workspaceAccessEmptyCard: NSView!
+    var workspaceAccessNoResultsCard: NSView!
+    var workspaceAccessNoResultsLabel: NSTextField!
+    var workspaceAccessErrorCard: NSView!
+    var workspaceAccessEntries: [WorkspaceAccessEntryRow] = []
+    var workspaceAccessRequests: [WorkspaceAccessRequestRow] = []
+    var workspaceAccessExpandedId: String?
+    var workspaceAccessShowTechDetailsIds: Set<String> = []
+    var workspaceAccessDefaultPath: String?
+    var workspaceAccessPhase: WorkspaceAccessPhase = .loading
+    var workspaceAccessFilter: WorkspaceAccessFilterOption = .all
+    var workspaceAccessSearchQuery: String = ""
+    var focusedWorkspaceAccessRequestId: String?
+    var activeWorkspaceProjectEditor: WorkspaceAccessProjectSheetController?
+    var activeWorkspaceRequestDetailsSheet: WorkspaceAccessRequestDetailsSheetController?
+    var activeWorkspaceStillEffectiveSheet: WorkspaceAccessStillEffectiveSheetController?
+    var activeWorkspaceAccessAllRequestsSheet: WorkspaceAccessAllRequestsSheetController?
     
     // Sub-agent Projects widgets
     var projectsContainerStack: NSStackView!
@@ -348,11 +379,13 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         if let agentsStack = pageStackViews["agents"] {
             buildUsageSection(into: agentsStack, availability: availability)
             buildExecutorsSection(into: agentsStack, availability: availability)
-            // Folders first, then what agents may do in them: the two halves of
-            // the same authorization question, so they read in order.
-            buildSubagentProjectsSection(into: agentsStack)
+            // Executor capability and Antigravity's CLI permission bypass are
+            // intentionally separate from workspace path authorization.
             buildAgentPermissionsSection(into: agentsStack, availability: availability)
             buildApiModelsSection(into: agentsStack)
+        }
+        if let workspaceStack = pageStackViews["workspace-access"] {
+            buildWorkspaceAccessSection(into: workspaceStack)
         }
         if let automationStack = pageStackViews["automation"] {
             buildQuotaResetSection(into: automationStack)
@@ -413,10 +446,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         appDelegate.loadEnv()
         
         let savedPageId = currentPageId
-        window?.orderOut(nil)
-        window = nil
-        
-        buildWindowIfNeeded()
+        if window == nil {
+            buildWindowIfNeeded()
+        }
         
         if !savedPageId.isEmpty {
             switchPage(to: savedPageId)
@@ -430,6 +462,8 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             NSApp.activate(ignoringOtherApps: true)
             if currentPageId == "provider-routing" {
                 renderProviderRouting()
+            } else if currentPageId == "workspace-access" {
+                reloadWorkspaceAccess()
             } else {
                 scheduleProviderRoutingPrefetch(for: win)
             }
@@ -473,6 +507,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         applyAutoPingModes()
         for channel in PendingUserChannel.allCases {
             rebuildPendingUsersStack(channel)
+        }
+        if currentPageId == "workspace-access" {
+            reloadWorkspaceAccess()
         }
         refreshGatewayBanner()
     }
@@ -1052,24 +1089,10 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         updates["FLUXION_FEISHU_ALLOWED_USERS"] = feishuAllowedUsersEntry.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         updates["FLUXION_FEISHU_DEFAULT_WORKSPACE"] = feishuWorkspaceEntry.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Sub-agent Projects
-        var items: [ProjectItem] = []
-        for row in projectRowViews {
-            let key = row.keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let ws = row.workspaceField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if key.isEmpty || ws.isEmpty { continue }
-            let execIdx = row.executorPopUp.indexOfSelectedItem
-            let exec: String
-            switch execIdx {
-            case 1: exec = "claude"
-            case 2: exec = "codex"
-            case 3: exec = "antigravity"
-            default: exec = "default"
-            }
-            let desc = row.descField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            items.append(ProjectItem(key: key, workspace: ws, executor: exec, description: desc))
-        }
-        updates["FLUXION_PROJECTS"] = serializeProjects(items)
+        // Workspace permissions are stored in the versioned JSON managed by
+        // WorkspaceAccessService.  Do not serialize FLUXION_PROJECTS here:
+        // legacy project configuration remains authoritative and visible, and
+        // an unrelated Preferences save must never erase it.
 
         // Channels only deliver messages while the gateway runs, but its
         // autostart switch lives on the Services page and defaults to off — a
@@ -1240,6 +1263,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         }
         if pageId == "provider-routing" {
             prepareProviderRoutingForDisplay()
+        }
+        if pageId == "workspace-access" {
+            reloadWorkspaceAccess()
         }
 
         if let search = searchField {
@@ -1479,6 +1505,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     func controlTextDidChange(_ obj: Notification) {
         if let textField = obj.object as? NSTextField, textField == searchField {
             filterSettings(query: textField.stringValue)
+        } else if let textField = obj.object as? NSSearchField,
+                  textField == workspaceAccessSearchField {
+            filterWorkspaceAccessRows()
         }
     }
 

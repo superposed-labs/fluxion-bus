@@ -24,6 +24,7 @@ from fluxion.web.api import sessions as sessions_api
 from fluxion.web.api import stream as stream_api
 from fluxion.web.api import tasks as tasks_api
 from fluxion.web.api import usage as usage_api
+from fluxion.web.api import workspaces as workspaces_api
 from fluxion.web.auth import token_guard
 from fluxion.web.deps import get_data_dir
 from fluxion.web.services.event_stream import TaskEventStream
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(executors_api.router, prefix="/api")
     app.include_router(schedules_api.router, prefix="/api")
     app.include_router(monitor_api.router, prefix="/api")
+    app.include_router(workspaces_api.router, prefix="/api")
 
     if _INDEX_HTML.exists():
         app.mount(

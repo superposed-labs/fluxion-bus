@@ -517,6 +517,16 @@ discover them with `list_projects` and call:
 `project`, `workspace="."` means the project root, relative paths resolve
 inside the project, and absolute paths must also be inside the project.
 
+The desktop-managed workspace access file is
+`$FLUXION_DATA_DIR/config/workspace_access.json`. It is versioned, atomically
+written with mode `0600`, and additive: values from `FLUXION_PROJECTS`,
+`FLUXION_PROJECTS_FILE`, `FLUXION_ALLOWED_WORKSPACES`,
+`FLUXION_WRITE_ALLOWED_WORKSPACES`, and
+`FLUXION_TRUSTED_WORKSPACE_ROOTS` remain effective and are shown with their
+legacy source. The Workspace Permissions page and `/api/workspaces` expose the
+merged effective list. Permission edits are hot-loaded for each new MCP/Web
+task, so a service restart is not required.
+
 ## Workspace authorization policy
 
 MCP/CLI sub-agent runs use a stricter policy than the Slack workspace override.
@@ -544,6 +554,29 @@ Policy order:
 5. `read-only` outside registered projects is allowed only when the workspace
    is a Git repository root under `FLUXION_TRUSTED_WORKSPACE_ROOTS` and
    `FLUXION_WORKSPACE_DISCOVERY=true`.
+
+When a task targets an unauthorized existing directory, Fluxion records a
+deduplicated pending request and returns `WORKSPACE_NOT_AUTHORIZED` together
+with `authorization_request_id` and its pending status. The macOS notification
+offers `Allow this task`, `Allow this project`, and `Set Permissions`.
+`Allow this task` is bound to the exact canonical path, mode, client id, and
+request id, then to the accepted task itself. It is retired when that task
+returns, fails, or is canceled; an abnormal process exit is bounded by a
+24-hour recovery expiry. `Allow this project` atomically creates or updates
+App-managed persistent access and closes the request. The caller must retry
+after approval; Fluxion never replays a rejected task automatically.
+
+An MCP `run_subagent` call waits in place for that decision up to
+`FLUXION_MCP_AUTHORIZATION_WAIT_MS` (default 60000; `0` disables), so a user who
+is at the keyboard just approves and the run proceeds inside the same call.
+When nobody answers in time the rejection returns rather than blocking further,
+and callers wait for the decision explicitly: MCP clients call
+`wait_for_authorization`
+(see `docs/mcp.md`), which long-polls the request until it is answered; HTTP
+callers poll `GET /api/workspaces/requests/{id}`, which reads that one request
+without enumerating other clients' pending paths. A refusal is reported as
+`authorization_state=denied` with `retryable=false` so a declined request is
+not retried as if it were a transient failure.
 
 ### Channel-to-workspace mode
 
@@ -626,6 +659,15 @@ tasks (the scheduler daemon does).
 | `POST /api/schedules/{id}/enable` | Enable / disable a rule |
 | `DELETE /api/schedules/{id}` | Delete a rule |
 | `GET /api/schedule_runs` | Recent fire history |
+| `GET /api/workspaces` | Effective workspace permissions from every source |
+| `POST /api/workspaces` | Create an App-managed workspace entry |
+| `PUT /api/workspaces/{id}` | Update an App-managed workspace entry |
+| `DELETE /api/workspaces/{id}` | Delete an App-managed workspace entry |
+| `GET /api/workspaces/requests` | List authorization requests |
+| `GET /api/workspaces/requests/{id}` | Read one authorization request (404 if unknown) |
+| `POST /api/workspaces/requests/{id}/approve` | Approve one request for this exact path, mode, and client |
+| `POST /api/workspaces/requests/{id}/deny` | Refuse one request |
+| `POST /api/workspaces/requests/{id}/allow-project` | Approve and persist the workspace as a project |
 
 ## Scheduler
 
@@ -669,6 +711,7 @@ minimal. The table below covers the most commonly tuned keys.
 | `FLUXION_WRITE_ALLOWED_WORKSPACES` | | Comma-separated paths allowed for `workspace-write` outside registered projects |
 | `FLUXION_PROJECTS_FILE` | | JSON project registry used by MCP/CLI sub-agent callers |
 | `FLUXION_PROJECTS` | | Inline project registry, e.g. `app=/path/app\|executor=codex` |
+| `FLUXION_DATA_DIR/config/workspace_access.json` | | Versioned App-managed workspace permissions (atomic `0600` JSON; additive to legacy settings) |
 | `FLUXION_DATA_DIR` | `data` | State directory (relative to `FLUXION_WORKSPACE_ROOT`) |
 | `FLUXION_DEFAULT_EXECUTOR` | `codex` | `codex` / `claude` / `antigravity` |
 | `FLUXION_WORKER_COUNT` | `3` | Concurrent runs per Fluxion process. Same-workspace writes stay serialized by the workspace lock regardless |

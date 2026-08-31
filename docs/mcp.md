@@ -68,11 +68,21 @@ tools. Tool names are exposed as `mcp__fluxion__run_subagent`,
 - `Settings.load()` reads `FLUXION_ENV_FILE` first when set, then
   `FLUXION_WORKSPACE_ROOT/.env`, then the current directory's `.env`.
 
+Workspace permission changes are read immediately before each new task. Adding
+or removing an App-managed path therefore takes effect without restarting MCP
+or the Web service. A task that has already been accepted keeps its canonical
+workspace snapshot.
+
 ## Project registry
 
 For multi-project MCP usage, register project keys so primary agents can call
 Fluxion with `project="web"` instead of passing raw absolute paths every
-time. Registered project workspaces are added to the allowed workspace set.
+time. Registered project workspaces are added to the allowed workspace set. The
+desktop-managed entries live at
+`$FLUXION_DATA_DIR/config/workspace_access.json` (versioned JSON, atomically
+replaced with mode `0600`). Legacy environment and project settings are never
+migrated or removed; they remain effective and are shown with a
+`legacy:FLUXION_…` source.
 
 Recommended JSON file:
 
@@ -109,6 +119,9 @@ inside the project root; absolute values must still be inside the project
 root. Without `project`, `workspace` keeps its existing behavior and must be
 inside `FLUXION_ALLOWED_WORKSPACES`.
 
+The existing `list_projects` tool also includes effective `workspaces` rows and
+runtime context for project-based and raw-path callers.
+
 For path-based calls without a registered project, configure trusted roots:
 
 ```env
@@ -122,6 +135,61 @@ With this policy, `read-only` runs may target Git repository roots under the
 trusted roots. `workspace-write` remains stricter: it requires a registered
 project, `FLUXION_ALLOWED_WORKSPACES`, or `FLUXION_WRITE_ALLOWED_WORKSPACES`.
 Denied workspaces always win.
+
+### Pending workspace approval
+
+If a new path is not authorized, `run_subagent` returns
+`error_code=WORKSPACE_NOT_AUTHORIZED` with `authorization_request_id` and
+`pending=true`. Fluxion records one deduplicated, throttled pending request and
+the macOS app shows it in Notification Center and Preferences. The caller must
+retry after approval; Fluxion never re-runs a rejected task automatically.
+
+`run_subagent` first waits in place for that decision, up to
+`FLUXION_MCP_AUTHORIZATION_WAIT_MS` (default 60000 = 60s; `0` disables it). The
+user is normally at the keyboard when they trigger a task, so absorbing their
+click turns the common case into one successful call: the run just proceeds,
+and there is nothing for the caller to retry. If the user answers with a
+refusal during that wait, the call comes back as `denied` rather than as
+"undecided".
+
+Only when nobody answers in time does the pending rejection come back. From
+there the decision is on human time and an immediate retry cannot succeed: call
+[`wait_for_authorization`](#wait_for_authorization) with the returned
+`authorization_request_id` — do not end the turn to ask the user to report back
+— and retry only once it reports `approved` or `project-allowed`.
+
+The Web API's `POST /api/tasks` never waits inline (`authorization_wait_ms=0`):
+its handler occupies a threadpool worker, so HTTP callers poll
+`GET /api/workspaces/requests/{id}` instead.
+
+`authorization_state` says which kind of rejection this is, so a caller never
+has to read a refusal as "not yet":
+
+| `authorization_state` | `retryable` | Meaning |
+| --- | --- | --- |
+| `pending` | `true` | Waiting on the user. Wait with `wait_for_authorization`; do not retry yet. |
+| `denied` | `false` | The user refused. Do not retry and do not re-raise the same request. |
+| `expired` / `consumed` | `true` | The request or grant is finished. Submit again *without* `authorization_request_id` to raise a fresh one. |
+| `in-use` | `false` | The grant is attached to another running task. Follow that task instead. |
+| `not-authorized` | `true` | No request applies (for example a denied root or a project-boundary violation). |
+
+`error_code` stays `WORKSPACE_NOT_AUTHORIZED` for the whole family so the Web
+API keeps mapping it to HTTP 403.
+
+The notification offers `Allow this task`, `Allow this project`, and `Set
+Permissions`. `Allow this task` creates a temporary grant bound to the exact
+canonical path, access mode, client id, and request id. The grant is bound to
+the accepted Fluxion task and is retired when that task returns, fails, or is
+canceled. A 24-hour expiry is retained only as a recovery guard if the owning
+process exits abnormally. The grant cannot override
+`FLUXION_DENIED_WORKSPACES`, be reused by another task, or be used for another
+path, mode, or client.
+
+`Allow this project` atomically creates or updates an App-managed project entry
+and closes the pending request. It is idempotent if the notification is clicked
+twice. The caller still needs to retry the original task after either approval
+action; Fluxion does not replay a rejected task automatically. The structured
+error includes the exact `authorization_request_id` to use on that retry.
 
 Fluxion serializes `workspace-write` sub-agent runs per workspace. Read-only
 runs may still execute concurrently.
@@ -152,6 +220,8 @@ Submit a sub-agent task. Returns `run_id` immediately by default.
 | `include_stdout` | `false` | Include raw executor stdout/stderr. Keep `false` unless debugging. |
 | `include_subagent_preamble` | `auto` | Prepend the standard Fluxion sub-agent preamble to the prompt. `auto` includes it on new sessions and skips it on resumed sessions to save tokens. Pass `false` to always suppress. |
 | `timeout_sec` | `300` | Server-side blocking wait budget when `wait_for_result=true`. On expiry, Fluxion returns `timed_out=true` but does not cancel the run; it remains queued or running, bounded by `settings.task_timeout_sec`. |
+| `client_id` | `mcp` | Stable caller identifier used to bind a pending/task-scoped workspace authorization. |
+| `authorization_request_id` | `""` | Request id returned by a workspace rejection; pass it unchanged when retrying after App approval. |
 | `workspace` | `.` | Workspace directory for the run. With `project`, `.` means the project root and relative paths resolve inside that project. Without `project`, relative paths resolve under `FLUXION_WORKSPACE_ROOT`. |
 | `parent_path` | `/root` | Canonical local agent path recorded for UI/MCP routing metadata. |
 | `task_name` | `""` | Optional task label stored with the run. |
@@ -190,6 +260,32 @@ Returns compact polling status for one `run_id`.
 | `run_id` | (required) | Run identifier returned by `run_subagent`. |
 | `wait_ms` | `0` | Long-poll up to this many milliseconds, capped by `FLUXION_MCP_STATUS_MAX_WAIT_MS`. |
 | `detail` | `false` | Include the full status view with repeated metadata such as timestamps, subagent metadata, changed_files, diff_summary, artifacts, and change_set_file. |
+
+### `wait_for_authorization`
+
+Long-poll one pending workspace authorization request until the user decides.
+Use it after a `WORKSPACE_NOT_AUTHORIZED` rejection with `pending=true`.
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `authorization_request_id` | (required) | Id returned by the rejected `run_subagent` call. |
+| `wait_ms` | `0` | Long-poll up to this many milliseconds, capped by `FLUXION_MCP_STATUS_MAX_WAIT_MS`. `0` returns the current status immediately. |
+
+The cap keeps a single call under the MCP client's request timeout: an
+unanswered request comes back with `status=pending` and `timed_out=true`, and
+the caller decides whether to keep waiting. Act on `status`, not on the fact
+that the call returned:
+
+| `status` | `should_retry` | Next step |
+| --- | --- | --- |
+| `approved` | `true` | Retry `run_subagent` with `retry_authorization_request_id`. |
+| `project-allowed` | `true` | The workspace is now a permanent project: retry *without* `authorization_request_id`. |
+| `pending` | `false` | Undecided. Keep waiting, or ask the user to approve the notification. |
+| `denied` | `false` | The user refused. Report it; do not retry or re-request. |
+| `expired`, `consumed`, `active`, `not-found` | `false` | This id is finished. Raise a fresh request if the work is still wanted. |
+
+`terminal` is true whenever the request has left `pending`, and `next_action`
+states the same conclusion in one sentence.
 
 ### `cancel_subagent_run`
 
@@ -309,6 +405,27 @@ When an active run should be stopped early.
 2. Poll `get_task_status` until the status reaches `CANCELED` or another
    terminal state.
 3. Call `get_task_result` to inspect what was produced before cancellation.
+
+### Workspace approval
+
+When `run_subagent` returns `error_code=WORKSPACE_NOT_AUTHORIZED` with
+`pending=true`.
+
+Reaching this flow at all means the user did not answer during the call's own
+inline wait.
+
+1. Tell the user a Fluxion notification is waiting for them. Nothing proceeds
+   until they answer it.
+2. Call `wait_for_authorization` with the returned `authorization_request_id`
+   and `wait_ms` (up to `FLUXION_MCP_STATUS_MAX_WAIT_MS`). Do this instead of
+   ending the turn: the user approves while the call waits.
+3. If it returns `status=pending` with `timed_out=true`, call it again to keep
+   waiting, or check back with the user.
+4. On `approved`, retry the identical `run_subagent` call with
+   `retry_authorization_request_id`. On `project-allowed`, retry it without any
+   `authorization_request_id`.
+5. On `denied`, stop. Report the refusal and ask the user how to proceed
+   instead of raising the same request again.
 
 ### Revert a run
 

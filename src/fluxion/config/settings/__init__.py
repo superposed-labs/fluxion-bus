@@ -19,6 +19,7 @@ from fluxion.config.settings.models import (
     PROJECT_EXECUTORS,
     ProjectConfig,
     WorkspaceAuthorization,
+    WorkspaceAuthorizationError,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "ProjectConfig",
     "Settings",
     "WorkspaceAuthorization",
+    "WorkspaceAuthorizationError",
     "env_file_path",
     "env_file_write_path",
     "load_dotenv",
