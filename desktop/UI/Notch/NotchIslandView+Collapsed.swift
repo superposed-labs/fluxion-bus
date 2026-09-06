@@ -661,7 +661,9 @@ extension NotchIslandView {
     /// Whether this slot is the one the peek bubble is pointing at. Always
     /// false outside peek, so the always-on strip carries no highlight.
     func peekSlotFocused(_ index: Int) -> Bool {
-        model.notchState == .peek && model.usesBubblePeek && peekFocusIndex == index
+        // No highlight when there is only one slot: "selected" is meaningless
+        // where there was never a choice.
+        model.notchState == .peek && model.peekTargetsSlots && peekFocusIndex == index
     }
 
     func compactRank(for provider: ProviderUsage) -> Double {
@@ -737,19 +739,6 @@ extension NotchIslandView {
         }
     }
 
-    func compactTag(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .bold))
-            // Never let the tag compress/wrap — under the peek spread layout the
-            // Spacers would otherwise squeeze it into a deformed empty box.
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.16))
-            .cornerRadius(4)
-            .foregroundColor(color)
-    }
 
     func breatheDot(for p: ProviderUsage) -> some View {
         let visual = providerVisual(for: p.provider)

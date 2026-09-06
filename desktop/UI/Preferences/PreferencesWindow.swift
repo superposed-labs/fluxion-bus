@@ -29,7 +29,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var gaugeStylePopup: NSPopUpButton!
     var gaugeValuePopup: NSPopUpButton!
     var expandedStylePopup: NSPopUpButton!
-    var peekResetPopup: NSPopUpButton!
     var displayStyleSegmented: NSSegmentedControl!
     var checkClaude: NSSwitch!
     var checkCodex: NSSwitch!
@@ -173,7 +172,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     var gaugeStyleRow: CardRow!
     var gaugeValueRow: CardRow!
     var expandedStyleRow: CardRow!
-    var peekResetRow: CardRow!
     var hideOnFullscreenRow: CardRow!
     var checkHideOnFullscreen: NSSwitch!
     var notchGlanceSection: NSStackView!
@@ -646,13 +644,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             .compactMap { $0 }
             .filter { $0.state == .on }
             .count
-        // The peek-countdown window choice is inert for a single dual-window
-        // provider: its collapsed strip and peek always show BOTH windows with
-        // their own countdowns, so offering 5h/week/both would be a dead
-        // setting there. It only means something with 2+ providers (or a
-        // provider without the dual-window glance).
-        let targetPeekResetHidden = targetNotchSilentStyleHidden
-            || notchUsesSoloDualWindowGlance(appDelegate.notchWindowController?.model.providers ?? [])
         let targetAppearanceHidden = (displayStyleSegmented.selectedSegment == 1)
 
         // Slack visibility
@@ -684,7 +675,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
                 self.silentStyleRow.isHidden = targetNotchSilentStyleHidden
                 self.gaugeStyleRow.isHidden = targetNotchSilentStyleHidden
                 self.gaugeValueRow.isHidden = targetNotchSilentStyleHidden
-                self.peekResetRow.isHidden = targetPeekResetHidden
                 self.hideOnFullscreenRow.isHidden = targetNotchSilentStyleHidden
                 self.notchGlanceSection.isHidden = targetNotchSilentStyleHidden
                 self.notchExpandedSection.isHidden = targetNotchSilentStyleHidden || activeProviderCount != 1
@@ -754,7 +744,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             self.silentStyleRow.isHidden = targetNotchSilentStyleHidden
             self.gaugeStyleRow.isHidden = targetNotchSilentStyleHidden
             self.gaugeValueRow.isHidden = targetNotchSilentStyleHidden
-            self.peekResetRow.isHidden = targetPeekResetHidden
             self.hideOnFullscreenRow.isHidden = targetNotchSilentStyleHidden
             self.notchGlanceSection.isHidden = targetNotchSilentStyleHidden
             self.notchExpandedSection.isHidden = targetNotchSilentStyleHidden || activeProviderCount != 1
@@ -965,11 +954,6 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
         }
 
         // Peek countdown window popup index mapping
-        let peekResets = ["5h", "weekly", "both"]
-        let peekResetSelIdx = peekResetPopup.indexOfSelectedItem
-        if peekResetSelIdx >= 0 && peekResetSelIdx < peekResets.count {
-            updates["FLUXION_NOTCH_PEEK_WINDOWS"] = peekResets[peekResetSelIdx]
-        }
 
         updates["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] = checkHideOnFullscreen.state == .on ? "true" : "false"
 

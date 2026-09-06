@@ -14,18 +14,6 @@ struct ExpandedPageHeightsKey: PreferenceKey {
     }
 }
 
-// Natural width of the peek tray's segment row, reported by the hidden
-// measuring twin in NotchIslandView+Peek. Drives the tray width on non-notched
-// displays, where there is no physical notch width to derive the tray from and
-// the old fixed per-count widths clipped long content (timers + pool tags).
-struct PeekContentWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 // Same idea for the collapsed strip: on non-notched displays the pill hugs the
 // measured row width instead of the fixed 180/280 constants, which left wide
 // dead margins around the centered content.
@@ -354,17 +342,13 @@ struct NotchIslandView: View {
     
     // Dynamic animatable properties
     var targetWidth: CGFloat {
-        let count = notchLayoutCount(model.providers)
         switch model.notchState {
         case .collapsed:
             return model.collapsedWidth
         case .peek:
-            // Lanes + collapsed floor for the bubble peek; the collapsed floor
-            // plus measured content growth for the legacy single-tray layouts.
             return model.peekTrayWidth(
                 collapsedBase: model.collapsedWidth,
-                hasNotch: model.hasNotch,
-                count: count
+                hasNotch: model.hasNotch
             )
         case .expanded:
             return notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
@@ -387,11 +371,11 @@ struct NotchIslandView: View {
         case .collapsed:
             return 16
         case .peek:
-            // The bubble peek leaves the strip exactly as it was and hangs the
-            // callout below it, so the strip's own radius must not change
-            // either — a silhouette that swells on hover would undo the
-            // continuity the layout is there to provide.
-            return model.usesBubblePeek ? 16 : 20
+            // Peek leaves the strip exactly as it was and hangs the callout
+            // below it, so the strip's own radius must not change either — a
+            // silhouette that swells on hover would undo the continuity the
+            // layout is there to provide.
+            return 16
         case .expanded:
             return 30
         }
@@ -474,30 +458,15 @@ struct NotchIslandView: View {
             VStack(spacing: 0) {
                 switch model.notchState {
                 case .collapsed, .peek:
-                    // The bubble peek's tray IS the collapsed strip, so the two
-                    // states have to share one branch: separate branches carry
-                    // separate identities, and SwiftUI would cross-fade the
-                    // strip into an identical copy of itself every time the
-                    // pointer arrived.
-                    if model.usesBubblePeek {
-                        collapsedView
-                            .transition(.asymmetric(
-                                insertion: .opacity.animation(Self.contentInsertionAnimation),
-                                removal: .opacity.animation(Self.contentRemovalAnimation)
-                            ))
-                    } else if model.notchState == .collapsed {
-                        collapsedView
-                            .transition(.asymmetric(
-                                insertion: .opacity.animation(Self.contentInsertionAnimation),
-                                removal: .opacity.animation(Self.contentRemovalAnimation)
-                            ))
-                    } else {
-                        peekView
-                            .transition(.asymmetric(
-                                insertion: .opacity.animation(Self.contentInsertionAnimation),
-                                removal: .opacity.animation(Self.contentRemovalAnimation)
-                            ))
-                    }
+                    // One branch for both states: peek's tray IS the collapsed
+                    // strip, and separate branches carry separate identities —
+                    // SwiftUI would cross-fade the strip into an identical copy
+                    // of itself every time the pointer arrived.
+                    collapsedView
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(Self.contentInsertionAnimation),
+                            removal: .opacity.animation(Self.contentRemovalAnimation)
+                        ))
                 case .expanded:
                     expandedView
                         .transition(.asymmetric(
@@ -520,7 +489,7 @@ struct NotchIslandView: View {
             // shrunk — perceived as a text/rail afterimage.
             .clipShape(BottomRoundedRectangle(cornerRadius: targetCornerRadius))
 
-            // The peek callout hangs BELOW the tray as its own black shape, so
+            // The peek callout hangs BELOW the strip as its own black shape, so
             // it sits outside both the card and the card's silhouette clip.
             if model.notchState == .peek, model.usesBubblePeek {
                 peekBubbleLayer
