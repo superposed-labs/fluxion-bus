@@ -11,8 +11,10 @@ from fluxion.executors.antigravity.models import select_antigravity_ping_model_f
 @pytest.fixture(autouse=True)
 def clear_antigravity_model_cache():
     antigravity_models._MODEL_CATALOG_CACHE.clear()
+    antigravity_models._MODEL_CATALOG_LAST_GOOD.clear()
     yield
     antigravity_models._MODEL_CATALOG_CACHE.clear()
+    antigravity_models._MODEL_CATALOG_LAST_GOOD.clear()
 
 
 def test_select_antigravity_ping_model_prefers_low_flash_for_gemini_pool():
@@ -122,7 +124,7 @@ def test_load_antigravity_model_catalog_caches_success(monkeypatch):
 
     def fake_fetch(command):
         calls.append(command)
-        return ["Gemini 3.5 Flash (Low)"], ""
+        return [("Gemini 3.5 Flash (Low)", "Gemini 3.5 Flash (Low)")], ""
 
     monkeypatch.setattr(antigravity_models, "_fetch_antigravity_model_catalog", fake_fetch)
 
@@ -186,9 +188,12 @@ def test_fetch_antigravity_model_catalog_extracts_ids_from_tab_separated_labels(
         ),
     )
 
-    names, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
+    entries, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
 
-    assert names == ["gemini-3.6-flash-high", "gemini-3.6-flash-low"]
+    assert entries == [
+        ("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)"),
+        ("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)"),
+    ]
     assert error == ""
 
 
@@ -206,7 +211,42 @@ def test_fetch_antigravity_model_catalog_preserves_legacy_single_column_names(
         ),
     )
 
-    names, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
+    entries, error = antigravity_models._fetch_antigravity_model_catalog("/bin/agy")
 
-    assert names == ["Gemini 3.5 Flash (Low)"]
+    assert entries == [("Gemini 3.5 Flash (Low)", "Gemini 3.5 Flash (Low)")]
     assert error == ""
+
+
+def test_catalog_failure_falls_back_to_the_last_catalog_that_loaded(monkeypatch):
+    """A transient `agy models` failure must not make published ids unresolvable.
+
+    Effort resolution can only pick from ids the catalog published, so an empty
+    catalog would reject a run the CLI would have accepted a minute earlier.
+    """
+    now = {"value": 100.0}
+    outcomes = [
+        ([("gemini-3.7-flash-low", "Gemini 3.7 Flash (Low)")], ""),
+        ([], "`agy models` timed out after 30s"),
+    ]
+    monkeypatch.setattr(antigravity_models.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(
+        antigravity_models,
+        "resolve_antigravity_command",
+        lambda command="": "/bin/agy-stale",
+    )
+    monkeypatch.setattr(
+        antigravity_models,
+        "_fetch_antigravity_model_catalog",
+        lambda command: outcomes.pop(0),
+    )
+
+    fresh, fresh_error, fresh_status = antigravity_models.load_antigravity_model_entries()
+    now["value"] += antigravity_models._AGY_MODEL_CATALOG_TTL_SEC + 1
+    stale, stale_error, stale_status = antigravity_models.load_antigravity_model_entries()
+
+    assert fresh_status == "fresh"
+    assert fresh_error == ""
+    assert stale == fresh == [("gemini-3.7-flash-low", "Gemini 3.7 Flash (Low)")]
+    assert stale_status == "stale"
+    # The failure is still reported, so a caller can say why the list is old.
+    assert "timed out" in stale_error

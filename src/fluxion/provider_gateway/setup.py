@@ -31,9 +31,11 @@ from typing import Any
 
 from fluxion.availability import PROVIDERS, detect_executor
 from fluxion.config.settings import Settings
+from fluxion.executors.antigravity.models import EFFORT_ORDER
 from fluxion.executors.registry import executor_read_only_support
 from fluxion.mcp_server.model_catalog import list_agent_models_view
 from fluxion.provider_gateway import codex_config
+from fluxion.usage.model_identity import parse_model_name
 
 # The gateway exists to serve this CLI's sub-agents; `print-codex-config` and
 # the install sheet wire it up. "Cross-vendor" is measured against this.
@@ -175,17 +177,7 @@ def detect_agents(settings: Settings | None = None) -> dict[str, dict[str, Any]]
             # lineup at one version (Codex's sol/terra/luna) is told apart from
             # effort variants of one model (Gemini's high/medium/low) by
             # whether the entries differ in price at all.
-            catalog_models = [
-                {
-                    "id": str(model["id"]),
-                    "input": model.get("input_per_1m"),
-                    "output": model.get("output_per_1m"),
-                    # Present only where effort is a runtime option. Antigravity
-                    # encodes it in the model id instead, and declares none.
-                    "efforts": model.get("supported_reasoning_efforts"),
-                }
-                for model in view.get("models", [])
-            ]
+            catalog_models = _routable_models(view)
             catalog_warnings = list(view.get("warnings") or [])
         detected[executor] = {
             "executor": executor,
@@ -689,6 +681,45 @@ def _current_lineup(catalog: list[dict[str, Any]]) -> list[str]:
     return [str(model["id"]) for _, model in current]
 
 
+def _routable_models(view: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten a model catalog into entries a route can be pinned to.
+
+    A route stores a launchable model id. Where effort is a runtime flag the
+    product id is itself launchable and the efforts ride along as a choice; where
+    it is fused into the id (Antigravity) the product row is not launchable, so
+    the published variants are listed individually and each already carries its
+    effort.
+    """
+    fused = str(view.get("effort_encoding") or "") == "model_id_suffix"
+    routable: list[dict[str, Any]] = []
+    for model in view.get("models", []):
+        base = {
+            "input": model.get("input_per_1m"),
+            "output": model.get("output_per_1m"),
+        }
+        if not fused:
+            routable.append(
+                {
+                    "id": str(model["id"]),
+                    **base,
+                    # Present only where effort is a runtime option.
+                    "efforts": model.get("supported_reasoning_efforts"),
+                }
+            )
+            continue
+        variants = model.get("variants")
+        if not variants:
+            # No effort axis: the product row is the launchable id (agy's Claude
+            # entries). Dropping these would silently shrink the routable set.
+            routable.append({"id": str(model["id"]), **base, "efforts": None})
+            continue
+        for effort in model.get("supported_reasoning_efforts") or []:
+            model_id = str(variants.get(str(effort)) or "")
+            if model_id:
+                routable.append({"id": model_id, **base, "efforts": None})
+    return routable
+
+
 def _price_of(model: dict[str, Any]) -> float:
     """Output price leads: it is where lineup tiers differ most."""
     return float(model.get("output") or 0.0) * 1000 + float(model.get("input") or 0.0)
@@ -696,10 +727,17 @@ def _price_of(model: dict[str, Any]) -> float:
 
 def _seed_for(executor: str, detected: dict[str, dict[str, Any]]) -> list[str]:
     """A declared model for an executor no role routes to."""
-    catalog_ids = detected[executor]["catalog_ids"]
     if executor == "claude":
         return ["sonnet"]
-    if not catalog_ids:
+    catalog_models = detected[executor]["catalog_models"]
+    if not catalog_models:
         return []
-    # Catalogs are sorted price high to low, so the last entry is the cheapest.
-    return [catalog_ids[-1]]
+    # The cheapest model. Effort variants of one model are priced identically, so
+    # the tie-break picks the cheapest effort rather than whichever sorted last.
+    cheapest = min(catalog_models, key=lambda model: (_price_of(model), _seed_effort_rank(model)))
+    return [str(cheapest["id"])]
+
+
+def _seed_effort_rank(model: dict[str, Any]) -> int:
+    effort = parse_model_name("antigravity", str(model.get("id") or "")).effort
+    return EFFORT_ORDER.index(effort) if effort in EFFORT_ORDER else len(EFFORT_ORDER)

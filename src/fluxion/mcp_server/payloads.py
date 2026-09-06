@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fluxion.config.settings import Settings
+from fluxion.executors.model_resolution import ModelResolutionError
 from fluxion.workspace import RETRYABLE_REQUEST_STATUSES
 
 
@@ -103,7 +104,17 @@ def _error_payload(
         "pending": bool(getattr(authorization, "pending", False)),
         "pending_status": str(getattr(authorization, "pending_status", "") or "") or None,
     }
-    if "Unsupported sub-agent executor" in summary:
+    if isinstance(error, ModelResolutionError):
+        # The catalog knows exactly which (model, effort) pairs exist, so hand
+        # the caller that list instead of a message it has to parse.
+        payload.update(error.payload)
+        payload.update(
+            {
+                "error_code": "MODEL_UNRESOLVED",
+                "suggestion": str(error.payload.get("next_action") or ""),
+            }
+        )
+    elif "Unsupported sub-agent executor" in summary:
         payload.update(
             {
                 "error_code": "UNSUPPORTED_EXECUTOR",

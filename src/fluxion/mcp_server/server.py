@@ -48,6 +48,7 @@ def run_subagent_tool(
     include_stdout: bool = False,
     include_subagent_preamble: bool | None = None,
     model: str = "",
+    reasoning_effort: str = "",
     client_id: str = "mcp",
     authorization_request_id: str = "",
     wait_for_result: bool = False,
@@ -69,6 +70,7 @@ def run_subagent_tool(
         conversation_key=conversation_key or None,
         include_subagent_preamble=include_subagent_preamble,
         model=model or None,
+        reasoning_effort=reasoning_effort or None,
         client_id=client_id,
         authorization_request_id=authorization_request_id or None,
     )
@@ -329,6 +331,7 @@ def create_server():
         include_stdout: bool = False,
         include_subagent_preamble: bool | None = None,
         model: str = "",
+        reasoning_effort: str = "",
         client_id: str = "mcp",
         authorization_request_id: str = "",
         wait_for_result: bool = False,
@@ -383,6 +386,17 @@ def create_server():
         settings-level configuration. Ping tasks keep their cheapest-model default
         unless model is explicitly set.
 
+        reasoning_effort: optional per-run reasoning depth, e.g. "low", "medium",
+        "high", "xhigh", "max". Valid values differ per model — read
+        models[].supported_reasoning_efforts from list_agent_models; asking for one
+        a model does not publish returns error_code=MODEL_UNRESOLVED listing what it
+        does publish, rather than silently running at a neighbouring effort. Leave
+        empty for the model's own default. Antigravity encodes effort in the model
+        id (`gemini-3.7-flash-high`); pass models[].id plus reasoning_effort and
+        Fluxion selects the published variant, or pass one of models[].variants
+        verbatim. The run payload reports what was actually used as
+        effective_model / effective_reasoning_effort.
+
         thread / session_policy scope which executor session is reused. Default
         (empty thread) = a FRESH isolated session per call: independent tasks don't
         resume, so they can't inherit stale context or have their workspace edits
@@ -421,6 +435,7 @@ def create_server():
             session_policy=session_policy,
             include_subagent_preamble=include_subagent_preamble,
             model=model,
+            reasoning_effort=reasoning_effort,
             client_id=client_id,
             authorization_request_id=authorization_request_id,
             wait_for_result=wait_for_result,

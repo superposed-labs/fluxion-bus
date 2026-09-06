@@ -127,8 +127,13 @@ def test_antigravity_models_use_live_catalog(monkeypatch):
 
     def fake_run(*args, **kwargs):  # noqa: ARG001
         assert kwargs["stdin"] is antigravity_models.subprocess.DEVNULL
+        # Verbatim shape of a real `agy models`: one line per (model, effort).
         return types.SimpleNamespace(
-            stdout="Gemini 3.5 Flash (High)\nGPT-OSS 120B (Medium)\n",
+            stdout=(
+                "gemini-3.5-flash-high\tGemini 3.5 Flash (High)\n"
+                "gemini-3.5-flash-low\tGemini 3.5 Flash (Low)\n"
+                "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n"
+            ),
         )
 
     monkeypatch.setattr(antigravity_models.subprocess, "run", fake_run)
@@ -139,7 +144,19 @@ def test_antigravity_models_use_live_catalog(monkeypatch):
 
     assert view["found"] is True
     model_ids = [item["id"] for item in view["models"]]
-    assert model_ids == ["GPT-OSS 120B (Medium)", "Gemini 3.5 Flash (High)"]
+    # Effort variants collapse onto the product they are variants of. Neither
+    # model is in this price table, so the order is the id tie-break.
+    assert model_ids == ["gemini-3.5-flash", "gpt-oss-120b"]
+    flash = next(item for item in view["models"] if item["id"] == "gemini-3.5-flash")
+    assert flash["label"] == "Gemini 3.5 Flash"
+    assert flash["supported_reasoning_efforts"] == ["low", "high"]
+    assert flash["default_reasoning_effort"] == "low"
+    assert flash["variants"] == {
+        "low": "gemini-3.5-flash-low",
+        "high": "gemini-3.5-flash-high",
+    }
+    assert view["effort_encoding"] == "model_id_suffix"
+    assert view["catalog_status"] == "fresh"
     assert {item["availability"] for item in view["models"]} == {"live_catalog"}
     assert view["price_references"][0]["id"] == "gemini-3-flash"
     assert view["source"] == "live_catalog+local_prices"
@@ -151,8 +168,8 @@ def test_antigravity_models_empty_when_live_catalog_unavailable(monkeypatch):
     monkeypatch.setattr(model_catalog.price_data, "load_price_json", lambda name: _prices())
     monkeypatch.setattr(
         antigravity_models,
-        "load_antigravity_model_catalog",
-        lambda command="": ([], "`agy models` timed out after 30s"),
+        "load_antigravity_model_entries",
+        lambda command="": ([], "`agy models` timed out after 30s", "unavailable"),
     )
 
     view = model_catalog.list_agent_models_view(
@@ -164,6 +181,7 @@ def test_antigravity_models_empty_when_live_catalog_unavailable(monkeypatch):
     assert view["source"] == "live_catalog_unavailable+local_prices"
     assert view["sort"] == "price_high_to_low"
     assert view["warnings"] == ["`agy models` timed out after 30s; models[] is empty."]
+    assert view["catalog_status"] == "unavailable"
 
 
 def test_antigravity_slug_catalog_uses_exact_version_price(monkeypatch):
@@ -192,10 +210,14 @@ def test_antigravity_slug_catalog_uses_exact_version_price(monkeypatch):
     monkeypatch.setattr(model_catalog.price_data, "load_price_json", lambda name: prices)
     monkeypatch.setattr(
         antigravity_models,
-        "load_antigravity_model_catalog",
+        "load_antigravity_model_entries",
         lambda command="": (
-            ["gemini-3.6-flash-low", "gemini-3.5-flash-low"],
+            [
+                ("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)"),
+                ("gemini-3.5-flash-low", "Gemini 3.5 Flash (Low)"),
+            ],
             "",
+            "fresh",
         ),
     )
 
@@ -204,8 +226,8 @@ def test_antigravity_slug_catalog_uses_exact_version_price(monkeypatch):
     )
     by_id = {item["id"]: item for item in view["models"]}
 
-    assert by_id["gemini-3.5-flash-low"]["output_per_1m"] == 9.0
-    assert by_id["gemini-3.6-flash-low"]["output_per_1m"] == 7.5
+    assert by_id["gemini-3.5-flash"]["output_per_1m"] == 9.0
+    assert by_id["gemini-3.6-flash"]["output_per_1m"] == 7.5
 
 
 def test_auto_agent_uses_project_default(monkeypatch):
