@@ -15,7 +15,13 @@ from fluxion.core.models.task import Task
 from fluxion.core.router import TaskRouter
 from fluxion.core.session_manager import SessionManager
 from fluxion.core.storage import JsonlStorage
+from fluxion.executors.model_resolution import (
+    ModelTarget,
+    model_catalog_from_view,
+    resolve_model_target,
+)
 from fluxion.executors.registry import build_enabled_executors
+from fluxion.usage.model_identity import parse_model_name
 from fluxion.workspace import WorkspaceAccessService
 
 PROFILE_INSTRUCTIONS = {
@@ -90,6 +96,9 @@ class SubagentRunRequest:
     # Optional per-task model override (e.g. route an Antigravity ping to the
     # Gemini vs External Models quota pool). Executors that don't read it ignore it.
     model: str | None = None
+    # How hard the model should think. One axis for every agent: Codex and Claude
+    # take it as a flag, Antigravity needs it resolved into the model id first.
+    reasoning_effort: str | None = None
     # Workspace approval is intentionally separate from executor permissions.
     client_id: str = "local"
     authorization_request_id: str | None = None
@@ -181,6 +190,8 @@ class SubagentRunHandle:
     effective_model: str = ""
     model_resolution_source: str = ""
     resumed_session_model: str = ""
+    requested_reasoning_effort: str = ""
+    effective_reasoning_effort: str = ""
     authorization_request_id: str = ""
     workspace_access_policy: str = ""
     workspace_access_source: str = ""
@@ -211,6 +222,10 @@ class SubagentRunHandle:
             "effective_model": self.effective_model or "(executor default)",
             "resolved_model": "",
             "model_resolution_source": self.model_resolution_source,
+            # Empty where the agent fuses effort into the model id — there the
+            # effort is already visible in effective_model.
+            "requested_reasoning_effort": self.requested_reasoning_effort,
+            "effective_reasoning_effort": self.effective_reasoning_effort,
             "authorization_request_id": self.authorization_request_id or None,
             "workspace_access_policy": self.workspace_access_policy,
             "workspace_access_source": self.workspace_access_source,
@@ -421,6 +436,13 @@ class SubagentRunner:
                 # New session: include preamble by default.
                 include_preamble = True
 
+            target = resolve_launch_target(
+                agent=agent,
+                model=request.model or "",
+                reasoning_effort=request.reasoning_effort or "",
+                settings=self._settings,
+            )
+
             task = Task.create(
                 channel="local",
                 user_id=request.user,
@@ -434,8 +456,10 @@ class SubagentRunner:
                 metadata={
                     "executor": agent,
                     "conversation_key": conversation_key,
-                    "model": request.model or "",
+                    "model": target.model_id,
                     "requested_model": request.model or "",
+                    "reasoning_effort": target.reasoning_effort,
+                    "requested_reasoning_effort": request.reasoning_effort or "",
                     "model_resolution_source": (
                         "fluxion_ping_policy"
                         if request.model
@@ -444,7 +468,7 @@ class SubagentRunner:
                             request.task_name.startswith("ping-")
                             or "ping" in request.task_name.lower()
                         )
-                        else ("requested_override" if request.model else "executor_runtime")
+                        else target.source
                     ),
                     "prompt": " ".join(request.prompt).strip(),
                     "workspace_access": {
@@ -544,6 +568,8 @@ class SubagentRunner:
             effective_model=effective_model,
             model_resolution_source=model_resolution_source,
             resumed_session_model=resumed_session_model,
+            requested_reasoning_effort=request.reasoning_effort or "",
+            effective_reasoning_effort=str(task.metadata.get("reasoning_effort") or ""),
             authorization_request_id=authorization.authorization_request_id,
             workspace_access_policy=authorization.policy,
             workspace_access_source=authorization.source,
@@ -569,6 +595,54 @@ class SubagentRunner:
         if adapter is None:
             return {}
         return adapter.recent_output_tail()
+
+
+def resolve_launch_target(
+    *,
+    agent: str,
+    model: str,
+    reasoning_effort: str,
+    settings: Settings,
+) -> ModelTarget:
+    """Turn a requested (model, effort) into what this agent's CLI actually takes.
+
+    Only consults the model catalog when it can change the answer: an agent that
+    fuses effort into the model id has to look one up, and so does any request
+    that names an effort. Everything else — the overwhelming majority of runs —
+    stays on the old path and never shells out.
+    """
+    requested_model = (model or "").strip()
+    effort = (reasoning_effort or "").strip()
+    if not requested_model and not effort:
+        return ModelTarget(model_id="", reasoning_effort="", source="executor_runtime")
+
+    if not effort and not _needs_variant_lookup(agent=agent, model=requested_model):
+        return ModelTarget(
+            model_id=requested_model, reasoning_effort="", source="requested_override"
+        )
+
+    # Local import: the catalog imports this module for agent resolution.
+    from fluxion.mcp_server.model_catalog import list_agent_models_view
+
+    view = list_agent_models_view(agent=agent, project="", settings=settings)
+    return resolve_model_target(
+        catalog=model_catalog_from_view(view),
+        model=requested_model,
+        reasoning_effort=effort,
+    )
+
+
+def _needs_variant_lookup(*, agent: str, model: str) -> bool:
+    """Whether a model with no requested effort still has to be resolved.
+
+    Only Antigravity, and only for a bare product name: `gemini-3.7-flash` is
+    what the catalog lists but not what `agy --model` takes. An id that already
+    carries its effort is launchable as-is, which keeps auto-ping — the most
+    frequent run with a model set — off the catalog entirely.
+    """
+    if agent != "antigravity":
+        return False
+    return not parse_model_name("antigravity", model).effort
 
 
 def build_gateway(settings: Settings) -> GatewayCore:

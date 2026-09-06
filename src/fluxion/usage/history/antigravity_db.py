@@ -8,12 +8,12 @@ feeds it. It shares nothing with the rest of the pipeline beyond producing
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fluxion.usage.history.entry import UsageEntry
+from fluxion.usage.model_identity import parse_model_name
 
 
 def _sqlite_signature(path: Path) -> list[list[int | str]]:
@@ -96,76 +96,14 @@ def _proto_message(
     return _decode_proto(raw) if raw else {}
 
 
-_GEMINI_DISPLAY_RE = re.compile(
-    r"^Gemini\s+(?P<ver>\d+(?:\.\d+)*)\s+(?P<tier>Flash(?:-Lite)?|Pro)$", re.IGNORECASE
-)
-_CLAUDE_DISPLAY_RE = re.compile(
-    r"^Claude\s+(?P<fam>Opus|Sonnet|Haiku)\s+(?P<ver>\d+(?:\.\d+)*)$", re.IGNORECASE
-)
-_GPT_OSS_DISPLAY_RE = re.compile(r"^GPT-OSS\s+(?P<size>\d+B)$", re.IGNORECASE)
-
-_GEMINI_SLUG_RE = re.compile(
-    r"^gemini-(?P<ver>\d+(?:\.\d+)*)-(?P<tier>flash(?:-lite)?|pro)(?:-(?:exp(?:-[a-z0-9]+)?|tiered|low|medium|high|a|b))?$",
-    re.IGNORECASE,
-)
-_CLAUDE_SLUG_RE = re.compile(
-    r"^claude-(?P<fam>opus|sonnet|haiku)-(?P<ver>\d+(?:-\d+)*)(?:-(?:thinking|low|medium|high))?$",
-    re.IGNORECASE,
-)
-_GPT_OSS_SLUG_RE = re.compile(r"^gpt-oss-(?P<size>\d+b)(?:-(?:low|medium|high))?$", re.IGNORECASE)
-
-
 def _normalize_antigravity_model(raw: str) -> str:
-    """Normalize Antigravity model names across display labels and backend response slugs.
+    """Canonical product name for an Antigravity model, effort variants merged.
 
-    Unifies effort/thinking variants and internal routing slugs into canonical product models:
-      - 'gemini-3.7-flash-exp-a', 'Gemini 3.7 Flash (High)' -> 'Gemini 3.7 Flash'
-      - 'claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)' -> 'Claude Opus 4.6'
-      - 'gemini-3-flash-a', 'Gemini 3.5 Flash (High)' -> 'Gemini 3.5 Flash'
-      - 'gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)' -> 'GPT-OSS 120B'
+    Usage rows are grouped by this, so it must agree with the name the model
+    catalog shows for the same model — both read the split from
+    :func:`fluxion.usage.model_identity.parse_model_name`.
     """
-    if not raw or raw == "unknown":
-        return "unknown"
-    s = raw.strip()
-    s = re.sub(r"\s*\((?:high|low|medium|xhigh|max|thinking)\)", "", s, flags=re.IGNORECASE).strip()
-
-    m_gemini_disp = _GEMINI_DISPLAY_RE.match(s)
-    if m_gemini_disp:
-        tier_raw = m_gemini_disp.group("tier").lower()
-        tier = "Flash-Lite" if tier_raw == "flash-lite" else tier_raw.capitalize()
-        return f"Gemini {m_gemini_disp.group('ver')} {tier}"
-
-    m_claude_disp = _CLAUDE_DISPLAY_RE.match(s)
-    if m_claude_disp:
-        return f"Claude {m_claude_disp.group('fam').capitalize()} {m_claude_disp.group('ver')}"
-
-    m_gpt_disp = _GPT_OSS_DISPLAY_RE.match(s)
-    if m_gpt_disp:
-        return f"GPT-OSS {m_gpt_disp.group('size').upper()}"
-
-    m_gemini_slug = _GEMINI_SLUG_RE.match(s)
-    if m_gemini_slug:
-        ver = m_gemini_slug.group("ver")
-        if ver == "3":
-            ver = "3.5"
-        tier_raw = m_gemini_slug.group("tier").lower()
-        tier = "Flash-Lite" if tier_raw == "flash-lite" else tier_raw.capitalize()
-        return f"Gemini {ver} {tier}"
-
-    m_claude_slug = _CLAUDE_SLUG_RE.match(s)
-    if m_claude_slug:
-        fam = m_claude_slug.group("fam").capitalize()
-        ver = m_claude_slug.group("ver").replace("-", ".")
-        return f"Claude {fam} {ver}"
-
-    m_oss_slug = _GPT_OSS_SLUG_RE.match(s)
-    if m_oss_slug:
-        return f"GPT-OSS {m_oss_slug.group('size').upper()}"
-
-    if s == "gemini-default":
-        return "Gemini 3.5 Flash"
-
-    return s
+    return parse_model_name("antigravity", raw).label
 
 
 def _antigravity_entry_from_blob(

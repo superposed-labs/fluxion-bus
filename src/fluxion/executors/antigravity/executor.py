@@ -18,6 +18,7 @@ from fluxion.executors.antigravity.events import (
     agy_reasoning_text,
     agy_result_error,
 )
+from fluxion.executors.antigravity.models import antigravity_model_catalog
 from fluxion.executors.common.actions import resolve_uploads_from_text
 from fluxion.executors.common.limits import EXECUTOR_TEXT_HARD_LIMIT, clip_text
 from fluxion.executors.common.log_writer import write_jsonl_log
@@ -27,7 +28,10 @@ from fluxion.executors.common.process import (
     start_process,
     terminate_process_tree,
 )
-from fluxion.executors.model_resolution import extract_antigravity_resolved_model
+from fluxion.executors.model_resolution import (
+    extract_antigravity_resolved_model,
+    resolve_model_target,
+)
 from fluxion.executors.prompt_builder import AgentPromptBuilder, is_raw_prompt
 from fluxion.workspace.antigravity_trajectory import extract_agy_session_id
 
@@ -433,11 +437,38 @@ class AntiGravityExecutor:
         # a Gemini model hits the Gemini pool, a Claude/GPT model the External
         # Models pool. Without it `agy` uses its default (Gemini), so External
         # never gets exercised.
-        model = str(task.metadata.get("model", "")).strip()
+        model = self._model_with_effort(task)
         if model:
             command.extend(["--model", model])
         command.extend(["--print", prompt])
         return command
+
+    def _model_with_effort(self, task: Task) -> str:
+        """Resolve the metadata model into an id `agy --model` actually accepts.
+
+        `agy` has no effort flag — it publishes one id per (model, effort) pair —
+        so a requested effort has to be folded into the id, and a bare product
+        name (`gemini-3.7-flash`, what the catalog lists and what `use model`
+        offers) has to become one of its published variants. Doing it here rather
+        than only at submit time covers every entry point, including the two that
+        set the model straight onto the Task: the provider gateway and an IM
+        conversation override.
+
+        An unlisted id is left exactly as given — the catalog can be stale, and
+        agy is the authority on what it accepts. Only an effort the model does
+        not publish raises, because running at a neighbouring effort would be
+        invisible in the output.
+        """
+        model = str(task.metadata.get("model", "")).strip()
+        effort = str(task.metadata.get("reasoning_effort") or "").strip().lower()
+        if not model:
+            return model
+
+        return resolve_model_target(
+            catalog=antigravity_model_catalog(self._command),
+            model=model,
+            reasoning_effort=effort,
+        ).model_id
 
     def _resolve_command(self) -> str:
         if self._command and self._command != "agy":

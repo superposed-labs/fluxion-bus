@@ -7,6 +7,7 @@ from typing import Any
 from fluxion.codex_command import resolve_codex_command
 from fluxion.config.settings import Settings
 from fluxion.executors.antigravity import models as antigravity_models
+from fluxion.executors.model_resolution import ModelCatalog
 from fluxion.subagent import AUTO_AGENT_VALUES, resolve_agent
 from fluxion.usage import price_data
 from fluxion.usage.model_rates import resolve_standard_rate
@@ -74,6 +75,7 @@ def _codex_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, An
                 source="live_catalog",
                 extra={
                     "supported_reasoning_efforts": _reasoning_efforts(item),
+                    "default_reasoning_effort": str(item.get("default_reasoning_level") or ""),
                 },
             )
             for item in live
@@ -100,6 +102,8 @@ def _codex_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, An
         "models": models,
         "warnings": warnings,
         "sort": "price_high_to_low",
+        "effort_encoding": "separate_flag",
+        "catalog_status": "fresh" if live else "unavailable",
         "note": "Codex availability comes from `codex debug models` when available.",
     }
 
@@ -150,6 +154,8 @@ def _claude_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, A
         ),
         "supported_reasoning_efforts": list(_CLAUDE_REASONING_EFFORTS),
         "reasoning_effort_source": "claude_cli_help_global",
+        "effort_encoding": "separate_flag",
+        "catalog_status": "fresh",
         "warnings": [
             "Claude Code does not expose a stable local model catalog command. "
             "models[] contains CLI aliases/configured values intended for --model; "
@@ -160,29 +166,18 @@ def _claude_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, A
 
 
 def _antigravity_models(*, settings: Settings, prices: dict[str, Any]) -> dict[str, Any]:
-    live_models, catalog_error = antigravity_models.load_antigravity_model_catalog(
-        settings.antigravity_command
-    )
-    if live_models:
-        models = _sorted_models(
-            [
-                _model_entry(
-                    model_id=model_id,
-                    provider="antigravity",
-                    prices=prices,
-                    source="live_catalog",
-                    extra={"availability": "live_catalog"},
-                )
-                for model_id in live_models
-            ]
-        )
+    catalog = antigravity_models.antigravity_model_catalog(settings.antigravity_command)
+    reason = catalog.error or "`agy models` did not return a usable catalog"
+    warnings: list[str] = []
+    if catalog.options:
+        models = _sorted_models(_collapsed_antigravity_models(catalog, prices=prices))
         source = "live_catalog+local_prices"
-        warnings: list[str] = []
+        if catalog.status == "stale":
+            warnings.append(f"{reason}; models[] is the last catalog that loaded.")
     else:
         models = []
         source = "live_catalog_unavailable+local_prices"
-        reason = catalog_error or "`agy models` did not return a usable catalog"
-        warnings = [f"{reason}; models[] is empty."]
+        warnings.append(f"{reason}; models[] is empty.")
     return {
         "found": True,
         "agent": "antigravity",
@@ -198,8 +193,49 @@ def _antigravity_models(*, settings: Settings, prices: dict[str, Any]) -> dict[s
         ),
         "warnings": warnings,
         "sort": "price_high_to_low",
-        "note": "Antigravity availability comes from `agy models` when available.",
+        "effort_encoding": "model_id_suffix",
+        "catalog_status": catalog.status,
+        "note": (
+            "Antigravity availability comes from `agy models` when available. Reasoning "
+            "effort is part of the model id, so pass `variants[effort]` to --model, or "
+            "pass id + reasoning_effort and let Fluxion select the variant."
+        ),
     }
+
+
+def _collapsed_antigravity_models(
+    catalog: ModelCatalog,
+    *,
+    prices: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Price-annotate one row per product.
+
+    `agy models` lists every (model, effort) pair as its own line — eleven lines
+    for six products, every effort variant of a model priced identically. The
+    grouping itself lives with the executor that owns the CLI; here it only picks
+    up prices, so a picker row and a usage row cannot disagree about what a
+    product is called.
+    """
+    return [
+        _model_entry(
+            model_id=option.family,
+            provider="antigravity",
+            prices=prices,
+            source="live_catalog",
+            extra={
+                "label": option.label,
+                "availability": "live_catalog",
+                "supported_reasoning_efforts": list(option.efforts),
+                "default_reasoning_effort": option.default_effort,
+                # The ids `agy --model` actually accepts, keyed by effort. Empty
+                # for a model with no effort axis, whose `id` is launchable as-is.
+                "variants": {
+                    effort: model_id for effort, model_id in option.variants.items() if effort
+                },
+            },
+        )
+        for option in catalog.options
+    ]
 
 
 def _load_codex_debug_models() -> list[dict[str, Any]]:
