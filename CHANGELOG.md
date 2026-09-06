@@ -9,6 +9,17 @@ milestones.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-06
+
+### Added
+
+- **Unified reasoning effort axis** — a single reasoning-effort setting now
+  works across all three agent executors (Antigravity, Codex, Claude),
+  replacing per-agent effort handling.
+- **Notch callout bubble peek** — the Notch peek surface is now a callout
+  bubble with flared shoulders, replacing the legacy inline peek layout and
+  supporting any number of quota windows per provider.
+
 ### Changed
 
 - **Notch environment variables** — the advanced `.env` example no longer lists
@@ -18,6 +29,18 @@ milestones.
   dropped, as peek behaviour is now automatic. Collapsed content, gauge style,
   quota number placement, and single-model layout are all set in Desktop
   Preferences rather than the environment.
+- **Model prices** — refreshed the bundled price snapshot with GPT-6 Astra,
+  GPT-5.6 Cyber, Claude Fable/Mythos 5.1, Gemini 3.8 Flash, and the
+  GPT-5.6 Sol price cut effective 2026-08-21.
+
+### Fixed
+
+- **Codex effort-suffixed model IDs** — colon-separated effort overrides
+  (e.g. `gpt-5.6-luna:high`) are now folded onto their product ID so usage
+  rows no longer split the same model across multiple entries.
+- **Retired model cost messages** — the provider gateway startup warning now
+  reflects whether the runtime health check is active, instead of
+  unconditionally claiming every turn will fail.
 
 ## [1.5.0] - 2026-09-01
 
@@ -439,7 +462,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.3.2...v1.4.0
