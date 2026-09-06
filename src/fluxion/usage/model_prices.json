@@ -1,8 +1,20 @@
 {
   "version": 1,
-  "updated_at": "2026-08-14",
-  "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for GPT-5.4/5.5/5.6 family, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
+  "updated_at": "2026-09-06",
+  "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
+    "claude-fable-5-1": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs + release notes (Fable 5.1, launched 2026-09-01): $10/$50 same as Fable 5, but cache reads are 0.025x input ($0.25/MTok) instead of the usual 0.1x; cache writes unchanged" }
+      ]
+    },
+    "claude-mythos-5-1": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs + release notes (Mythos 5.1, limited availability, launched 2026-09-01) — same rate card as Fable 5.1 including the 0.025x cache read" }
+      ]
+    },
     "claude-fable-5": {
       "provider": "claude",
       "rates": [
@@ -33,6 +45,32 @@
         { "effective_date": "2025-01-01", "observed": "2026-06-13", "in": 15.0, "out": 75.0, "cw": 18.75, "cw1h": 30.0, "cr": 1.5, "source": "Anthropic docs (Opus 4.1, deprecated)" }
       ]
     },
+    "gpt-6-astra": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-09-03",
+          "observed": "2026-09-06",
+          "in": 10.0,
+          "out": 50.0,
+          "cw": 12.5,
+          "cr": 1.0,
+          "source": "OpenAI docs + changelog (GPT-6 Astra released 2026-09-03); the model page states prompts over 272K input tokens bill at 2x input/cache and 1.5x output, so the long tier is derived from that; cache write is 1.25x input",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 10.0, "out": 50.0, "cw": 12.5, "cr": 1.0 },
+            "long": { "in": 20.0, "out": 75.0, "cw": 25.0, "cr": 2.0 }
+          }
+        }
+      ]
+    },
+    "gpt-5.6-cyber": {
+      "provider": "codex",
+      "rates": [
+        { "effective_date": "2026-08-07", "observed": "2026-09-06", "in": 12.5, "out": 75.0, "cw": 15.625, "cr": 1.25, "source": "OpenAI docs + changelog (gpt-5.6-cyber, Daybreak Red tier, 2026-08-07); the pricing page lists no long-context tier for it, hence no context_pricing block" }
+      ]
+    },
     "gpt-5.6": {
       "provider": "codex",
       "rates": [
@@ -49,6 +87,21 @@
             "short_max": 272000,
             "short": { "in": 5.0, "out": 30.0, "cw": 6.25, "cr": 0.5 },
             "long": { "in": 10.0, "out": 45.0, "cw": 12.5, "cr": 1.0 }
+          }
+        },
+        {
+          "effective_date": "2026-08-21",
+          "observed": "2026-09-06",
+          "in": 4.0,
+          "out": 20.0,
+          "cw": 5.0,
+          "cr": 0.4,
+          "source": "OpenAI docs + changelog (2026-08-21: GPT-5.6 Sol input -20% / output -33%, promotional at least through 2026-11-21) — the gpt-5.6 alias routes to gpt-5.6-sol; context tier from billed input: <=272k short, >272k long; cache write is 1.25x input",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 4.0, "out": 20.0, "cw": 5.0, "cr": 0.4 },
+            "long": { "in": 8.0, "out": 30.0, "cw": 10.0, "cr": 0.8 }
           }
         }
       ]
@@ -69,6 +122,21 @@
             "short_max": 272000,
             "short": { "in": 5.0, "out": 30.0, "cw": 6.25, "cr": 0.5 },
             "long": { "in": 10.0, "out": 45.0, "cw": 12.5, "cr": 1.0 }
+          }
+        },
+        {
+          "effective_date": "2026-08-21",
+          "observed": "2026-09-06",
+          "in": 4.0,
+          "out": 20.0,
+          "cw": 5.0,
+          "cr": 0.4,
+          "source": "OpenAI docs + changelog (2026-08-21: GPT-5.6 Sol input -20% / output -33%, promotional at least through 2026-11-21); context tier from billed input: <=272k short, >272k long; cache write is 1.25x input",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 4.0, "out": 20.0, "cw": 5.0, "cr": 0.4 },
+            "long": { "in": 8.0, "out": 30.0, "cw": 10.0, "cr": 0.8 }
           }
         }
       ]
@@ -229,6 +297,13 @@
         { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.75, "out": 14.0, "cw": 1.75, "cr": 0.175, "source": "OpenAI docs (Codex gpt-5.3-codex; the only Codex model, flat-priced — no long-context tier)" }
       ]
     },
+    "gemini-3.8-flash": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-09-02", "observed": "2026-09-06", "in": 0.75, "out": 3.75, "cw": 0.75, "cr": 0.075, "source": "Gemini docs + release notes (gemini-3.8-flash GA 2026-09-02, introductory pricing through December 31, 2026). Duplicates the current 'flash' family rate on purpose, to survive the family moving to a future version — if the family rate changes, this pin must be reviewed too." },
+        { "effective_date": "2027-01-01", "observed": "2026-09-06", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.8 Flash standard pricing starting January 1, 2027, after the introductory period ends)" }
+      ]
+    },
     "gemini-3-flash": {
       "provider": "antigravity",
       "rates": [
@@ -281,6 +356,9 @@
     }
   },
   "fast": {
+    "opus-5": [
+      { "effective_date": "2026-07-24", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs Fast mode (Opus 5 $10/$50), available from the 2026-07-24 launch, the same day Fast mode was removed from Opus 4.7; caching multipliers apply on top of fast input" }
+    ],
     "opus-4-8": [
       { "effective_date": "2026-06-13", "observed": "2026-07-01", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs Fast mode (Opus 4.8 $10/$50); caching multipliers apply on top of fast input" }
     ],
@@ -289,8 +367,14 @@
     ]
   },
   "families": {
+    "fable-5-1": [
+      { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs (Fable 5.1; cache read 0.025x input, not 0.1x). Checked before the generic 'fable' so dated build ids like claude-fable-5-1-20260901 do not inherit Fable 5's $1.00 cache read." }
+    ],
     "fable": [
       { "effective_date": "2026-06-10", "observed": "2026-07-15", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Fable 5); short-alias 'fable' resolves here — full id claude-fable-5 is also pinned in models" }
+    ],
+    "mythos-5-1": [
+      { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs (Mythos 5.1; cache read 0.025x input, not 0.1x). Checked before the generic 'mythos' so dated build ids do not inherit Mythos 5's $1.00 cache read." }
     ],
     "mythos": [
       { "effective_date": "2026-06-13", "observed": "2026-07-15", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Mythos 5, limited availability) — same rate card as Fable 5; short-alias 'mythos' resolves here" }
@@ -312,6 +396,119 @@
     ],
     "mini": [
       { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 0.75, "out": 4.5, "cw": 0.75, "cr": 0.075, "source": "OpenAI docs (gpt-5.4-mini; only version on the page, no gpt-5.5-mini exists yet)" }
+    ],
+    "astra": [
+      {
+        "effective_date": "2026-09-03",
+        "observed": "2026-09-06",
+        "in": 10.0,
+        "out": 50.0,
+        "cw": 12.5,
+        "cr": 1.0,
+        "source": "OpenAI docs (GPT-6 Astra, a distinct product line from the GPT-5.6 Sol/Terra/Luna family). Codex logs effort-suffixed ids (gpt-5.6-luna:high, gpt-5.6-luna-max) that miss the exact 'models' key; without this family they fell through to the codex provider fallback. Mirrors the models entry — both must move together when the price changes.",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 10.0, "out": 50.0, "cw": 12.5, "cr": 1.0 },
+          "long": { "in": 20.0, "out": 75.0, "cw": 25.0, "cr": 2.0 }
+        }
+      }
+    ],
+    "sol": [
+      {
+        "effective_date": "2026-07-09",
+        "observed": "2026-09-06",
+        "in": 5.0,
+        "out": 30.0,
+        "cw": 6.25,
+        "cr": 0.5,
+        "source": "OpenAI docs (GPT-5.6 Sol at launch). Codex logs effort-suffixed ids (gpt-5.6-luna:high, gpt-5.6-luna-max) that miss the exact 'models' key; without this family they fell through to the codex provider fallback. Mirrors the models entry — both must move together when the price changes.",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 5.0, "out": 30.0, "cw": 6.25, "cr": 0.5 },
+          "long": { "in": 10.0, "out": 45.0, "cw": 12.5, "cr": 1.0 }
+        }
+      },
+      {
+        "effective_date": "2026-08-21",
+        "observed": "2026-09-06",
+        "in": 4.0,
+        "out": 20.0,
+        "cw": 5.0,
+        "cr": 0.4,
+        "source": "OpenAI changelog (2026-08-21: Sol input -20% / output -33%, promotional at least through 2026-11-21).",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 4.0, "out": 20.0, "cw": 5.0, "cr": 0.4 },
+          "long": { "in": 8.0, "out": 30.0, "cw": 10.0, "cr": 0.8 }
+        }
+      }
+    ],
+    "terra": [
+      {
+        "effective_date": "2026-07-09",
+        "observed": "2026-09-06",
+        "in": 2.5,
+        "out": 15.0,
+        "cw": 3.125,
+        "cr": 0.25,
+        "source": "OpenAI docs (GPT-5.6 Terra at launch). Codex logs effort-suffixed ids (gpt-5.6-luna:high, gpt-5.6-luna-max) that miss the exact 'models' key; without this family they fell through to the codex provider fallback. Mirrors the models entry — both must move together when the price changes.",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 2.5, "out": 15.0, "cw": 3.125, "cr": 0.25 },
+          "long": { "in": 5.0, "out": 22.5, "cw": 6.25, "cr": 0.5 }
+        }
+      },
+      {
+        "effective_date": "2026-07-30",
+        "observed": "2026-09-06",
+        "in": 2.0,
+        "out": 12.0,
+        "cw": 2.5,
+        "cr": 0.2,
+        "source": "OpenAI changelog (2026-07-30: Terra costs 20% less).",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 2.0, "out": 12.0, "cw": 2.5, "cr": 0.2 },
+          "long": { "in": 4.0, "out": 18.0, "cw": 5.0, "cr": 0.4 }
+        }
+      }
+    ],
+    "luna": [
+      {
+        "effective_date": "2026-07-09",
+        "observed": "2026-09-06",
+        "in": 1.0,
+        "out": 6.0,
+        "cw": 1.25,
+        "cr": 0.1,
+        "source": "OpenAI docs (GPT-5.6 Luna at launch). Codex logs effort-suffixed ids (gpt-5.6-luna:high, gpt-5.6-luna-max) that miss the exact 'models' key; without this family they fell through to the codex provider fallback. Mirrors the models entry — both must move together when the price changes.",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 1.0, "out": 6.0, "cw": 1.25, "cr": 0.1 },
+          "long": { "in": 2.0, "out": 9.0, "cw": 2.5, "cr": 0.2 }
+        }
+      },
+      {
+        "effective_date": "2026-07-30",
+        "observed": "2026-09-06",
+        "in": 0.2,
+        "out": 1.2,
+        "cw": 0.25,
+        "cr": 0.02,
+        "source": "OpenAI changelog (2026-07-30: Luna costs 80% less).",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 0.2, "out": 1.2, "cw": 0.25, "cr": 0.02 },
+          "long": { "in": 0.4, "out": 1.8, "cw": 0.5, "cr": 0.04 }
+        }
+      }
     ],
     "flash-lite": [
       { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 0.25, "out": 1.5, "cw": 0.25, "cr": 0.025, "source": "Gemini docs (Gemini 3.1 Flash-Lite, current text/image/video); older 2.5 Flash-Lite pinned in models. Checked before 'flash'/'gemini'." },
