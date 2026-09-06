@@ -9,6 +9,16 @@ milestones.
 
 ## [Unreleased]
 
+### Changed
+
+- **Notch environment variables** — the advanced `.env` example no longer lists
+  `FLUXION_NOTCH_SILENT_STYLE` or `FLUXION_NOTCH_PEEK_RESET`; neither has been
+  read since the notch redesign. Move an existing `FLUXION_NOTCH_SILENT_STYLE`
+  override to `FLUXION_NOTCH_COLLAPSED_MODE`; `FLUXION_NOTCH_PEEK_RESET` can be
+  dropped, as peek behaviour is now automatic. Collapsed content, gauge style,
+  quota number placement, and single-model layout are all set in Desktop
+  Preferences rather than the environment.
+
 ## [1.5.0] - 2026-09-01
 
 ### Added
