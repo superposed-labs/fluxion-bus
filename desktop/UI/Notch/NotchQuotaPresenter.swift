@@ -576,4 +576,30 @@ struct NotchQuotaPresenter {
         }
         return "\(val)"
     }
+
+    /// How badly a provider wants the user's attention — lower sorts first.
+    /// Broken and blocked providers outrank any percentage; healthy providers
+    /// rank by remaining quota. Drives the collapsed strip's "lowest" style and
+    /// the slot the peek bubble points at before the pointer has picked one.
+    func attentionRank(for provider: ProviderUsage) -> Double {
+        let state = quotaState(for: provider)
+        switch state.mode {
+        case .error:
+            return -3
+        case .locked:
+            return -2
+        case .recovering:
+            // Still critical (depleted) but on the verge of recovering — keep it
+            // in the attention slot alongside locked.
+            return -2
+        case .credits:
+            return -1
+        case .healthy:
+            return state.bindingRemaining
+        case .loading:
+            // Never let a not-yet-fetched provider win the "lowest" slot over
+            // real data; it still shows when it's the only provider.
+            return Double.greatestFiniteMagnitude
+        }
+    }
 }

@@ -14,18 +14,6 @@ struct ExpandedPageHeightsKey: PreferenceKey {
     }
 }
 
-// Natural width of the peek tray's segment row, reported by the hidden
-// measuring twin in NotchIslandView+Peek. Drives the tray width on non-notched
-// displays, where there is no physical notch width to derive the tray from and
-// the old fixed per-count widths clipped long content (timers + pool tags).
-struct PeekContentWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 // Same idea for the collapsed strip: on non-notched displays the pill hugs the
 // measured row width instead of the fixed 180/280 constants, which left wide
 // dead margins around the centered content.
@@ -34,6 +22,91 @@ struct CollapsedContentWidthKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+// Height of the callout currently on screen, tail included. The window
+// reserves room for the TALLEST callout so it never resizes mid-hover, which
+// leaves up to ~100pt of transparent slack below a short one — and every
+// "is the pointer still on the island" judgement is derived from the window's
+// bounds. Without this the slack counts as island, and peek stays open with the
+// pointer far below anything visible.
+struct PeekBubbleHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+// Centre x of each provider's slot in the strip, keyed by index into
+// `providers` and measured in the card's coordinate space. Reported by the
+// collapsed row itself rather than recomputed in the controller: the strip has
+// several layouts (dots flanking the camera, labels, solo variants) whose
+// geometry would drift out of sync with any second copy of the math. The peek
+// bubble uses these anchors both to point its tail and — via the midpoints
+// between them — to decide which provider the pointer is targeting.
+struct NotchProviderAnchorsKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [:]
+
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// Coordinate space of the island card, so anchors are reported relative to the
+/// card's leading edge rather than the (wider) window.
+let notchCardSpace = "notchCard"
+
+/// False inside the collapsed row's hidden width-measuring twin. The twin
+/// renders the same content at its natural width, so without this it reports a
+/// second, differently-positioned set of anchors into the same preference and
+/// the winner is whichever SwiftUI reduces last.
+private struct NotchReportsAnchorsKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var notchReportsAnchors: Bool {
+        get { self[NotchReportsAnchorsKey.self] }
+        set { self[NotchReportsAnchorsKey.self] = newValue }
+    }
+}
+
+/// Marks a provider's slot in the collapsed strip: reports its centre for the
+/// bubble's tail, and carries the peek focus highlight. The highlight bleeds
+/// slightly outside the slot so a bare 18pt gauge still reads as selected
+/// without the strip having to reserve room for it.
+private struct NotchProviderSlotModifier: ViewModifier {
+    @Environment(\.notchReportsAnchors) private var reportsAnchors
+    let index: Int
+    let focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: NotchProviderAnchorsKey.self,
+                        value: reportsAnchors
+                            ? [index: proxy.frame(in: .named(notchCardSpace)).midX]
+                            : [:]
+                    )
+                }
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.white.opacity(focused ? 0.11 : 0))
+                    .padding(.horizontal, -5)
+                    .padding(.vertical, -3)
+                    .animation(.easeOut(duration: 0.16), value: focused)
+            )
+    }
+}
+
+extension View {
+    func notchProviderSlot(index: Int, focused: Bool) -> some View {
+        modifier(NotchProviderSlotModifier(index: index, focused: focused))
     }
 }
 
@@ -201,25 +274,6 @@ func notchUsesSoloDualWindowGlance(_ providers: [ProviderUsage]) -> Bool {
     return hasWeekly && (hasFiveHour || isCodexFiveHourTemporarilyUncapped(provider))
 }
 
-/// The two-provider peek can give the short and long quota windows distinct
-/// visual jobs: a 5H ring in the content row and a WK rail following the
-/// island's lower corner. Keep the richer treatment to healthy, comparable
-/// provider data; loading/error cards and providers without a weekly window
-/// continue through the generic peek renderer.
-func notchUsesDualAgentArcPeek(_ providers: [ProviderUsage]) -> Bool {
-    guard providers.count == 2 else { return false }
-    return providers.allSatisfy { provider in
-        guard provider.status == "ok" else { return false }
-        let hasFiveHour = provider.windows.contains {
-            $0.usedPercent != nil && notchWindowKind($0) == .fiveHour
-        }
-        let hasWeekly = provider.windows.contains {
-            $0.usedPercent != nil && notchWindowKind($0) == .weekly
-        }
-        return hasWeekly && (hasFiveHour || isCodexFiveHourTemporarilyUncapped(provider))
-    }
-}
-
 /// Expanded panel width. Solo split needs the 2-provider width so each pool
 /// column has room for a full ring + detail band. A detailed solo dual-window
 /// card needs extra width for its ring + info column, while Compact deliberately
@@ -288,19 +342,14 @@ struct NotchIslandView: View {
     
     // Dynamic animatable properties
     var targetWidth: CGFloat {
-        let count = notchLayoutCount(model.providers)
         switch model.notchState {
         case .collapsed:
             return model.collapsedWidth
         case .peek:
-            if model.hasNotch {
-                // Collapsed width (+ the 3-provider bonus) is the floor;
-                // content that measures wider grows the tray instead of
-                // clipping at the window edges (peekWidthWithNotch).
-                return model.peekWidthWithNotch(collapsedBase: model.collapsedWidth, count: count)
-            } else {
-                return model.peekWidthNoNotch(count: count)
-            }
+            return model.peekTrayWidth(
+                collapsedBase: model.collapsedWidth,
+                hasNotch: model.hasNotch
+            )
         case .expanded:
             return notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
         }
@@ -322,26 +371,42 @@ struct NotchIslandView: View {
         case .collapsed:
             return 16
         case .peek:
-            return 20
+            // Peek leaves the strip exactly as it was and hangs the callout
+            // below it, so the strip's own radius must not change either — a
+            // silhouette that swells on hover would undo the continuity the
+            // layout is there to provide.
+            return 16
         case .expanded:
             return 30
         }
     }
     
+    // Concave fillet at the shoulders, sized from the island's current width so
+    // it stays proportional as the card grows from strip to panel. The wings
+    // grow outward, so every layer drawn with the flared silhouette is laid out
+    // at `flaredWidth` while the content keeps `targetWidth`.
+    var flareRadius: CGFloat {
+        notchFlareRadius(forWidth: targetWidth)
+    }
+
+    var flaredWidth: CGFloat {
+        targetWidth + 2 * flareRadius
+    }
+
     var backgroundCard: some View {
         ZStack {
             // Frosted glass background
             VisualEffectView(material: .hudWindow, blendingMode: .withinWindow)
                 .opacity(model.notchState == .expanded ? 1.0 : 0.0)
-            
+
             // Black color layer
             Color.black
                 .opacity(model.notchState == .expanded ? 0.76 : 1.0)
         }
-        .frame(width: targetWidth, height: targetHeight)
-        .clipShape(BottomRoundedRectangle(cornerRadius: targetCornerRadius))
+        .frame(width: flaredWidth, height: targetHeight)
+        .clipShape(BottomRoundedRectangle(cornerRadius: targetCornerRadius, flareRadius: flareRadius))
         .overlay(
-            BottomRoundedRectangle(cornerRadius: targetCornerRadius)
+            BottomRoundedRectangle(cornerRadius: targetCornerRadius, flareRadius: flareRadius)
                 .stroke(Color.white.opacity(model.notchState == .expanded ? 0.16 : 0.0), lineWidth: 0.5)
         )
     }
@@ -363,19 +428,21 @@ struct NotchIslandView: View {
                     // Soft outer halo.
                     LoadingSweep(
                         cornerRadius: targetCornerRadius,
-                        width: targetWidth,
+                        flareRadius: flareRadius,
+                        width: flaredWidth,
                         height: targetHeight,
                         tint: Self.upgradeTint
                     )
                     // Constant faint rim so the whole outline reads as "active"
                     // even where the comet currently isn't (visible: ~0.8pt).
-                    BottomRoundedBorder(cornerRadius: targetCornerRadius)
+                    BottomRoundedBorder(cornerRadius: targetCornerRadius, flareRadius: flareRadius)
                         .stroke(Self.upgradeTint.opacity(0.3), lineWidth: 1.6)
-                        .frame(width: targetWidth, height: targetHeight)
+                        .frame(width: flaredWidth, height: targetHeight)
                     // Crisp comet line hugging the edge (visible: ~1.6pt).
                     LoadingSweep(
                         cornerRadius: targetCornerRadius,
-                        width: targetWidth,
+                        flareRadius: flareRadius,
+                        width: flaredWidth,
                         height: targetHeight,
                         tint: Self.upgradeTint,
                         lineWidth: 3.2,
@@ -390,14 +457,12 @@ struct NotchIslandView: View {
             // UI Content Layers
             VStack(spacing: 0) {
                 switch model.notchState {
-                case .collapsed:
+                case .collapsed, .peek:
+                    // One branch for both states: peek's tray IS the collapsed
+                    // strip, and separate branches carry separate identities —
+                    // SwiftUI would cross-fade the strip into an identical copy
+                    // of itself every time the pointer arrived.
                     collapsedView
-                        .transition(.asymmetric(
-                            insertion: .opacity.animation(Self.contentInsertionAnimation),
-                            removal: .opacity.animation(Self.contentRemovalAnimation)
-                        ))
-                case .peek:
-                    peekView
                         .transition(.asymmetric(
                             insertion: .opacity.animation(Self.contentInsertionAnimation),
                             removal: .opacity.animation(Self.contentRemovalAnimation)
@@ -413,11 +478,58 @@ struct NotchIslandView: View {
                 }
             }
             .frame(width: targetWidth, height: targetHeight, alignment: .top)
+            .coordinateSpace(name: notchCardSpace)
+            .onPreferenceChange(NotchProviderAnchorsKey.self) { anchors in
+                guard model.providerAnchors != anchors else { return }
+                model.providerAnchors = anchors
+            }
             // The state-specific view is replaced immediately while the card
             // geometry animates. Without this live silhouette clip, the old
             // content can draw for a frame outside a card that has already
             // shrunk — perceived as a text/rail afterimage.
             .clipShape(BottomRoundedRectangle(cornerRadius: targetCornerRadius))
+
+            // The peek callout hangs BELOW the strip as its own black shape, so
+            // it sits outside both the card and the card's silhouette clip.
+            if model.notchState == .peek, model.usesBubblePeek {
+                peekBubbleLayer
+                    // Leading, not centre: the layer positions itself with an
+                    // offset measured from the card's leading edge (and the
+                    // tail's x is measured the same way). A centring alignment
+                    // here applies a second, unaccounted displacement, and the
+                    // tail stops landing on the gauge it points at.
+                    .frame(width: targetWidth, alignment: .topLeading)
+                    .offset(y: targetHeight + NotchDataModel.peekBubbleGap)
+                    // Unfolds from its own tail. The island's generic content
+                    // fade (easeOut 0.13) is too flat for something this large
+                    // arriving on the desktop, so the callout gets a spring
+                    // with a touch of overshoot, growing from the tip that
+                    // points at the slot.
+                    //
+                    // It retracts into the same tip on the way out. That is the
+                    // whole of the exit: collapsed and peek render an identical
+                    // strip, so nothing else on screen moves when peek ends,
+                    // and a 0.11s 6% shrink (what this was) read as the bubble
+                    // simply blinking out. easeIn accelerates away rather than
+                    // easing to a stop, which is what makes it read as being
+                    // pulled back into the island instead of fading on the spot.
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.82, anchor: peekBubbleTailAnchor)
+                            .combined(with: .opacity)
+                            .animation(.spring(response: 0.32, dampingFraction: 0.7)),
+                        removal: .scale(scale: 0.84, anchor: peekBubbleTailAnchor)
+                            .combined(with: .opacity)
+                            .animation(.easeIn(duration: 0.18))
+                    ))
+            }
+        }
+        // On the ZStack, not on the content stack: the callout is a SIBLING of
+        // that stack, so a preference reader inside it never sees the bubble's
+        // height at all — which silently disabled every hit-test that depends
+        // on it.
+        .onPreferenceChange(PeekBubbleHeightKey.self) { height in
+            guard abs(model.peekBubbleVisibleHeight - height) > 0.5 else { return }
+            model.peekBubbleVisibleHeight = height
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Collapsed/peek: only the visible card is tappable so taps on the
@@ -429,7 +541,11 @@ struct NotchIslandView: View {
         .contentShape(
             model.notchState == .expanded
                 ? CardHitShape(width: .infinity, height: .infinity)
-                : CardHitShape(width: targetWidth, height: targetHeight)
+                // The callout is a visible part of the peek surface, so a click
+                // on it expands like a click on the tray. Only the bubble's own
+                // rect joins the tray's — not the whole band it lives in, whose
+                // sides are transparent halo.
+                : CardHitShape(width: targetWidth, height: targetHeight, bubble: peekBubbleHitRect)
         )
         .ignoresSafeArea()
         .onTapGesture {
@@ -492,6 +608,7 @@ struct NotchIslandView: View {
 /// lockstep for free.
 struct LoadingSweep: View {
     let cornerRadius: CGFloat
+    var flareRadius: CGFloat = 0
     let width: CGFloat
     let height: CGFloat
     let tint: Color
@@ -502,7 +619,7 @@ struct LoadingSweep: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let rotation = (t * 90).truncatingRemainder(dividingBy: 360)
-            BottomRoundedBorder(cornerRadius: cornerRadius)
+            BottomRoundedBorder(cornerRadius: cornerRadius, flareRadius: flareRadius)
                 .stroke(
                     AngularGradient(
                         gradient: Gradient(stops: [

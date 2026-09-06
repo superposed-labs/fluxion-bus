@@ -91,7 +91,6 @@ extension AppDelegate {
             notch.model.expandedStyle = envVals["FLUXION_NOTCH_SINGLE_MODEL_LAYOUT"] == "compact"
                 ? "compact"
                 : "detailed"
-            notch.model.peekReset = envVals["FLUXION_NOTCH_PEEK_WINDOWS"] ?? "both"
             notch.model.pendingUpdateVersion = updaterController?.pendingUpdateVersion
             notch.repositionWindow()
         }

@@ -16,58 +16,133 @@ import SwiftUI
 struct CardHitShape: Shape {
     var width: CGFloat
     var height: CGFloat
+    /// Peek's callout bubble, in coordinates relative to the card's top-left
+    /// corner, so a click on the visible bubble counts as a click on the
+    /// island. Nil whenever no bubble is showing.
+    var bubble: CGRect? = nil
 
     func path(in rect: CGRect) -> Path {
         let x = rect.minX + max(0, (rect.width - width) / 2)
-        return Path(CGRect(x: x, y: rect.minY, width: min(width, rect.width), height: min(height, rect.height)))
+        var path = Path(CGRect(x: x, y: rect.minY, width: min(width, rect.width), height: min(height, rect.height)))
+        if let bubble = bubble {
+            path.addRect(bubble.offsetBy(dx: x, dy: rect.minY))
+        }
+        return path
     }
 }
 
+/// Radius of the concave fillet where the island's shoulders meet the screen's
+/// top edge — the macOS-notch treatment, so the black flows into the menu bar
+/// instead of ending on a hard 90° corner. Proportional to the island's width:
+/// a constant 12pt reads as a refined edge on the ~250pt notched strip but as a
+/// bow tie on the ~120pt pill a single provider gets on a notchless display.
+func notchFlareRadius(forWidth width: CGFloat) -> CGFloat {
+    min(12, max(0, width) * 0.055)
+}
+
+/// The island silhouette: square against the screen's top edge, rounded at the
+/// bottom, and — when `flareRadius > 0` — flaring out into a concave fillet at
+/// each top corner.
+///
+/// The flare grows OUTWARD: `rect` is the body plus a `flareRadius` wing on each
+/// side, so the body keeps exactly the width the layout asked for (which on a
+/// notched display is what covers the physical camera housing). Callers must
+/// therefore hand this shape a rect that is `2 * flareRadius` wider than the
+/// card. At `flareRadius == 0` the path is identical to the pre-flare one.
 struct BottomRoundedRectangle: Shape {
     var cornerRadius: CGFloat
-    
-    var animatableData: CGFloat {
-        get { cornerRadius }
-        set { cornerRadius = newValue }
+    var flareRadius: CGFloat = 0
+
+    // Both radii animate: the corner radius changes with the notch state
+    // (16 → 20 → 30) and the flare with the island's width. Animating only the
+    // corner would pop the flare between states while the rest of the
+    // silhouette morphs smoothly.
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(cornerRadius, flareRadius) }
+        set {
+            cornerRadius = newValue.first
+            flareRadius = newValue.second
+        }
     }
-    
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let r = min(cornerRadius, rect.height)
+        let f = notchFlareInset(cornerRadius: cornerRadius, flareRadius: flareRadius, in: rect)
+        let r = min(cornerRadius, rect.height - f)
+        let left = rect.minX + f
+        let right = rect.maxX - f
+
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY),
-                          control: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r),
-                          control: CGPoint(x: rect.minX, y: rect.maxY))
+        if f > 0 {
+            path.addQuadCurve(to: CGPoint(x: left, y: rect.minY + f),
+                              control: CGPoint(x: left, y: rect.minY))
+        }
+        path.addLine(to: CGPoint(x: left, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: left + r, y: rect.maxY),
+                          control: CGPoint(x: left, y: rect.maxY))
+        path.addLine(to: CGPoint(x: right - r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: right, y: rect.maxY - r),
+                          control: CGPoint(x: right, y: rect.maxY))
+        path.addLine(to: CGPoint(x: right, y: rect.minY + f))
+        if f > 0 {
+            path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY),
+                              control: CGPoint(x: right, y: rect.minY))
+        }
         path.closeSubpath()
         return path
     }
 }
 
+/// The visible half of `BottomRoundedRectangle`'s outline — everything but the
+/// top edge, which sits off-screen. Kept in lockstep with the fill shape: the
+/// upgrade sweep runs along this path, so any silhouette the fill has and the
+/// border doesn't shows up as light spilling outside the black.
 struct BottomRoundedBorder: Shape {
     var cornerRadius: CGFloat
-    
-    var animatableData: CGFloat {
-        get { cornerRadius }
-        set { cornerRadius = newValue }
+    var flareRadius: CGFloat = 0
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(cornerRadius, flareRadius) }
+        set {
+            cornerRadius = newValue.first
+            flareRadius = newValue.second
+        }
     }
-    
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let r = min(cornerRadius, rect.height)
+        let f = notchFlareInset(cornerRadius: cornerRadius, flareRadius: flareRadius, in: rect)
+        let r = min(cornerRadius, rect.height - f)
+        let left = rect.minX + f
+        let right = rect.maxX - f
+
         path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY),
-                          control: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r),
-                          control: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        if f > 0 {
+            path.addQuadCurve(to: CGPoint(x: right, y: rect.minY + f),
+                              control: CGPoint(x: right, y: rect.minY))
+        }
+        path.addLine(to: CGPoint(x: right, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: right - r, y: rect.maxY),
+                          control: CGPoint(x: right, y: rect.maxY))
+        path.addLine(to: CGPoint(x: left + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: left, y: rect.maxY - r),
+                          control: CGPoint(x: left, y: rect.maxY))
+        path.addLine(to: CGPoint(x: left, y: rect.minY + f))
+        if f > 0 {
+            path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY),
+                              control: CGPoint(x: left, y: rect.minY))
+        }
         return path
     }
+}
+
+/// Clamp the flare so the two wings and the two bottom corners can never claim
+/// more of the rect than it has. Shared by the fill and border shapes so they
+/// cannot disagree about the silhouette mid-animation.
+private func notchFlareInset(cornerRadius: CGFloat, flareRadius: CGFloat, in rect: CGRect) -> CGFloat {
+    guard flareRadius > 0 else { return 0 }
+    let widthRoom = max(0, (rect.width - 2 * cornerRadius) / 2)
+    return min(flareRadius, widthRoom, max(0, rect.height - cornerRadius))
 }
 
 struct VisualEffectView: NSViewRepresentable {

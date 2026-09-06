@@ -665,30 +665,6 @@ extension PreferencesWindow {
             isFirst: true
         )
 
-        peekResetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        peekResetPopup.addItems(withTitles: [
-            L10n.tr("preferences.reset.5h"),
-            L10n.tr("preferences.notch.weekly"),
-            L10n.tr("preferences.notch.both")
-        ])
-        peekResetPopup.translatesAutoresizingMaskIntoConstraints = false
-        peekResetPopup.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
-
-        let activePeekReset = appDelegate.envVals["FLUXION_NOTCH_PEEK_WINDOWS"] ?? "both"
-        if activePeekReset == "weekly" { peekResetPopup.selectItem(at: 1) }
-        else if activePeekReset == "both" { peekResetPopup.selectItem(at: 2) }
-        else { peekResetPopup.selectItem(at: 0) }
-
-        peekResetPopup.target = self
-        peekResetPopup.action = #selector(autosave)
-
-        peekResetRow = CardRow(
-            title: L10n.tr("preferences.notch.peek_countdown"),
-            desc: L10n.tr("preferences.notch.peek_countdown.desc"),
-            control: peekResetPopup,
-            isFirst: false
-        )
-
         checkHideOnFullscreen = NSSwitch()
         checkHideOnFullscreen.state = (appDelegate.envVals["FLUXION_NOTCH_HIDE_ON_FULLSCREEN"] ?? "true").lowercased() == "true" ? .on : .off
         checkHideOnFullscreen.target = self
@@ -707,7 +683,7 @@ extension PreferencesWindow {
         )
         notchGlanceSection = addSection(
             title: L10n.tr("preferences.section.notch_glance"),
-            rows: [silentStyleRow, gaugeStyleRow, gaugeValueRow, peekResetRow],
+            rows: [silentStyleRow, gaugeStyleRow, gaugeValueRow],
             into: documentStack
         )
         notchExpandedSection = addSection(

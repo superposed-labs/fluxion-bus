@@ -85,47 +85,32 @@ class NotchDataModel: ObservableObject {
     // one-ring column used by multi-provider panels; "detailed" uses the
     // richer full-width solo card. Multi-provider panels ignore this setting.
     @Published var expandedStyle: String = "detailed"
-    // Which reset window(s) the peek status line counts down: "5h" (rolling
-    // window), "weekly" (weekly cap), or "both" (two labeled timers,
-    // stacked vertically, which makes the peek tray taller).
-    @Published var peekReset: String = "both"
+    // Which provider slot the peek's callout bubble is pointing at, as an
+    // index into `providers`. Set on entry (see peekFocusIndexUnderPointer) and
+    // then by whichever slot the pointer is nearest, so the bubble is never
+    // absent while peek is open — nil only outside peek.
+    @Published var peekFocusIndex: Int? = nil
+    /// Gates the bubble tail's slide. False while peek opens, so the callout
+    /// appears already pointing at its slot; the first pointer-driven change
+    /// turns it on. Without the gate the tail travels in on every open, which
+    /// reads as the bubble hunting for its target.
+    @Published var peekBubbleTailAnimates: Bool = false
+    /// Centre x of each provider's slot in the strip, in the card's coordinate
+    /// space, reported by the collapsed row (see NotchProviderAnchorsKey).
+    @Published var providerAnchors: [Int: CGFloat] = [:]
+    /// Height of the callout actually on screen, reported by the bubble layer
+    /// (see PeekBubbleHeightKey). Zero before the first one has been laid out.
+    @Published var peekBubbleVisibleHeight: CGFloat = 0
     @Published var notchWidth: CGFloat = 0
     @Published var notchLeft: CGFloat = 0
     @Published var notchRight: CGFloat = 0
     @Published var collapsedWidth: CGFloat = 180
     @Published var expandedPageHeight: CGFloat = 232
-    // Natural width of the peek segment row, measured by the hidden twin in
-    // NotchIslandView+Peek (see PeekContentWidthKey). Only meaningful on
-    // non-notched displays; 0 until the first peek layout has run.
-    @Published var peekContentWidth: CGFloat = 0
     // Natural width of the collapsed row, measured the same way (see
     // CollapsedContentWidthKey / NotchIslandView+Collapsed).
     @Published var collapsedContentWidth: CGFloat = 0
 
-    // Peek tray width on a non-notched display. The tray wraps the measured
-    // content with the 16pt side paddings plus slack so a countdown that gains
-    // a digit between measurements doesn't clip. Until the first measurement
-    // lands (first hover), fall back to per-count guesses close to the likely
-    // result so the resize on first layout is small.
-    func peekWidthNoNotch(count: Int) -> CGFloat {
-        guard peekContentWidth > 1 else {
-            return count == 1 ? 200 : (count == 3 ? 380 : 280)
-        }
-        return max(180, peekContentWidth + 32 + 8)
-    }
 
-    // Peek tray width on a notched display: the collapsed width (+ the legacy
-    // 3-provider bonus) is the floor, but content that measures wider — pool
-    // tags, stacked timers, three segments — grows the tray instead of
-    // clipping at the window edges. Reuses the same measured row (and slack)
-    // as peekWidthNoNotch; until the first measurement lands the floor alone
-    // applies, so the tray can still open before a hover has ever happened.
-    func peekWidthWithNotch(collapsedBase: CGFloat, count: Int) -> CGFloat {
-        let bonus: CGFloat = (count == 3 && !usesTallPeekLayout) ? 80 : 0
-        let base = collapsedBase + bonus
-        guard peekContentWidth > 1 else { return base }
-        return max(base, peekContentWidth + 32 + 8)
-    }
 
     // Collapsed pill width on a non-notched display: hugs the measured row
     // (which carries its own 17pt side paddings), floored so the pill keeps a
@@ -162,37 +147,173 @@ class NotchDataModel: ObservableObject {
         hasNotch ? safeAreaTop : 32
     }
 
-    // Extra peek-tray height in "both" mode, where each segment stacks a header
-    // row over two labeled countdowns instead of a single inline timer.
-    static let peekBothExtraHeight: CGFloat = 34
-    // The dedicated two-agent treatment fits both windows into two compact
-    // rows; the WK value moves into a perimeter rail instead of requiring a
-    // third stacked timer row.
-    static let dualAgentArcPeekExtraHeight: CGFloat = 22
-    // The solo 5H | WK peek is a compact inline row below the physical notch.
-    // Twelve points keep a visible safety gap above the gauges without
-    // carrying unnecessary black space between the camera housing and row.
-    static let soloDualPeekExtraHeight: CGFloat = 12
 
-    // A single provider's compact 5H/WK glance always expands into the same
-    // two-column, two-line peek, even if the legacy timer preference selected
-    // only one window. This preserves continuity from the collapsed strip.
-    var usesTallPeekLayout: Bool {
-        peekReset == "both" || notchUsesSoloDualWindowGlance(providers)
+    // MARK: Bubble peek geometry
+    // With more than one provider the peek tray stays exactly the collapsed
+    // strip and the detail moves into a callout bubble hanging below it,
+    // pointing at the provider slot nearest the pointer.
+    //
+    // The bubble's WIDTH is fixed and its HEIGHT follows its rows; what must
+    // never change mid-hover is the window, which is why the constants below
+    // reserve room for the tallest callout rather than the current one (see
+    // peekBubbleBandHeight).
+    // The callout is sized by its content, not by the strip it hangs from: the
+    // stacked window rows read best in a column this wide, and a bubble
+    // stretched to a 400pt strip pushes each row's label and value to opposite
+    // ends of a line.
+    static let peekBubbleWidth: CGFloat = 236
+
+    // Height follows the rows the focused provider actually has. A provider's
+    // quota is not always "5h + weekly": Claude Max meters a model-scoped
+    // weekly (Fable) alongside them, and Antigravity meters two independent
+    // pools with a 5h and a weekly each. Anything fixed at two rows either
+    // hides real limits or reserves dead space.
+    // These describe the RESERVE only — the callout itself is sized by its
+    // content (see peekBubbleLayer). Reserving too much costs a taller strip of
+    // transparent window; reserving too little clips the callout outright, so
+    // they are deliberately biased high and carry explicit slack.
+    static let peekBubbleHeaderHeight: CGFloat = 23
+    static let peekBubbleRowHeight: CGFloat = 37
+    static let peekBubbleRowSpacing: CGFloat = 9
+    static let peekBubbleGroupHeaderHeight: CGFloat = 20
+    static let peekBubbleVerticalPadding: CGFloat = 23
+    /// A hairline between a split-pool provider's two pool groups, plus the
+    /// breathing room around it beyond the normal row spacing.
+    static let peekBubbleDividerHeight: CGFloat = 11
+    static let peekBubbleReserveSlack: CGFloat = 16
+    /// Four covers every provider we meter today (Antigravity's two pools x two
+    /// windows). Beyond it the callout stops being glanceable, so extra rows are
+    /// dropped least-urgent-first and stay in the expanded panel.
+    static let peekBubbleMaxRows: Int = 4
+
+    static func peekBubbleHeight(rows: Int, groups: Int = 0) -> CGFloat {
+        let n = max(1, min(rows, peekBubbleMaxRows))
+        let g = max(0, groups)
+        return peekBubbleHeaderHeight
+            + CGFloat(n) * peekBubbleRowHeight
+            + CGFloat(n - 1) * peekBubbleRowSpacing
+            + CGFloat(g) * peekBubbleGroupHeaderHeight
+            + CGFloat(max(0, g - 1)) * peekBubbleDividerHeight
+            + peekBubbleVerticalPadding
+            + peekBubbleReserveSlack
+    }
+    /// Transparent gap between the strip's bottom edge and the tail's tip.
+    ///
+    /// Close enough that the callout reads as growing out of the island rather
+    /// than floating under it, but not so close that the gap becomes a hairline
+    /// of desktop showing between two black shapes — at 3-4pt that reads as a
+    /// seam rather than as deliberate separation.
+    ///
+    /// It is also live hit-test area: peekIslandContainsPointer extends the
+    /// callout's rect up through this gap to meet the strip, so travelling down
+    /// into the callout is never sampled as having left the island.
+    static let peekBubbleGap: CGFloat = 5
+    /// Tall and narrow: a tail is a pointer, and a squat wide triangle points
+    /// at a region rather than at a slot. Paired with peekBubbleTailHalfWidth
+    /// this is roughly a 62° tip.
+    static let peekBubbleTailHeight: CGFloat = 10
+    static let peekBubbleTailHalfWidth: CGFloat = 6
+
+    /// True when peek is the strip plus a callout bubble — which is now every
+    /// configuration that has anything to show.
+    ///
+    /// The solo trays this replaced were structurally capped at two windows,
+    /// which is no longer what a provider has: Claude Max meters a model-scoped
+    /// weekly alongside its 5h and weekly, and a lone Antigravity meters two
+    /// pools with a 5h and a weekly each. They were also a second peek engine,
+    /// and the mechanisms added for the bubble kept leaking into them wrongly.
+    var usesBubblePeek: Bool {
+        !providers.isEmpty
     }
 
-    var usesDualAgentArcPeek: Bool {
-        peekReset == "both" && notchUsesDualAgentArcPeek(providers)
+    /// True when the callout has a choice of slots to point at.
+    ///
+    /// Deliberately separate from `usesBubblePeek`: one flag used to mean both
+    /// "peek is a bubble" and "the pointer is picking between providers", and
+    /// the camera-housing dead zone keyed off it walled off most of a solo
+    /// island's strip. What varies with provider count is TARGETING — the
+    /// housing dead zone, the slot highlight, move-driven opening, and which
+    /// slot has focus.
+    ///
+    /// The tail is not one of them. It was, briefly, on the reasoning that with
+    /// one subject there is nothing to disambiguate — but a callout's tail is
+    /// an attachment cue before it is a pointer, and dropping it left a 236pt
+    /// rounded rect butted against a 283pt rounded strip, which reads as two
+    /// shapes colliding rather than one island extending. Popovers keep their
+    /// arrow even when only one thing could have opened them.
+    var peekTargetsSlots: Bool {
+        providers.count > 1
     }
 
-    var peekContentExtraHeight: CGFloat {
-        if notchUsesSoloDualWindowGlance(providers) {
-            return Self.soloDualPeekExtraHeight
+
+    /// Vertical band the bubble occupies below the tray. Reserved in the peek
+    /// window's height whenever the bubble peek is in use — the bubble is
+    /// present for the whole of peek, and growing the window mid-hover would
+    /// both flicker and force a tracking-area recompute.
+    /// Reserved for the TALLEST callout, not the current one.
+    ///
+    /// The bubble's own black block follows its content, but the window it
+    /// lives in must not: resizing an NSWindow mid-hover rebuilds its tracking
+    /// area (the mechanism behind peek getting stuck open), makes
+    /// `windowHasPeekHalo` — and so every hover and exit judgement derived from
+    /// it — depend on which provider is focused, and shrinks unanimated, which
+    /// would clip the bubble halfway through its own animation. What is
+    /// reserved is transparent, and only while peek is open.
+    var peekBubbleBandHeight: CGFloat {
+        usesBubblePeek
+            ? Self.peekBubbleGap
+                + Self.peekBubbleTailHeight
+                + Self.peekBubbleHeight(rows: Self.peekBubbleMaxRows, groups: 2)
+            : 0
+    }
+
+    /// Peek tray width. The bubble peek is the collapsed strip verbatim, so it
+    /// takes that width and never measures content — the tray cannot resize
+    /// while the pointer moves across it. `collapsedBase` is passed in because the controller
+    /// computes it fresh (before `collapsedWidth` has been published) while the
+    /// view reads the published value.
+    func peekTrayWidth(collapsedBase: CGFloat, hasNotch: Bool) -> CGFloat {
+        // Peek IS the collapsed strip — same width, same content, same slot
+        // positions — with a callout hung underneath. Nothing about the strip
+        // may move on hover, or the provider the pointer was aiming at slides
+        // out from under it.
+        hasNotch ? collapsedBase : collapsedWidthNoNotch
+    }
+
+    /// Where the callout sits for a given slot, in the strip's coordinates.
+    ///
+    /// Centred on the slot, then kept inside the strip. Clamping is why the
+    /// tail's position is a free parameter: the body stops at the strip's edge
+    /// while the tail carries on to the slot's real centre. On a strip narrower
+    /// than the bubble there is nothing to clamp against, so it simply
+    /// overhangs evenly.
+    func peekBubblePlacement(trayWidth: CGFloat, anchor: CGFloat) -> (x: CGFloat, tailX: CGFloat) {
+        let width = Self.peekBubbleWidth
+        let x: CGFloat
+        if trayWidth <= width {
+            x = (trayWidth - width) / 2
+        } else {
+            x = min(max(anchor - width / 2, 0), trayWidth - width)
         }
-        if usesDualAgentArcPeek {
-            return Self.dualAgentArcPeekExtraHeight
+        return (x, anchor - x)
+    }
+
+    /// Provider whose slot owns `x`, measured from the card's leading edge.
+    /// Boundaries are the midpoints between neighbouring anchors, so the strip
+    /// is partitioned with no dead space and a 12pt gauge still gets a target
+    /// a hundred points wide.
+    func providerIndex(atCardX x: CGFloat) -> Int? {
+        let sorted = providerAnchors.sorted { $0.value < $1.value }
+        guard let last = sorted.last else { return nil }
+        for (current, next) in zip(sorted, sorted.dropFirst()) {
+            if x < (current.value + next.value) / 2 { return current.key }
         }
-        return peekReset == "both" ? Self.peekBothExtraHeight : 0
+        return last.key
+    }
+
+
+    var peekTrayWidth: CGFloat {
+        peekTrayWidth(collapsedBase: collapsedWidth, hasNotch: hasNotch)
     }
 
     // Extra tray height for the one-line "updating components" caption shown
@@ -201,15 +322,11 @@ class NotchDataModel: ObservableObject {
     // segments slide behind the physical notch.
     static let upgradeCaptionHeight: CGFloat = 15
 
+    /// Peek's tray is the collapsed strip verbatim.
     var peekHeight: CGFloat {
-        // With a notch the tray keeps the notch band above the content row; a
-        // non-notched pill has no band to mirror, so it hugs the content
-        // (which the peek view centers vertically instead of bottom-anchoring).
-        let base: CGFloat = hasNotch ? safeAreaTop + 36 : 44
-        let both = peekContentExtraHeight
-        let upgrade: CGFloat = isUpgradingBackend ? Self.upgradeCaptionHeight : 0
-        return base + both + upgrade
+        collapsedHeight + (isUpgradingBackend ? Self.upgradeCaptionHeight : 0)
     }
+
 }
 
 // MARK: - Notch Container View (AppKit)
@@ -237,7 +354,11 @@ class NotchContainerView: NSView {
         if let trackingArea = trackingArea {
             removeTrackingArea(trackingArea)
         }
-        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways]
+        // .mouseMoved drives the peek bubble's slot targeting. It goes through
+        // AppKit rather than SwiftUI's .onHover because the peek window never
+        // becomes key (see NotchWindow.canBecomeKey), and .activeAlways
+        // tracking is the reliable way to keep receiving moves there.
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways]
         // Track only the visible card, not the transparent overshoot halo, so
         // moving into the halo counts as leaving peek.
         let rect = controller?.visibleContentRect(in: bounds) ?? bounds
@@ -248,6 +369,11 @@ class NotchContainerView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         controller?.mouseEntered()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        controller?.peekPointerMoved(to: point, in: bounds)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -294,6 +420,36 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     // open and expand the notch.
     static let peekMarginW: CGFloat = 48
     static let peekMarginH: CGFloat = 32
+    /// The island hangs from the screen's top edge, so its hit rects end
+    /// exactly at screen.maxY — and CGRect.contains excludes its own max edge.
+    /// A pointer shoved all the way up reports y == maxY and reads as OUTSIDE
+    /// the island it is sitting on, which made peek open on the way up and shut
+    /// again on arrival. Every island hit rect is grown past the top edge by
+    /// this much so the edge itself counts as inside.
+    static let screenEdgeSlop: CGFloat = 4
+    /// How far past the boundary the pointer must travel before the bubble
+    /// re-points — an upper bound, not a fixed distance. See peekTargetIndex:
+    /// neighbouring slots can sit as little as 24pt apart, and a flat ±12pt
+    /// dead band then covers the whole gap between them.
+    static let peekFocusHysteresis: CGFloat = 12
+    /// How long a new slot must hold the pointer before the bubble commits to
+    /// it, so slots crossed in transit don't drag the callout along.
+    static let peekFocusCommitDelay: TimeInterval = 0.09
+    /// How long the pointer must stay on the strip before peek opens.
+    ///
+    /// The island lives on the screen's top edge — the one line the pointer
+    /// crosses all day on its way to the menu bar, a title bar, or the corner,
+    /// and the one users deliberately slam into as a wall. Every such crossing
+    /// used to throw a large callout over whatever they were reading. The costs
+    /// are lopsided: a false open covers content and takes attention, while the
+    /// delay is paid once against something the user is about to read for
+    /// seconds. Crossings clear the strip well inside 200ms; deliberate aim
+    /// does not notice it.
+    ///
+    /// Deliberately NOT applied to re-pointing: once the callout is open the
+    /// user is reading, and there latency reads as sluggishness rather than
+    /// composure (see peekFocusCommitDelay).
+    static let peekOpenDelay: TimeInterval = 0.2
 
     /// True while the window is physically peek-sized and therefore carries the
     /// transparent overshoot halo. Tracked explicitly rather than derived from
@@ -307,20 +463,99 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     /// expanded use the whole window. `bounds` is in the (non-flipped) content
     /// view coordinate space, so the card hugs the top and the halo sits at the
     /// bottom and on both sides.
+    /// The visible card in screen coordinates, grown past the screen's top edge
+    /// (see screenEdgeSlop). The single answer to "is the pointer still on the
+    /// island", shared by the exit debounce and the watchdog so they cannot
+    /// disagree about it.
+    /// Is the pointer on the island? The island in peek is a T, not a box: the
+    /// strip spans the full tray width, the callout below it is narrower and
+    /// sits wherever its slot put it. Testing one bounding rectangle kept peek
+    /// alive with the pointer well to the side of anything drawn.
+    func peekIslandContainsPointer(_ point: CGPoint) -> Bool {
+        guard model.usesBubblePeek, let win = window else {
+            return visibleCardScreenRect()?.contains(point) ?? false
+        }
+        let frame = win.frame
+        let trayWidth = model.peekTrayWidth
+        let cardLeft = frame.midX - trayWidth / 2
+        let stripBottom = frame.maxY - model.peekHeight
+        let strip = CGRect(
+            x: cardLeft,
+            y: stripBottom,
+            width: trayWidth,
+            height: model.peekHeight + Self.screenEdgeSlop
+        )
+        if strip.contains(point) { return true }
+
+        let bubbleHeight = model.peekBubbleVisibleHeight
+        guard bubbleHeight > 0 else { return false }
+        let anchor = model.providerAnchors[model.peekFocusIndex ?? 0] ?? trayWidth / 2
+        let placement = model.peekBubblePlacement(trayWidth: trayWidth, anchor: anchor)
+        // Reaches up through the gap to meet the strip, so travelling down into
+        // the callout is never sampled as having left the island.
+        let bubble = CGRect(
+            x: cardLeft + placement.x,
+            y: stripBottom - NotchDataModel.peekBubbleGap - bubbleHeight,
+            width: NotchDataModel.peekBubbleWidth,
+            height: NotchDataModel.peekBubbleGap + bubbleHeight
+        )
+        return bubble.contains(point)
+    }
+
+    func visibleCardScreenRect() -> CGRect? {
+        guard let win = window else { return nil }
+        var rect = visibleContentRect(in: CGRect(origin: .zero, size: win.frame.size))
+            .offsetBy(dx: win.frame.minX, dy: win.frame.minY)
+        rect.size.height += Self.screenEdgeSlop
+        return rect
+    }
+
     func visibleContentRect(in bounds: CGRect) -> CGRect {
         guard windowHasPeekHalo else { return bounds }
-        return CGRect(
+        var rect = CGRect(
             x: bounds.minX + Self.peekMarginW / 2,
             y: bounds.minY + Self.peekMarginH,
             width: bounds.width - Self.peekMarginW,
             height: bounds.height - Self.peekMarginH
         )
+        // Trim the band reserved for a taller callout than the one showing.
+        // The reservation exists so the window never resizes mid-hover; it must
+        // not also make the island seem to extend a hundred points below
+        // anything the user can see.
+        if model.notchState == .peek, model.usesBubblePeek, model.peekBubbleVisibleHeight > 0 {
+            let content = model.peekHeight
+                + NotchDataModel.peekBubbleGap
+                + model.peekBubbleVisibleHeight
+            if content < rect.height {
+                rect = CGRect(
+                    x: rect.minX,
+                    y: rect.maxY - content,
+                    width: rect.width,
+                    height: content
+                )
+            }
+        }
+        return rect
     }
     var allowsKeyWindow: Bool = false
     var isCollapsing: Bool = false
     private var webViewTimer: Timer?
     private var screenTimer: Timer?
     private var collapseWorkItem: DispatchWorkItem?
+    /// Debounce state for the peek bubble's slot targeting (see
+    /// peekPointerMoved): the slot waiting out its commit delay, and the work
+    /// item that will apply it.
+    private var peekFocusWorkItem: DispatchWorkItem?
+    private var pendingPeekFocusIndex: Int?
+    /// Backstop for a peek that never gets its mouseExited. See
+    /// startPeekWatchdog.
+    private var peekWatchdog: Timer?
+    /// True between a deliberate dismissal of the expanded panel and the
+    /// pointer next leaving the island. See suppressPeekUntilPointerLeaves.
+    private var peekSuppressed = false
+    private var peekSuppressionWatchdog: Timer?
+    /// Pending hover-intent open. See schedulePeekOpen.
+    private var peekOpenWorkItem: DispatchWorkItem?
     /// Debounces the flurry of didChangeScreenParametersNotification callbacks
     /// that fire while a display is being (un)plugged — we only want to
     /// reposition once the geometry has settled.
@@ -391,6 +626,10 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         win.hasShadow = false
         win.level = .statusBar + 1
         win.ignoresMouseEvents = false
+        // The peek bubble's slot targeting is driven by mouseMoved (see
+        // NotchContainerView). The tracking area asks for it, but a window that
+        // never becomes key needs this flag for the moves to be delivered.
+        win.acceptsMouseMovedEvents = true
         // Note: omitting .fullScreenAuxiliary does NOT keep the notch off
         // native fullscreen Spaces — measured on macOS 26, a .canJoinAllSpaces
         // window at this level is composited over fullscreen Spaces regardless
@@ -829,9 +1068,10 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         case .collapsed:
             cardWidth = model.collapsedWidth
         case .peek:
-            cardWidth = hasNotch
-                ? model.peekWidthWithNotch(collapsedBase: model.collapsedWidth, count: count)
-                : model.peekWidthNoNotch(count: count)
+            cardWidth = model.peekTrayWidth(
+                collapsedBase: model.collapsedWidth,
+                hasNotch: hasNotch
+            )
         case .expanded:
             cardWidth = notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
         }
@@ -943,37 +1183,31 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
                 // by the window while collapsed.
                 return NSSize(width: w + Self.peekMarginW, height: h + Self.peekMarginH)
             }
-            return NSSize(width: w, height: h)
+            // Room for the shoulder flare, which grows outward from the body.
+            // Peek and expanded already carry a far larger overshoot halo, so
+            // only the tight collapsed frame has to make room for it.
+            return NSSize(width: w + 2 * notchFlareRadius(forWidth: w), height: h)
         case .peek:
-            let w: CGFloat
-            // "both" mode stacks two labeled timers per segment, so the tray is
-            // taller. peekReset is a stable preference (set before reposition),
-            // so reading it from the model here is safe. Mirrors peekHeight,
-            // including the upgrade caption row.
-            var extra = model.peekContentExtraHeight
-            if model.isUpgradingBackend {
-                extra += NotchDataModel.upgradeCaptionHeight
-            }
             // Transparent margin so the spring's overshoot can extend past the
             // tray edges instead of being clipped by the window border — same
-            // trick the expanded panel uses (see below). Without this the peek
-            // Q-bounce is invisible (the width/height overshoot is cut off at
-            // the window edge), so it reads as flat compared to the design. The
-            // halo is excluded from hit-testing via visibleContentRect(in:).
-            let peekMarginW = Self.peekMarginW
-            let peekMarginH = Self.peekMarginH
-            if hasNotch {
-                // Mirror targetWidth's peek rule (collapsed floor + measured
-                // content growth) so window and SwiftUI layout agree.
-                w = model.peekWidthWithNotch(
-                    collapsedBase: getCollapsedWidth(screen: screen, count: count),
-                    count: count
-                )
-                return NSSize(width: w + peekMarginW, height: safeAreaTop + 36 + extra + peekMarginH)
-            } else {
-                w = model.peekWidthNoNotch(count: count)
-                return NSSize(width: w + peekMarginW, height: 44 + extra + peekMarginH)
-            }
+            // trick the expanded panel uses (see below). The halo is excluded
+            // from hit-testing via visibleContentRect(in:).
+            //
+            // The callout hangs below the strip in its own band, reserved for
+            // the tallest callout so hovering never resizes the window. Tray
+            // height is the strip's, computed from the local screen values
+            // because model.safeAreaTop/hasNotch are not published until
+            // updateWindowFrame, which runs after this.
+            let w = model.peekTrayWidth(
+                collapsedBase: hasNotch ? getCollapsedWidth(screen: screen, count: count) : 0,
+                hasNotch: hasNotch
+            )
+            let upgrade = model.isUpgradingBackend ? NotchDataModel.upgradeCaptionHeight : 0
+            let trayHeight = (hasNotch ? safeAreaTop : 32) + upgrade
+            return NSSize(
+                width: w + Self.peekMarginW,
+                height: trayHeight + model.peekBubbleBandHeight + Self.peekMarginH
+            )
         case .expanded:
             let w: CGFloat = notchExpandedWidth(providers: model.providers, expandedStyle: model.expandedStyle)
             // Add a transparent window margin (width + 60, height + 40) so the SwiftUI
@@ -983,6 +1217,9 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     }
     
     deinit {
+        peekOpenWorkItem?.cancel()
+        peekWatchdog?.invalidate()
+        peekSuppressionWatchdog?.invalidate()
         webViewTimer?.invalidate()
         screenTimer?.invalidate()
         screenParamsWorkItem?.cancel()
@@ -1256,13 +1493,330 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         return NSScreen.screens.first ?? NSScreen()
     }
     
+    // MARK: - Peek Bubble Focus
+
+    /// Lane the bubble points at before the pointer has chosen one: the
+    /// provider that most wants attention, so entering peek already answers
+    /// "what's about to run out" without a second movement.
+    /// The lane the pointer is already over as peek opens, mapped through the
+    /// tray geometry the tray is about to have.
+    ///
+    /// Without this the bubble opened on the most urgent provider and then
+    /// re-pointed lane by lane as the pointer's own position was read — so
+    /// hovering the rightmost provider played Claude, then Codex, then
+    /// Antigravity before settling. The pointer is by definition on the island
+    /// when peek opens, so it, not urgency, is the honest initial answer.
+    private func peekFocusIndexUnderPointer() -> Int? {
+        guard model.providers.count > 1 else { return nil }
+        let screen = findTargetScreen()
+        let layoutCount = notchLayoutCount(model.providers)
+        let hasNotch = getPhysicalNotchInfo(screen: screen) != nil
+        let trayWidth = model.peekTrayWidth(
+            collapsedBase: hasNotch ? getCollapsedWidth(screen: screen, count: layoutCount) : 0,
+            hasNotch: hasNotch
+        )
+        guard trayWidth > 0 else { return nil }
+        // Peek keeps the strip's geometry, so the anchors measured while
+        // collapsed are already the right ones — the provider under the pointer
+        // now is the provider under the pointer a moment later.
+        let left = getCapsuleCenterX(screen: screen, state: .peek, count: layoutCount) - trayWidth / 2
+        return model.providerIndex(atCardX: NSEvent.mouseLocation.x - left)
+    }
+
+    /// Fallback when the pointer can't be mapped to a lane: the provider that
+    /// most wants attention.
+    private func defaultPeekFocusIndex() -> Int? {
+        guard model.usesBubblePeek else { return nil }
+        let presenter = NotchQuotaPresenter(now: Date())
+        let ranked = model.providers.enumerated().min { lhs, rhs in
+            presenter.attentionRank(for: lhs.element) < presenter.attentionRank(for: rhs.element)
+        }
+        return ranked?.offset
+    }
+
+    /// Stop tracking lanes, but leave `peekFocusIndex` where it is.
+    ///
+    /// Clearing it here used to reset the bubble to lane 0 while it was still
+    /// on screen: collapse only *starts* the removal transition, so the fading
+    /// bubble kept rendering, read the nil back as lane 0, and visibly walked
+    /// its tail and contents back across the tray on the way out. The stale
+    /// index costs nothing — it is read only during peek, and mouseEntered
+    /// always sets a fresh one.
+    private func stopPeekFocusTracking() {
+        cancelPeekOpen()
+        peekFocusWorkItem?.cancel()
+        peekFocusWorkItem = nil
+        pendingPeekFocusIndex = nil
+        model.peekBubbleTailAnimates = false
+        stopPeekWatchdog()
+    }
+
+    /// Peek closes on mouseExited — except when that exit is never delivered.
+    ///
+    /// A tracking area rebuilt while the pointer is already inside it leaves
+    /// AppKit believing the pointer is outside, so the matching exit never
+    /// comes and the callout stays on screen long after the pointer has gone.
+    /// That happens for real now that peek can open mid-strip (the pointer
+    /// crosses off the camera housing onto a shoulder) rather than only at the
+    /// moment the pointer crosses into the window.
+    ///
+    /// Rather than fight the tracking area's inside/outside bookkeeping — where
+    /// assumeInside would only move the failure to the cases where the pointer
+    /// really is outside — this checks the pointer's actual position a few
+    /// times a second and closes exactly the way an exit would.
+    private func startPeekWatchdog() {
+        stopPeekWatchdog()
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.model.notchState == .peek, !self.isCollapsing else { return }
+            guard !self.peekIslandContainsPointer(NSEvent.mouseLocation) else { return }
+            self.mouseExited()
+        }
+        // .common so it keeps firing while the user is dragging or scrolling
+        // elsewhere, which is exactly when a stuck callout is most obvious.
+        RunLoop.main.add(timer, forMode: .common)
+        peekWatchdog = timer
+    }
+
+    private func stopPeekWatchdog() {
+        peekWatchdog?.invalidate()
+        peekWatchdog = nil
+    }
+
+    /// Hold peek back until the pointer has left the island once.
+    ///
+    /// Closing the expanded panel is the one moment the user has given an
+    /// explicit "not now": the same click also resigns key and deactivates the
+    /// app, so they are on their way back to their own window. Re-asserting a
+    /// callout over it honours half of that dismissal. Everywhere else the
+    /// pointer resting on a slot is reason enough to show peek, so this is the
+    /// only suppression there is.
+    ///
+    /// It lifts on the pointer leaving, never on a timer: a callout that
+    /// reappears on its own after a delay is worse than either behaviour, and
+    /// "move off and back" is a gesture the user already makes constantly.
+    /// The poll is there because the release condition must not depend on an
+    /// exit event being delivered — if one were missed, hovering the island
+    /// would stay dead with no way back.
+    private func suppressPeekUntilPointerLeaves() {
+        peekSuppressed = true
+        peekSuppressionWatchdog?.invalidate()
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.peekSuppressed else {
+                self.endPeekSuppression()
+                return
+            }
+            if !self.pointerIsOverCollapsedStrip() {
+                self.endPeekSuppression()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        peekSuppressionWatchdog = timer
+    }
+
+    private func endPeekSuppression() {
+        peekSuppressed = false
+        peekSuppressionWatchdog?.invalidate()
+        peekSuppressionWatchdog = nil
+    }
+
+    /// Lane hit-testing for the peek bubble. Coordinates are in the container
+    /// view's (unflipped) space, so the card hangs from `bounds.maxY`.
+    ///
+    /// Returns nil to mean "keep the current lane" — the pointer is over the
+    /// bubble itself, in the transparent overshoot halo, or inside the
+    /// hysteresis band around a lane boundary. It never returns "no lane": once
+    /// peek is open the bubble always points somewhere.
+    private func peekTargetIndex(at point: CGPoint, in bounds: CGRect) -> Int? {
+        guard model.providers.count > 1 else { return nil }
+
+        let trayTop = bounds.maxY
+        let trayBottom = trayTop - model.peekHeight
+        // Below the strip is the bubble's own band: while the pointer is in
+        // there it belongs to whichever provider the bubble is already showing,
+        // so travelling down into the callout can never re-target it.
+        guard point.y <= trayTop, point.y >= trayBottom else { return nil }
+
+        let cardX = point.x - (bounds.midX - model.peekTrayWidth / 2)
+        // The camera housing is hardware, not a slot. Crossing it on the way
+        // from one shoulder to the other must not hand the bubble to whichever
+        // provider happens to be nearer the middle.
+        if model.hasNotch, cardX > model.notchLeft, cardX < model.notchRight {
+            return nil
+        }
+        guard let candidate = model.providerIndex(atCardX: cardX) else { return nil }
+
+        // Hysteresis: the slot that already owns the bubble keeps it until the
+        // pointer is clearly past the boundary, so a hand resting on the divide
+        // doesn't flip the callout back and forth.
+        //
+        // Scaled to the distance between the two slots. The number-inside gauge
+        // styles shrink each slot to a bare 18pt ring, and the two that share a
+        // shoulder then sit 24pt apart — against which a flat 12pt dead band
+        // spans the entire gap, so the bubble could never change hands however
+        // long the pointer waited on its target.
+        if let current = model.peekFocusIndex, current != candidate,
+           let here = model.providerAnchors[current],
+           let there = model.providerAnchors[candidate] {
+            let boundary = (here + there) / 2
+            let slack = min(Self.peekFocusHysteresis, abs(here - there) * 0.2)
+            if abs(cardX - boundary) < slack { return nil }
+        }
+        return candidate
+    }
+
+    /// True when the pointer is over the collapsed strip itself.
+    ///
+    /// The tracking area covers the WINDOW, and the window is only resized back
+    /// to strip size ~0.3s after the state flips to collapsed — so between an
+    /// expanded panel closing and its frame shrinking, the whole ~624x370
+    /// region still delivers events. Answering "is the pointer on the island"
+    /// from the window's current bounds therefore says yes hundreds of points
+    /// away. This computes the strip's real rect from the screen instead, the
+    /// same way updateWindowFrame places it, so it is immune to a frame that
+    /// has not caught up. The flare's wings are included: they are visible
+    /// black, and the tracking area reaches them.
+    private func pointerIsOverCollapsedStrip() -> Bool {
+        let screen = findTargetScreen()
+        let count = notchLayoutCount(model.providers)
+        let bodyWidth = getCollapsedWidth(screen: screen, count: count)
+        let width = bodyWidth + 2 * notchFlareRadius(forWidth: bodyWidth)
+        let height = getPhysicalNotchInfo(screen: screen) != nil ? screen.safeAreaInsets.top : 32
+        let strip = CGRect(
+            x: getCapsuleCenterX(screen: screen, state: .collapsed, count: count) - width / 2,
+            y: screen.frame.maxY - height,
+            width: width,
+            // Screen coordinates grow upward, so this reaches past the top edge.
+            height: height + Self.screenEdgeSlop
+        )
+        return strip.contains(NSEvent.mouseLocation)
+    }
+
+    /// True while the pointer sits over the physical camera housing. Nothing
+    /// of ours is drawn there — it is the display's own cutout — so it neither
+    /// opens peek nor claims a provider.
+    private func pointerIsOverPhysicalNotch() -> Bool {
+        guard let notch = getPhysicalNotchInfo(screen: findTargetScreen()) else { return false }
+        let x = NSEvent.mouseLocation.x
+        return x > notch.left && x < notch.right
+    }
+
+    func peekPointerMoved(to point: CGPoint, in bounds: CGRect) {
+        // Entering the strip over the camera housing doesn't open peek, so pick
+        // it up here the moment the pointer reaches a shoulder that has content.
+        if model.notchState == .collapsed {
+            // Only a slot-targeting peek opens from a move: it is how the
+            // pointer crossing off the camera housing onto a shoulder gets
+            // picked up. Without a dead zone there is nothing to recover from,
+            // and mouseEntered has already started the clock.
+            guard model.peekTargetsSlots else { return }
+            // Stepping off the strip — or onto the housing — stops the clock,
+            // so a crossing never banks progress toward opening.
+            guard peekMayOpenNow() else {
+                cancelPeekOpen()
+                return
+            }
+            schedulePeekOpen()
+            return
+        }
+        guard model.notchState == .peek, model.peekTargetsSlots else { return }
+        guard let candidate = peekTargetIndex(at: point, in: bounds) else { return }
+        guard candidate != model.peekFocusIndex else {
+            // Back on the lane already showing — drop any pending switch.
+            peekFocusWorkItem?.cancel()
+            peekFocusWorkItem = nil
+            pendingPeekFocusIndex = nil
+            return
+        }
+        // Already scheduled for this lane; let the pending commit run.
+        guard candidate != pendingPeekFocusIndex else { return }
+
+        // Commit delay: crossing a lane on the way somewhere else shouldn't
+        // drag the bubble along with the pointer.
+        peekFocusWorkItem?.cancel()
+        pendingPeekFocusIndex = candidate
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingPeekFocusIndex = nil
+            guard self.model.notchState == .peek else { return }
+            // Opt the tail into animating from here on: this is a real
+            // re-point, not the initial placement.
+            self.model.peekBubbleTailAnimates = true
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                self.model.peekFocusIndex = candidate
+            }
+        }
+        peekFocusWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekFocusCommitDelay, execute: workItem)
+    }
+
     // MARK: - Hover Handlers
     func mouseEntered() {
         collapseWorkItem?.cancel()
-        
-        guard !isCollapsing else { return }
-        guard model.notchState == .collapsed else { return }
-        
+
+        // Landing on the camera housing opens nothing; peekPointerMoved picks
+        // it up once the pointer reaches a shoulder that has content. The state,
+        // collapse-in-progress and post-dismissal-suppression checks live in
+        // peekMayOpenNow with the rest.
+        guard peekMayOpenNow() else { return }
+        schedulePeekOpen()
+    }
+
+    /// The single answer to "may peek open for the pointer where it is right
+    /// now?" — asked when the pointer arrives, again on every move while
+    /// collapsed, and once more when the hover-intent clock fires.
+    ///
+    /// It is one function because it was three. Each caller re-derived the same
+    /// set of conditions, and the copy inside the timer was missing the
+    /// usesBubblePeek qualifier on the camera-housing check — which, since the
+    /// housing is most of a single provider's strip, meant a solo island could
+    /// never be opened at all. Conditions that must agree across call sites do
+    /// not get to live in three places.
+    private func peekMayOpenNow() -> Bool {
+        guard model.notchState == .collapsed, !isCollapsing, !peekSuppressed else { return false }
+        // An entry into a window that has not finished shrinking back from
+        // expanded is not an entry into the strip.
+        guard pointerIsOverCollapsedStrip() else { return false }
+        // The camera housing holds nothing, so it opens nothing — but only
+        // where slots are being targeted. One provider has no slots to
+        // disambiguate, and gating it there would wall off most of its strip.
+        if model.peekTargetsSlots, pointerIsOverPhysicalNotch() { return false }
+        return true
+    }
+
+    /// Start the hover-intent clock, unless it is already running. Continued
+    /// movement inside the strip must not restart it: the clock measures how
+    /// long the pointer has been on the island, not how long it has been still.
+    private func schedulePeekOpen() {
+        guard peekOpenWorkItem == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.peekOpenWorkItem = nil
+            // Re-check at fire time rather than trusting that no exit event was
+            // missed on the way here. AppKit has dropped those on us twice
+            // already; this way a missed exit costs an open that doesn't
+            // happen, never a callout that will not go away.
+            guard self.peekMayOpenNow() else { return }
+            self.openPeek()
+        }
+        peekOpenWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekOpenDelay, execute: workItem)
+    }
+
+    private func cancelPeekOpen() {
+        peekOpenWorkItem?.cancel()
+        peekOpenWorkItem = nil
+    }
+
+    private func openPeek() {
+        cancelPeekOpen()
+        // Opening from a pointer move (see peekPointerMoved) skips mouseEntered
+        // entirely, so cancel any pending collapse here rather than there.
+        collapseWorkItem?.cancel()
+        endPeekSuppression()
+        model.peekBubbleTailAnimates = false
+        model.peekFocusIndex = peekFocusIndexUnderPointer() ?? defaultPeekFocusIndex()
         let targetSize = getWindowSize(for: .peek)
         updateWindowFrame(to: targetSize)  // sets windowHasPeekHalo = true
 
@@ -1276,27 +1830,26 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         // tracking area was last computed as collapsed (whole window). Recompute
         // now that we're in peek so it excludes the overshoot halo.
         window?.contentView?.updateTrackingAreas()
+        startPeekWatchdog()
     }
     
     func mouseExited() {
+        cancelPeekOpen()
         collapseWorkItem?.cancel()
         
         guard model.notchState == .peek else { return }
         
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            if let win = self.window {
-                let mouseLoc = NSEvent.mouseLocation
-                // Re-check against the visible card, not the full window frame,
-                // so the transparent overshoot halo doesn't keep peek alive.
-                let card = self.visibleContentRect(in: CGRect(origin: .zero, size: win.frame.size))
-                    .offsetBy(dx: win.frame.minX, dy: win.frame.minY)
-                if card.contains(mouseLoc) {
-                    return
-                }
+            // Re-check against what is actually drawn, not the full window
+            // frame, so neither the transparent overshoot halo nor the band
+            // reserved for a taller callout keeps peek alive.
+            if self.peekIslandContainsPointer(NSEvent.mouseLocation) {
+                return
             }
             
             self.isCollapsing = true
+            self.stopPeekFocusTracking()
             self.updateNotchCoordinates(for: .collapsed)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                 self.model.notchState = .collapsed
@@ -1316,11 +1869,13 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     
     func toggleExpand() {
         collapseWorkItem?.cancel()
+        stopPeekFocusTracking()
         NSLog("FluxionNotch: toggleExpand called. Current state: \(model.notchState)")
-        
+
         if model.notchState == .expanded {
             allowsKeyWindow = false
             isCollapsing = true
+            suppressPeekUntilPointerLeaves()
             NSLog("FluxionNotch: Collapsing from expanded state.")
             updateNotchCoordinates(for: .collapsed)
             withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -1361,12 +1916,18 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
     
     func collapse(completion: (() -> Void)? = nil) {
         collapseWorkItem?.cancel()
+        stopPeekFocusTracking()
         guard model.notchState != .collapsed else {
             completion?()
             return
         }
         NSLog("FluxionNotch: collapse called. Current state: \(model.notchState)")
-        
+
+        // Escape and the other deliberate dismissals of the panel get the same
+        // treatment as clicking it shut.
+        if model.notchState == .expanded {
+            suppressPeekUntilPointerLeaves()
+        }
         allowsKeyWindow = false
         isCollapsing = true
         updateNotchCoordinates(for: .collapsed)
