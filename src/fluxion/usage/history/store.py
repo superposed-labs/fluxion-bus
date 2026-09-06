@@ -54,7 +54,11 @@ from fluxion.usage.history.parsing import (
 #
 # v6: `_antigravity_entry_from_blob` normalizes model names (e.g. Gemini 3.7 Flash,
 # Claude Opus 4.6) across display labels, effort levels, and backend response slugs.
-_SCHEMA_VERSION = 6
+#
+# v7: the Codex parser does the same for colon effort overrides, so
+# `gpt-5.6-luna:high` shares a row (and a price) with `gpt-5.6-luna` instead of
+# missing its exact price key and falling through to the provider fallback.
+_SCHEMA_VERSION = 7
 
 
 def _local(ts: datetime, tz: timezone | None) -> datetime:

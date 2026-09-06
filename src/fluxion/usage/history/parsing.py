@@ -25,6 +25,7 @@ from fluxion.usage.history.entry import (
     _int,
     _parse_ts,
 )
+from fluxion.usage.model_identity import billing_model_id
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
@@ -415,6 +416,19 @@ def _parse_claude_file(path: Path) -> list[UsageEntry]:
     return committed + tail
 
 
+def _normalize_codex_model(raw: str) -> str:
+    """Canonical product id for a Codex model, colon effort overrides merged.
+
+    Usage rows are grouped by this, so `gpt-5.6-luna:high` has to land on the
+    same row as `gpt-5.6-luna` rather than opening one of its own. Only the
+    colon form folds: outside Antigravity the dash form is ambiguous, and
+    `gpt-5.1-codex-max` is a separate product from `gpt-5.1-codex`. The split
+    lives in :func:`fluxion.usage.model_identity.billing_model_id`, so a usage
+    row and the price row it is costed against cannot disagree.
+    """
+    return billing_model_id("codex", raw)
+
+
 def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) -> list[UsageEntry]:
     """Parse a Codex rollout log. Each `token_count` event carries that turn's
     `last_token_usage` (summing unique cumulative states reproduces the
@@ -515,7 +529,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
         elif ptype == "turn_context":
             m = payload.get("model")
             if isinstance(m, str) and m:
-                model = m
+                model = _normalize_codex_model(m)
         elif ptype == "compacted" or event.get("type") == "compacted":
             pending_compaction = True
         elif ptype == "context_compacted":

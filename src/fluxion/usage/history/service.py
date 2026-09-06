@@ -34,7 +34,10 @@ from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 #
 # v11: `_antigravity_entry_from_blob` normalizes model names (e.g. Gemini 3.7 Flash,
 # Claude Opus 4.6) across display labels, effort levels, and backend response slugs.
-_CACHE_VERSION = 11
+#
+# v12: `_normalize_codex_model` folds Codex colon effort overrides, so
+# `gpt-5.6-luna:high` shares a row (and a price) with `gpt-5.6-luna`.
+_CACHE_VERSION = 12
 
 
 def _parse_usage_date(raw: str, fallback: date) -> date:
