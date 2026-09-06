@@ -220,6 +220,7 @@
 "notch.card.days_resets_in" = "%d天额度重置倒计时";
 "notch.five_hour_uncapped" = "暂不设限";
 "notch.peek.exhausted" = "已耗尽";
+"notch.peek.resets_in" = "%@ 后重置";
 "notch.card.weekly_reached" = "已达每周上限";
 "notch.card.all_spent" = "所有配额已用尽";
 "notch.card.resets_at" = "%@ 重置";

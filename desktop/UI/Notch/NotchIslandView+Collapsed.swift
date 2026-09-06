@@ -213,7 +213,10 @@ extension NotchIslandView {
         .frame(height: model.collapsedHeight)
         .background {
             if !model.hasNotch {
+                // Measures width only: its copy of the row must not report
+                // anchors, or the tail would point at the twin's layout.
                 collapsedWidthMeasurer
+                    .environment(\.notchReportsAnchors, false)
             }
         }
         .onPreferenceChange(CollapsedContentWidthKey.self) { width in
@@ -279,6 +282,7 @@ extension NotchIslandView {
                     HStack {
                         if model.providers.count >= 2 {
                             breatheDot(for: model.providers[0])
+                                .notchProviderSlot(index: 0, focused: peekSlotFocused(0))
                                 .padding(.leading, 13)
                         }
                         Spacer()
@@ -291,14 +295,18 @@ extension NotchIslandView {
                         Spacer()
                         if model.providers.count == 1 {
                             breatheDot(for: model.providers[0])
+                                .notchProviderSlot(index: 0, focused: peekSlotFocused(0))
                                 .padding(.trailing, 13)
                         } else if model.providers.count == 2 {
                             breatheDot(for: model.providers[1])
+                                .notchProviderSlot(index: 1, focused: peekSlotFocused(1))
                                 .padding(.trailing, 13)
                         } else {
                             HStack(spacing: 6) {
                                 breatheDot(for: model.providers[1])
+                                    .notchProviderSlot(index: 1, focused: peekSlotFocused(1))
                                 breatheDot(for: model.providers[2])
+                                    .notchProviderSlot(index: 2, focused: peekSlotFocused(2))
                             }
                             .padding(.trailing, 13)
                         }
@@ -311,8 +319,9 @@ extension NotchIslandView {
                 // row's width (via the measurer), so edge-pinning would be a
                 // no-op anyway.
                 HStack(spacing: 9) {
-                    ForEach(model.providers, id: \.provider) { p in
-                        breatheDot(for: p)
+                    ForEach(0..<model.providers.count, id: \.self) { idx in
+                        breatheDot(for: model.providers[idx])
+                            .notchProviderSlot(index: idx, focused: peekSlotFocused(idx))
                     }
                 }
                 .padding(.horizontal, 17)
@@ -322,18 +331,26 @@ extension NotchIslandView {
 
     var lowestProviderView: some View {
         Group {
-            if let lowest = model.providers.min(by: { compactRank(for: $0) < compactRank(for: $1) }) {
+            // This style renders one provider, so peek can only ever detail
+            // that one — the bubble points at the slot the strip actually
+            // shows, and there is nothing else on the strip to target.
+            if let idx = model.providers.indices.min(by: {
+                compactRank(for: model.providers[$0]) < compactRank(for: model.providers[$1])
+            }) {
+                let lowest = model.providers[idx]
                 if model.hasNotch {
                     // Positioned safely to the right of the notch
                     HStack {
                         Spacer()
                         providerStatusLabel(for: lowest, showName: false)
+                            .notchProviderSlot(index: idx, focused: peekSlotFocused(idx))
                             .padding(.trailing, 13)
                     }
                     .frame(width: max(0, targetWidth - model.notchRight), height: model.collapsedHeight)
                     .position(x: model.notchRight + max(0, targetWidth - model.notchRight) / 2, y: model.collapsedHeight / 2)
                 } else {
                     providerStatusLabel(for: lowest, showName: false)
+                        .notchProviderSlot(index: idx, focused: peekSlotFocused(idx))
                         .padding(.horizontal, 17)
                 }
             }
@@ -353,6 +370,7 @@ extension NotchIslandView {
                     HStack {
                         if model.providers.count >= 2 {
                             providerStatusLabel(for: model.providers[0], showName: false)
+                                .notchProviderSlot(index: 0, focused: peekSlotFocused(0))
                                 .padding(.leading, 13)
                         }
                         Spacer()
@@ -365,14 +383,18 @@ extension NotchIslandView {
                         Spacer()
                         if model.providers.count == 1 {
                             providerStatusLabel(for: model.providers[0], showName: false)
+                                .notchProviderSlot(index: 0, focused: peekSlotFocused(0))
                                 .padding(.trailing, 13)
                         } else if model.providers.count == 2 {
                             providerStatusLabel(for: model.providers[1], showName: false)
+                                .notchProviderSlot(index: 1, focused: peekSlotFocused(1))
                                 .padding(.trailing, 13)
                         } else {
                             HStack(spacing: 6) {
                                 providerStatusLabel(for: model.providers[1], showName: false)
+                                    .notchProviderSlot(index: 1, focused: peekSlotFocused(1))
                                 providerStatusLabel(for: model.providers[2], showName: false)
+                                    .notchProviderSlot(index: 2, focused: peekSlotFocused(2))
                             }
                             .padding(.trailing, 13)
                         }
@@ -383,8 +405,9 @@ extension NotchIslandView {
             } else {
                 // No notch to flank: a plain centered row (see ambientDotsView).
                 HStack(spacing: 14) {
-                    ForEach(model.providers, id: \.provider) { p in
-                        providerStatusLabel(for: p, showName: false)
+                    ForEach(0..<model.providers.count, id: \.self) { idx in
+                        providerStatusLabel(for: model.providers[idx], showName: false)
+                            .notchProviderSlot(index: idx, focused: peekSlotFocused(idx))
                     }
                 }
                 .padding(.horizontal, 17)
@@ -635,26 +658,14 @@ extension NotchIslandView {
         }
     }
 
+    /// Whether this slot is the one the peek bubble is pointing at. Always
+    /// false outside peek, so the always-on strip carries no highlight.
+    func peekSlotFocused(_ index: Int) -> Bool {
+        model.notchState == .peek && model.usesBubblePeek && peekFocusIndex == index
+    }
+
     func compactRank(for provider: ProviderUsage) -> Double {
-        let state = quotaState(for: provider)
-        switch state.mode {
-        case .error:
-            return -3
-        case .locked:
-            return -2
-        case .recovering:
-            // Still critical (depleted) but on the verge of recovering — keep it
-            // in the attention slot alongside locked.
-            return -2
-        case .credits:
-            return -1
-        case .healthy:
-            return state.bindingRemaining
-        case .loading:
-            // Never let a not-yet-fetched provider win the "lowest" slot over
-            // real data; it still shows when it's the only provider.
-            return Double.greatestFiniteMagnitude
-        }
+        quota.attentionRank(for: provider)
     }
 
     func providerStatusLabel(for p: ProviderUsage, showName: Bool) -> some View {

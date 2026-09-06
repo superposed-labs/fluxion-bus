@@ -223,6 +223,7 @@
    where the full phrase would span or overflow the whole column. */
 "notch.five_hour_uncapped" = "Uncapped";
 "notch.peek.exhausted" = "Exhausted";
+"notch.peek.resets_in" = "Resets in %@";
 "notch.card.weekly_reached" = "Weekly cap reached";
 "notch.card.all_spent" = "All quota spent";
 "notch.card.resets_at" = "resets %@";

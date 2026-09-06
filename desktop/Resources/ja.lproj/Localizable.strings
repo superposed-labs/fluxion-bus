@@ -220,6 +220,7 @@
 "notch.card.days_resets_in" = "%d日枠リセットまで";
 "notch.five_hour_uncapped" = "一時解除";
 "notch.peek.exhausted" = "上限到達";
+"notch.peek.resets_in" = "%@ 後にリセット";
 "notch.card.weekly_reached" = "週次上限に到達";
 "notch.card.all_spent" = "全クォータ使用済み";
 "notch.card.resets_at" = "%@ にリセット";

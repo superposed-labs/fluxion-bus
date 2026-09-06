@@ -2,41 +2,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// One half of the perimeter quota rail used by the two-agent peek. The path
-/// starts on the outside shoulder, rounds the island's lower corner, then
-/// travels toward the centre. Trimming it therefore leaves low quota close to
-/// its owning agent instead of producing an ambiguous bar across the island.
-private struct PeekCornerRailShape: Shape {
-    let leading: Bool
-    var sideInset: CGFloat = 6
-    var bottomInset: CGFloat = 6
-    var cornerRadius: CGFloat = 14
-    var centerGap: CGFloat = 12
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let bottom = rect.maxY - bottomInset
-        let radius = min(cornerRadius, max(0, rect.height - bottomInset - sideInset))
-
-        if leading {
-            path.move(to: CGPoint(x: sideInset, y: bottom - radius))
-            path.addQuadCurve(
-                to: CGPoint(x: sideInset + radius, y: bottom),
-                control: CGPoint(x: sideInset, y: bottom)
-            )
-            path.addLine(to: CGPoint(x: rect.midX - centerGap, y: bottom))
-        } else {
-            path.move(to: CGPoint(x: rect.maxX - sideInset, y: bottom - radius))
-            path.addQuadCurve(
-                to: CGPoint(x: rect.maxX - sideInset - radius, y: bottom),
-                control: CGPoint(x: rect.maxX - sideInset, y: bottom)
-            )
-            path.addLine(to: CGPoint(x: rect.midX + centerGap, y: bottom))
-        }
-        return path
-    }
-}
-
 // NotchIslandView — peek tray.
 // Split out of NotchWindow.swift for navigability; same type via extension.
 extension NotchIslandView {
@@ -134,7 +99,7 @@ extension NotchIslandView {
     }
 
     @ViewBuilder
-    func dualAgentTimer(
+    func compactWindowTimer(
         _ snapshot: QuotaWindowSnapshot?,
         locked: Bool = false,
         emphasized: Bool = false
@@ -155,134 +120,6 @@ extension NotchIslandView {
             )
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-        }
-    }
-
-    /// Two compact rows for one provider: 5H owns the ring and first-row
-    /// countdown; WK owns the second row and the perimeter rail drawn by the
-    /// parent. This keeps both reset times without returning to the old
-    /// three-line stack.
-    @ViewBuilder
-    func dualAgentArcSegment(for provider: ProviderUsage) -> some View {
-        let visual = providerVisual(for: provider.provider)
-        let state = quotaState(for: provider)
-        let five = state.fiveHour
-        let weekly = state.weekly
-        let fiveUncapped = isCodexFiveHourTemporarilyUncapped(provider)
-        let fiveRemaining = five?.remaining ?? 100
-        let weeklyRemaining = weekly?.remaining ?? 0
-        let fiveLocked = !fiveUncapped && five != nil && fiveRemaining <= 0
-        let weeklyCritical = weekly != nil && weeklyRemaining <= QuotaLevel.criticalRemaining
-
-        HStack(alignment: .center, spacing: 8) {
-            if usesShapedGauge {
-                windowGauge(
-                    label: "5H",
-                    snapshot: five,
-                    brandColor: visual.brandColor,
-                    uncapped: fiveUncapped,
-                    size: 27,
-                    numeralAllowed: false
-                )
-            } else {
-                HStack(spacing: 4) {
-                    peekGauge(
-                        mode: fiveLocked ? .locked : .healthy,
-                        remaining: fiveRemaining,
-                        brandColor: visual.brandColor
-                    )
-                    Text("5H")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color(visual.brandColor).opacity(0.9))
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(fiveUncapped ? "∞" : "\(Int(fiveRemaining))%")
-                        .font(.system(size: 13.5, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundColor(
-                            fiveUncapped
-                                ? Color(NSColor.systemGreen)
-                                : (fiveLocked ? Color(NSColor.systemRed) : .white)
-                        )
-                        .lineLimit(1)
-                    if fiveUncapped {
-                        Text(L10n.tr("notch.five_hour_uncapped"))
-                            .font(.system(size: 8.5, weight: .medium))
-                            // The green infinity is the semantic signal; the
-                            // descriptor stays neutral so it does not outweigh
-                            // the other provider's percentage and timer.
-                            .foregroundColor(.white.opacity(0.44))
-                            .lineLimit(1)
-                    } else {
-                        dualAgentTimer(five, locked: fiveLocked, emphasized: true)
-                    }
-                }
-
-                HStack(spacing: 5) {
-                    Text("WK")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(weeklyCritical
-                            ? Color(NSColor.systemRed).opacity(0.76)
-                            : Color(visual.brandColor).opacity(0.86))
-                    Text("\(Int(weeklyRemaining))%")
-                        .font(.system(size: 11, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundColor(weeklyCritical ? Color(NSColor.systemRed) : .white.opacity(0.88))
-                        .lineLimit(1)
-                    dualAgentTimer(weekly, locked: weeklyCritical)
-                }
-            }
-        }
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityElement(children: .combine)
-    }
-
-    func peekCornerRails(
-        leftRemaining: Double,
-        rightRemaining: Double,
-        leftBrand: NSColor,
-        rightBrand: NSColor
-    ) -> some View {
-        let leftColor = leftRemaining <= QuotaLevel.criticalRemaining ? NSColor.systemRed : leftBrand
-        let rightColor = rightRemaining <= QuotaLevel.criticalRemaining ? NSColor.systemRed : rightBrand
-        let railStroke = StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
-
-        return ZStack {
-            PeekCornerRailShape(leading: true)
-                .stroke(Color.white.opacity(0.10), style: railStroke)
-            PeekCornerRailShape(leading: false)
-                .stroke(Color.white.opacity(0.10), style: railStroke)
-            PeekCornerRailShape(leading: true)
-                .trim(from: 0, to: min(max(leftRemaining / 100, 0), 1))
-                .stroke(Color(leftColor).opacity(0.92), style: railStroke)
-                .shadow(color: Color(leftColor).opacity(0.18), radius: 1.5)
-            PeekCornerRailShape(leading: false)
-                .trim(from: 0, to: min(max(rightRemaining / 100, 0), 1))
-                .stroke(Color(rightColor).opacity(0.92), style: railStroke)
-                .shadow(color: Color(rightColor).opacity(0.18), radius: 1.5)
-        }
-        // Only real quota updates interpolate. Entering Peek itself is static
-        // so the rail remains an ambient indicator rather than an attraction.
-        .animation(.easeOut(duration: 0.35), value: leftRemaining)
-        .animation(.easeOut(duration: 0.35), value: rightRemaining)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    func dualAgentWeeklyRails() -> some View {
-        if model.providers.count == 2 {
-            let leftState = quotaState(for: model.providers[0])
-            let rightState = quotaState(for: model.providers[1])
-            peekCornerRails(
-                leftRemaining: leftState.weekly?.remaining ?? 0,
-                rightRemaining: rightState.weekly?.remaining ?? 0,
-                leftBrand: providerVisual(for: model.providers[0].provider).brandColor,
-                rightBrand: providerVisual(for: model.providers[1].provider).brandColor
-            )
         }
     }
 
@@ -542,7 +379,7 @@ extension NotchIslandView {
                         .foregroundColor(Color(NSColor.systemGreen).opacity(0.62))
                         .lineLimit(1)
                 } else if hasTimer {
-                    dualAgentTimer(snapshot, locked: locked, emphasized: true)
+                    compactWindowTimer(snapshot, locked: locked, emphasized: true)
                 } else if locked {
                     Text(L10n.tr("notch.peek.exhausted"))
                         .font(.system(size: 8.5, weight: .medium))
@@ -663,15 +500,7 @@ extension NotchIslandView {
     @ViewBuilder
     func peekSegments(isBoth: Bool) -> some View {
         let soloUnits = notchIsSoloSplit(model.providers) ? soloPoolUnits() : []
-        if model.usesDualAgentArcPeek {
-            HStack(spacing: 0) {
-                dualAgentArcSegment(for: model.providers[0])
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer(minLength: 28)
-                dualAgentArcSegment(for: model.providers[1])
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        } else if notchUsesSoloDualWindowGlance(model.providers),
+        if notchUsesSoloDualWindowGlance(model.providers),
            let provider = model.providers.first {
             peekSoloDualWindowSeg(for: provider)
         } else if soloUnits.isEmpty {
@@ -714,8 +543,19 @@ extension NotchIslandView {
         )
     }
 
+    /// Only the single-provider trays reach this: with two or more providers
+    /// the island body renders the collapsed strip across both states (see
+    /// NotchWindow's content switch) and hangs the callout below it.
     @ViewBuilder
     var peekView: some View {
+        legacyPeekView
+    }
+
+    /// The single-provider peeks: one tray carrying every number it has to
+    /// show. Superseded for two or more providers by the strip + callout
+    /// bubble, which has somewhere else to put the detail.
+    @ViewBuilder
+    var legacyPeekView: some View {
         let isBoth = model.usesTallPeekLayout
         // Fill the tray width and distribute the side slack across Spacers: one
         // at each outer edge plus two flanking every divider. Equal Spacers
@@ -742,13 +582,8 @@ extension NotchIslandView {
         // With a notch, the content row bottom-anchors under the notch band;
         // a non-notched pill has no band, so the row centers vertically in
         // the (correspondingly shorter — see peekHeight) tray.
-        .padding(.bottom, model.hasNotch ? (model.usesDualAgentArcPeek ? 15 : 11) : 0)
+        .padding(.bottom, model.hasNotch ? 11 : 0)
         .frame(height: model.peekHeight, alignment: model.hasNotch ? .bottom : .center)
-        .overlay {
-            if model.usesDualAgentArcPeek {
-                dualAgentWeeklyRails()
-            }
-        }
         .background(alignment: .bottom) {
             // Measured on notched displays too: the tray's collapsed-derived
             // width is only a floor, and wide content (three segments, pool
@@ -767,4 +602,463 @@ extension NotchIslandView {
         }
     }
     
+}
+
+// MARK: - Bubble peek
+//
+// With two or more providers the tray stops trying to be a table. It stays
+// exactly the collapsed strip, and every countdown, bar and label moves into a
+// callout bubble that hangs below it, pointing at one provider's slot.
+//
+// The bubble is a persistent object, not a tooltip: it is present for the whole
+// of peek, pointing at the most urgent provider until the pointer picks another.
+//
+// The body never moves: it is centred on the strip and the TAIL does the
+// pointing. An earlier version slid a narrower bubble to the focused slot, but
+// the bubble was ~70% of the strip's width, so it could only shuffle a few
+// points before clamping — a half-finished slide that read worse than no
+// movement at all.
+//
+// The tray is the collapsed strip verbatim. An earlier version replaced it with
+// a row of equal lanes, which reflowed the strip on hover and, worse, moved the
+// provider the pointer was aiming at: slots that sit 6pt apart beside the
+// camera became 130pt lanes, so aiming at the middle provider opened the right
+// one. Keeping the strip put makes the target and the tail agree by
+// construction. Slot centres are measured by the strip itself
+// (NotchProviderAnchorsKey), and the pointer is assigned to the nearest one, so
+// even a bare 12pt gauge owns a target a hundred points wide.
+//
+// Targeting lives in the controller (peekPointerMoved), which owns the
+// hysteresis and commit delay that keep the tail from chasing a pointer merely
+// passing through.
+
+/// Rounded callout with an upward tail whose horizontal position is a free
+/// parameter, so the body can stay put while the tail travels between anchors.
+struct PeekBubbleShape: Shape {
+    var tailX: CGFloat
+    var cornerRadius: CGFloat = 13
+    var tailHeight: CGFloat = 10
+    var tailHalfWidth: CGFloat = 6
+
+    var animatableData: CGFloat {
+        get { tailX }
+        set { tailX = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let bodyTop = rect.minY + tailHeight
+        path.addRoundedRect(
+            in: CGRect(x: rect.minX, y: bodyTop, width: rect.width, height: max(0, rect.height - tailHeight)),
+            cornerSize: CGSize(width: cornerRadius, height: cornerRadius)
+        )
+        let minX = cornerRadius + tailHalfWidth
+        let maxX = max(minX, rect.width - cornerRadius - tailHalfWidth)
+        let anchor = rect.minX + min(max(tailX, minX), maxX)
+        path.move(to: CGPoint(x: anchor - tailHalfWidth, y: bodyTop))
+        path.addLine(to: CGPoint(x: anchor, y: rect.minY))
+        path.addLine(to: CGPoint(x: anchor + tailHalfWidth, y: bodyTop))
+        path.closeSubpath()
+        return path
+    }
+}
+
+extension NotchIslandView {
+
+    /// Where the callout's entrance scales from: its own tail, in unit space.
+    /// Growing from the tip is what makes the bubble read as coming OUT of the
+    /// slot it points at, rather than fading in over the desktop.
+    var peekBubbleTailAnchor: UnitPoint {
+        guard !model.providers.isEmpty else { return .top }
+        let anchor = model.providerAnchors[peekFocusIndex] ?? targetWidth / 2
+        let placement = model.peekBubblePlacement(trayWidth: targetWidth, anchor: anchor)
+        let unit = placement.tailX / NotchDataModel.peekBubbleWidth
+        return UnitPoint(x: min(max(unit, 0), 1), y: 0)
+    }
+
+    var peekFocusIndex: Int {
+        let count = model.providers.count
+        guard count > 0 else { return 0 }
+        return min(max(model.peekFocusIndex ?? 0, 0), count - 1)
+    }
+
+    // MARK: Callout bubble
+    /// The bubble's rect relative to the tray's top-left, for hit-testing.
+    /// Nil unless a bubble is actually on screen.
+    var peekBubbleHitRect: CGRect? {
+        guard model.notchState == .peek, model.usesBubblePeek, !model.providers.isEmpty else {
+            return nil
+        }
+        let anchor = model.providerAnchors[peekFocusIndex] ?? targetWidth / 2
+        let placement = model.peekBubblePlacement(trayWidth: targetWidth, anchor: anchor)
+        return CGRect(
+            x: placement.x,
+            y: model.peekHeight + NotchDataModel.peekBubbleGap,
+            width: NotchDataModel.peekBubbleWidth,
+            // The visible bubble only, not the band reserved for the tallest
+            // one — a click in the empty part of the band is a click on the
+            // desktop, not on the island. Reported by the bubble itself, since
+            // its height is now whatever its rows come to.
+            height: max(0, model.peekBubbleVisibleHeight)
+        )
+    }
+
+    @ViewBuilder
+    var peekBubbleLayer: some View {
+        let count = model.providers.count
+        if count > 0 {
+            let focus = peekFocusIndex
+            let anchor = model.providerAnchors[focus] ?? targetWidth / 2
+            let placement = model.peekBubblePlacement(trayWidth: targetWidth, anchor: anchor)
+            let tailX = placement.tailX
+
+            // The identity switch stays INSIDE a stable container. Hanging
+            // .id() off the root of the chain gives the whole thing — paddings,
+            // background shape, offset, and the callout's own transition — an
+            // identity that changes with the focus, so every re-point and even
+            // the open/close transition became a teardown and rebuild with no
+            // animation at all.
+            ZStack(alignment: .top) {
+                peekBubbleBody(for: model.providers[focus])
+                    // Swapping identity crossfades the contents while the tail
+                    // slides, so the bubble reads as one object being
+                    // re-pointed rather than two bubbles trading places.
+                    .id(focus)
+                    .transition(.opacity)
+            }
+                .padding(.top, NotchDataModel.peekBubbleTailHeight + 10)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 11)
+                // Width is fixed; height is whatever the rows come to. Sizing
+                // the callout from a table of per-row constants was wrong three
+                // times running — every mismatch landed as dead space along the
+                // bottom edge, because the content is top-aligned.
+                .frame(width: NotchDataModel.peekBubbleWidth, alignment: .topLeading)
+                .background(
+                    PeekBubbleShape(
+                        tailX: tailX,
+                        tailHeight: NotchDataModel.peekBubbleTailHeight,
+                        tailHalfWidth: NotchDataModel.peekBubbleTailHalfWidth
+                    )
+                    .fill(Color.black)
+                    // The tail slides only once the pointer has actually
+                    // re-pointed it. Peek opens inside the island's spring
+                    // transaction, and a value-scoped animation here overrides
+                    // that ambient one for the tail's position without touching
+                    // the callout's own entrance.
+                    .animation(
+                        model.peekBubbleTailAnimates
+                            ? .spring(response: 0.34, dampingFraction: 0.82)
+                            : nil,
+                        value: tailX
+                    )
+                )
+                // Report what was actually laid out. Everything that asks "is
+                // the pointer still on the island" reads this, so it must be
+                // the rendered height, not a predicted one.
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: PeekBubbleHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
+                .offset(x: placement.x)
+                // Same gate as the tail: the callout is placed, not flown in,
+                // on the frame peek opens. Re-pointing afterwards slides it.
+                .animation(
+                    model.peekBubbleTailAnimates
+                        ? .spring(response: 0.34, dampingFraction: 0.82)
+                        : nil,
+                    value: placement.x
+                )
+        }
+    }
+
+    @ViewBuilder
+    func peekBubbleBody(for provider: ProviderUsage) -> some View {
+        let visual = providerVisual(for: provider.provider)
+        let state = quotaState(for: provider)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Text(providerDisplayName(for: provider.provider))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(Color(visual.brandColor))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                // No pool tag here: a split-pool provider names its pool in
+                // every row, and a lone "GEM" beside the provider's name reads
+                // as a category rather than as "the other pool is hidden".
+            }
+
+            switch state.mode {
+            case .loading:
+                peekBubbleNote(L10n.tr("notch.loading.upper"), color: .white.opacity(0.5))
+            case .recovering:
+                peekBubbleNote(L10n.tr("notch.recovering.note"), color: Color(NSColor.systemYellow).opacity(0.9))
+            case .error:
+                peekBubbleNote(L10n.tr("notch.unavailable"), color: Color(NSColor.systemRed).opacity(0.85))
+            case .credits:
+                peekBubbleCredits(for: provider, credits: state.credits)
+            case .locked, .healthy:
+                peekBubbleWindows(sections: peekBubbleSections(for: provider))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    func peekBubbleNote(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(color)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    func peekBubbleCredits(for provider: ProviderUsage, credits: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(NSColor(hex: "#ffd700")), Color(NSColor(hex: "#daa520"))],
+                        center: .center, startRadius: 0, endRadius: 4
+                    ))
+                    .frame(width: 8, height: 8)
+                Text(QuotaFormatter.formatCreditBalance(
+                    credits ?? 0,
+                    currency: provider.windows.first(where: { $0.key == "ai_credits" })?.currency
+                ))
+                .font(.system(size: 17, weight: .bold))
+                .monospacedDigit()
+                .foregroundColor(Color(NSColor.systemGreen))
+            }
+            peekBubbleNote(L10n.tr("notch.on_credits"), color: .white.opacity(0.5))
+        }
+    }
+
+    /// One quota window as the callout renders it.
+    struct PeekBubbleRow: Identifiable {
+        let id: String
+        let label: String
+        let snapshot: QuotaWindowSnapshot?
+        let color: NSColor
+        var uncapped: Bool = false
+
+        /// Least-remaining sorts first. Used only to decide what to DROP past
+        /// the row cap — the rows themselves stay in their canonical order, so
+        /// a changing percentage never makes them swap places under the pointer.
+        var urgency: Double {
+            if uncapped { return .greatestFiniteMagnitude }
+            guard let snapshot = snapshot else { return .greatestFiniteMagnitude }
+            return snapshot.depleted ? -1 : snapshot.remaining
+        }
+    }
+
+    /// A titled group of rows. Split-pool providers get one per pool, so the
+    /// pool is named once above its windows instead of being repeated as a
+    /// prefix on every row — the treatment a menu uses for sections.
+    struct PeekBubbleSection: Identifiable {
+        let id: String
+        let title: String?
+        let color: NSColor
+        let rows: [PeekBubbleRow]
+    }
+
+    /// Canonical order: 5h, weekly, then any model-scoped limits — or, for a
+    /// split-pool provider, one section per pool. Trimmed to the row cap by
+    /// dropping the least urgent.
+    func peekBubbleSections(for provider: ProviderUsage) -> [PeekBubbleSection] {
+        let visual = providerVisual(for: provider.provider)
+        let state = quotaState(for: provider)
+        var sections: [PeekBubbleSection] = []
+
+        let pools = quota.taggedPools(for: provider)
+        if pools.count >= 2 {
+            // Two independent budgets with their own limits and resets.
+            for pool in pools {
+                let color = pool.five.map { splitQuotaNSColor(for: $0, visual: visual) }
+                    ?? visual.brandColor
+                var rows: [PeekBubbleRow] = []
+                if let five = pool.five {
+                    rows.append(PeekBubbleRow(
+                        id: "\(pool.tag).5h",
+                        label: notchWindowRowTitle(five),
+                        snapshot: five,
+                        color: color
+                    ))
+                }
+                if let weekly = pool.weekly {
+                    rows.append(PeekBubbleRow(
+                        id: "\(pool.tag).wk",
+                        label: notchWindowRowTitle(weekly),
+                        snapshot: weekly,
+                        color: color
+                    ))
+                }
+                guard !rows.isEmpty else { continue }
+                sections.append(PeekBubbleSection(
+                    id: pool.tag,
+                    title: pool.tag,
+                    color: color,
+                    rows: rows
+                ))
+            }
+        } else {
+            var rows: [PeekBubbleRow] = []
+            let uncapped = isCodexFiveHourTemporarilyUncapped(provider)
+            if state.fiveHour != nil || uncapped {
+                rows.append(PeekBubbleRow(
+                    id: "5h",
+                    label: state.fiveHour.map { notchWindowRowTitle($0) } ?? L10n.tr("notch.row.5h"),
+                    snapshot: state.fiveHour,
+                    color: visual.brandColor,
+                    uncapped: uncapped
+                ))
+            }
+            if let weekly = state.weekly {
+                rows.append(PeekBubbleRow(
+                    id: "wk",
+                    label: notchWindowRowTitle(weekly),
+                    snapshot: weekly,
+                    color: visual.brandColor
+                ))
+            }
+            // Model-scoped weeklies (Claude Max meters one for Fable). They are
+            // real windows with their own resets, not a footnote on the weekly.
+            for scoped in scopedWindows(for: provider) {
+                rows.append(PeekBubbleRow(
+                    id: "scoped.\(scoped.window.key ?? scoped.window.label ?? "model")",
+                    label: (scoped.window.label ?? "MODEL"),
+                    snapshot: scoped,
+                    color: visual.brandColor
+                ))
+            }
+            guard !rows.isEmpty else { return [] }
+            sections.append(PeekBubbleSection(
+                id: "windows",
+                title: nil,
+                color: visual.brandColor,
+                rows: rows
+            ))
+        }
+
+        return trimmed(sections)
+    }
+
+    /// Keeps the callout glanceable: past the row cap the least urgent rows are
+    /// dropped (and a section emptied by that goes with them). Order is never
+    /// touched — a changing percentage must not make rows swap places.
+    private func trimmed(_ sections: [PeekBubbleSection]) -> [PeekBubbleSection] {
+        let all = sections.flatMap(\.rows)
+        guard all.count > NotchDataModel.peekBubbleMaxRows else { return sections }
+        let keep = Set(
+            all.sorted { $0.urgency < $1.urgency }
+                .prefix(NotchDataModel.peekBubbleMaxRows)
+                .map(\.id)
+        )
+        return sections.compactMap { section in
+            let rows = section.rows.filter { keep.contains($0.id) }
+            guard !rows.isEmpty else { return nil }
+            return PeekBubbleSection(
+                id: section.id,
+                title: section.title,
+                color: section.color,
+                rows: rows
+            )
+        }
+    }
+
+    @ViewBuilder
+    func peekBubbleWindows(sections: [PeekBubbleSection]) -> some View {
+        VStack(alignment: .leading, spacing: NotchDataModel.peekBubbleRowSpacing) {
+            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                if let title = section.title {
+                    if index > 0 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.09))
+                            .frame(height: 0.5)
+                            .padding(.top, 1)
+                    }
+                    Text(title)
+                        .font(.system(size: 9, weight: .bold))
+                        .kerning(0.4)
+                        .foregroundColor(Color(section.color).opacity(0.85))
+                        .lineLimit(1)
+                }
+                ForEach(section.rows) { row in
+                    peekBubbleWindowRow(row)
+                }
+            }
+        }
+    }
+
+    /// Label and value on one line, the bar under them, the reset on its own
+    /// line beneath that.
+    @ViewBuilder
+    func peekBubbleWindowRow(_ row: PeekBubbleRow) -> some View {
+        let snapshot = row.snapshot
+        let remaining = snapshot?.remaining ?? 0
+        let locked = !row.uncapped && snapshot?.depleted == true
+        let critical = !row.uncapped && remaining <= QuotaLevel.criticalRemaining
+        let barColor = (locked || critical) ? Color(NSColor.systemRed) : Color(row.color)
+        let timer = snapshot.map { timerString(for: $0) } ?? ""
+        let hasTimer = !timer.isEmpty && timer != "now"
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(row.label)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.5))
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+                Spacer(minLength: 6)
+                Text(row.uncapped ? "∞" : "\(snapshot?.remainingText ?? "0")%")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(
+                        row.uncapped
+                            ? Color(NSColor.systemGreen)
+                            : (locked ? Color(NSColor.systemRed) : .white)
+                    )
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.16))
+                    if row.uncapped {
+                        Capsule().fill(Color(NSColor.systemGreen).opacity(0.5))
+                    } else {
+                        let fill = max(0, min(1, remaining / 100)) * proxy.size.width
+                        if fill > 0 {
+                            Capsule().fill(barColor).frame(width: max(2, fill))
+                        }
+                    }
+                }
+            }
+            .frame(height: 3)
+            .animation(.easeOut(duration: 0.35), value: remaining)
+
+            Group {
+                if row.uncapped {
+                    Text(L10n.tr("notch.five_hour_uncapped"))
+                        .foregroundColor(Color(NSColor.systemGreen).opacity(0.7))
+                } else if hasTimer {
+                    Text(String(format: L10n.tr("notch.peek.resets_in"), timer))
+                        .foregroundColor(locked ? Color(NSColor.systemRed).opacity(0.8) : .white.opacity(0.5))
+                } else if locked {
+                    Text(L10n.tr("notch.peek.exhausted"))
+                        .foregroundColor(Color(NSColor.systemRed).opacity(0.8))
+                } else {
+                    Text(" ")
+                }
+            }
+            .font(.system(size: 9.5, weight: .medium))
+            .monospacedDigit()
+            .lineLimit(1)
+        }
+    }
 }
