@@ -1,11 +1,15 @@
 """Check configured model ids against what the agent CLIs actually offer.
 
 Model ids reach the CLI verbatim (`--model` / `-m`), and nothing between this
-file and the process launch knows whether the id still exists. When a vendor
-retires one, the routing config keeps selecting it and every turn on that route
-dies at the CLI — and the policy's `fallback` does not help, because the gateway
-makes one attempt per turn by design (see `_run_local_agent` in app.py). So the
-only place this can be caught is before a turn is ever routed.
+file and the process launch knows whether the id still exists. The gateway makes
+one attempt per turn by design (see `_run_local_agent` in app.py), so a policy's
+`fallback` is a selection-time ranking and never an in-turn retry: it covers a
+retired id only because `model_health` ejects that id *before* selection. That
+cover is a silent downgrade rather than a fix, and it has holes this module
+exists to fill — a candidate no policy routes to, a catalog that could not be
+read, a local Codex override that still lists what the server retired, and an
+install that has switched the runtime check off. All of them are visible only
+before a turn is routed.
 
 The distinction this module exists to preserve: "the catalog is readable and
 this id is absent" is a real defect, while "the catalog could not be read" is
