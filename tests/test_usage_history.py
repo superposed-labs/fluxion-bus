@@ -2116,3 +2116,35 @@ def test_codex_archived_sessions_duplicate_rollout_in_both(tmp_path: Path):
     assert archived_got["totals"]["messages"] == 2
     assert archived_got["totals"]["input_tokens"] == 900
     assert archived_got["totals"]["cost"] == got["totals"]["cost"]
+
+
+def test_codex_colon_effort_override_folds_onto_the_product_row(tmp_path: Path):
+    """`gpt-5.6-luna:high` is Luna at high effort, not a model of its own.
+
+    Left whole it opened its own usage row AND missed its exact price key,
+    falling through to the codex provider fallback — the $5/$30 flagship tier
+    for a model that really costs $0.20/$1.20.
+    """
+    turn = [{"ts": "2026-09-05T10:00:00.000Z", "input": 1000, "cached": 0, "output": 100}]
+    plain = tmp_path / "rollout-2026-09-05T10-00-00-aaa.jsonl"
+    plain.write_text(_codex_lines(turn, session_id="s1", model="gpt-5.6-luna"), encoding="utf-8")
+    override = tmp_path / "rollout-2026-09-05T10-00-00-bbb.jsonl"
+    override.write_text(
+        _codex_lines(turn, session_id="s2", model="gpt-5.6-luna:high"), encoding="utf-8"
+    )
+
+    assert _parse_codex_file(plain)[0].model == "gpt-5.6-luna"
+    assert _parse_codex_file(override)[0].model == "gpt-5.6-luna"
+
+
+def test_codex_dash_suffix_stays_its_own_product_row(tmp_path: Path):
+    """`gpt-5.1-codex-max` is a published model, not `gpt-5.1-codex` at max.
+
+    Folding the dash form the way Antigravity does would merge two genuinely
+    different models onto one row, so it is left alone.
+    """
+    turn = [{"ts": "2026-09-05T10:00:00.000Z", "input": 1000, "cached": 0, "output": 100}]
+    f = tmp_path / "rollout-2026-09-05T10-00-00-ccc.jsonl"
+    f.write_text(_codex_lines(turn, session_id="s3", model="gpt-5.1-codex-max"), encoding="utf-8")
+
+    assert _parse_codex_file(f)[0].model == "gpt-5.1-codex-max"

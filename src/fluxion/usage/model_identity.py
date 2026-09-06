@@ -40,7 +40,13 @@ def identify_model(provider: str, model: str) -> ModelIdentity:
         # Deliberately NOT the effort-free family: `billing_id` selects a price
         # row, and the price table keys some non-Gemini models by their full
         # published id. Product identity is `parse_model_name().family`.
-        billing_id = low
+        #
+        # The one suffix that IS stripped is the colon form (`gpt-5.6-luna:high`),
+        # which Codex writes for a per-request effort override. No published id
+        # contains a colon, so unlike the dash form it cannot be part of a
+        # product name, and leaving it on made the id miss its exact `models`
+        # key and fall through to the coarse provider fallback.
+        billing_id = _COLON_EFFORT_RE.sub("", low)
 
     effort = _effort_suffix(low)
 
@@ -80,6 +86,13 @@ def _model_version(model: str) -> tuple[int, ...]:
 
 _EFFORTS_PATTERN = "low|medium|high|xhigh|max|ultra"
 
+# Effort written with a colon (`gpt-5.6-luna:high`). Safe to strip anywhere:
+# a colon never appears inside a published model id, so this form is always
+# effort and never part of a product name — unlike the dash form, where
+# `gpt-5.1-codex-max` is its own product rather than `gpt-5.1-codex` at max
+# effort. See `_antigravity_product` for why the dash form is provider-gated.
+_COLON_EFFORT_RE = re.compile(rf":(?:{_EFFORTS_PATTERN})$", re.IGNORECASE)
+
 _AGY_PAREN_SUFFIX_RE = re.compile(rf"\s*\((?:{_EFFORTS_PATTERN}|thinking)\)", re.IGNORECASE)
 _AGY_GEMINI_DISPLAY_RE = re.compile(
     r"^Gemini\s+(?P<ver>\d+(?:\.\d+)*)\s+(?P<tier>Flash(?:-Lite)?|Pro)$", re.IGNORECASE
@@ -100,8 +113,10 @@ _AGY_CLAUDE_SLUG_RE = re.compile(
 _AGY_GPT_OSS_SLUG_RE = re.compile(
     rf"^gpt-oss-(?P<size>\d+b)(?:-(?:{_EFFORTS_PATTERN}))?$", re.IGNORECASE
 )
-# Effort as a trailing token of a slug (`-high`) or a display suffix (`(High)`).
-_EFFORT_SUFFIX_RE = re.compile(rf"(?:[-\s]|\()(?P<effort>{_EFFORTS_PATTERN})\)?$", re.IGNORECASE)
+# Effort as a trailing token of a slug (`-high`, `:high`) or a display suffix
+# (`(High)`). Codex writes the colon form for a per-request override, so without
+# it `gpt-5.6-luna:high` reported no effort at all.
+_EFFORT_SUFFIX_RE = re.compile(rf"(?:[-\s:]|\()(?P<effort>{_EFFORTS_PATTERN})\)?$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -126,9 +141,14 @@ def parse_model_name(provider: str, model: str) -> ModelName:
 
     effort = _effort_suffix(raw)
     if provider.strip().lower() != "antigravity":
-        # Codex and Claude publish effort as a separate axis, so the id is
-        # already the product. Nothing to strip.
-        return ModelName(family=raw.lower(), label=raw, effort=effort)
+        # Codex and Claude mostly publish effort as a separate axis, so the id is
+        # usually already the product. The dash form is NOT stripped here even
+        # when `effort` reports one, because outside Antigravity it is ambiguous:
+        # `gpt-5.1-codex-max` is a product in its own right, distinct from
+        # `gpt-5.1-codex`, so stripping `-max` would merge two different models
+        # into one row. The colon form is unambiguous and is normalized in
+        # `identify_model`, where it decides which price row an id selects.
+        return ModelName(family=_COLON_EFFORT_RE.sub("", raw.lower()), label=raw, effort=effort)
 
     family, label = _antigravity_product(raw)
     return ModelName(family=family, label=label, effort=effort)
