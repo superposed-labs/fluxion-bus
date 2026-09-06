@@ -915,7 +915,7 @@ def _build_model_health(
     )
 
 
-def _warn_about_retired_models(routing) -> None:
+def _warn_about_retired_models(routing, *, health_checked: bool) -> None:
     """Log configured models their own CLI no longer lists.
 
     A warning, never a refusal to start. The check runs a subprocess per CLI, so
@@ -923,6 +923,12 @@ def _warn_about_retired_models(routing) -> None:
     down — a worse outcome than one bad candidate in the routing table, which
     fails only the turns that actually select it. `fluxion-provider check-models`
     is the form of this check that exits non-zero.
+
+    `health_checked` says whether `model_health` is running, which decides what
+    a retired candidate actually costs: with the filter on it is ejected before
+    selection and the policy's `fallback` takes the turn, so the damage is a
+    quiet downgrade; with it off the id reaches the CLI and the turn dies there.
+    Naming the wrong one of those sends the reader looking for the wrong symptom.
     """
     try:
         from fluxion.provider_gateway.model_catalog import (
@@ -936,9 +942,11 @@ def _warn_about_retired_models(routing) -> None:
         return
     for candidate in verification.missing:
         log.warning(
-            "%s — every turn routed there will fail; `fluxion-provider check-models` "
-            "lists the full picture",
+            "%s — %s; `fluxion-provider check-models` lists the full picture",
             describe_missing(routing, candidate),
+            "turns routed there are served by the policy's fallback instead"
+            if health_checked
+            else "every turn routed there will fail, with the runtime check off",
         )
 
 
@@ -964,7 +972,7 @@ def main() -> int:
         log.error("provider gateway cannot start: %s", err)
         return 1
 
-    _warn_about_retired_models(routing)
+    _warn_about_retired_models(routing, health_checked=context.model_health is not None)
 
     app = create_app(context)
     # Both maps, always. This line is how an operator confirms what actually

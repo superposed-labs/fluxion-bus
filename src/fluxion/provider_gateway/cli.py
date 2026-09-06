@@ -198,9 +198,12 @@ def _check_models(args: argparse.Namespace) -> int:
     # would send the user to edit the wrong file.
     if routing_problems:
         print(
-            "\nA retired model id fails every turn on its route, and a policy's "
-            "`fallback` does not cover it: the gateway makes one attempt per turn "
-            "by design. Edit the routing config and restart the gateway.",
+            "\nA running gateway ejects a retired id before selection, so the "
+            "policy's `fallback` takes the turn instead of failing it — but that "
+            "is a silent downgrade, not a fix, and it covers nothing for an id no "
+            "policy routes to, for a catalog that could not be read, or for one a "
+            "local Codex override still lists. Edit the routing config and restart "
+            "the gateway.",
             file=sys.stderr,
         )
     if getattr(args, "notify", False):

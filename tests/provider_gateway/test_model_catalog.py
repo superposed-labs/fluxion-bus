@@ -199,3 +199,39 @@ def test_codex_catalog_reports_a_missing_models_list(monkeypatch):
 
     assert names == []
     assert "no models list" in error
+
+
+# ── what a retired candidate actually costs at startup ───────────────
+# The startup warning used to say "every turn routed there will fail"
+# unconditionally. Once `model_health` existed that was false whenever the
+# filter was running — and the gateway proved it in its own log, where
+# model_health's "it will be skipped at selection" landed one line below.
+# Which of the two is true depends entirely on whether the filter is on.
+def _warn(monkeypatch, caplog, *, health_checked: bool) -> str:
+    import logging
+
+    from fluxion.provider_gateway import app as gateway_app
+    from fluxion.provider_gateway import model_catalog
+
+    monkeypatch.setattr(
+        model_catalog,
+        "verify_configured_models",
+        lambda cfg: model_catalog.ModelVerification(missing=("local_agy:gemini-retired",)),
+    )
+    with caplog.at_level(logging.WARNING, logger="fluxion.provider_gateway.app"):
+        gateway_app._warn_about_retired_models(routing(), health_checked=health_checked)
+    return caplog.text
+
+
+def test_the_startup_warning_says_fallback_when_the_filter_is_running(monkeypatch, caplog):
+    text = _warn(monkeypatch, caplog, health_checked=True)
+
+    assert "fallback" in text
+    assert "every turn routed there will fail" not in text
+
+
+def test_the_startup_warning_says_failure_when_the_filter_is_off(monkeypatch, caplog):
+    text = _warn(monkeypatch, caplog, health_checked=False)
+
+    assert "every turn routed there will fail" in text
+    assert "runtime check off" in text
