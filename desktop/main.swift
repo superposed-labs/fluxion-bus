@@ -1388,6 +1388,10 @@ extension AppDelegate {
 }
 
 // MARK: - Main Entry Point
+// Before NSApplication: AppKit and Sparkle each resolve their localization the
+// first time anything asks them for a string, and neither re-reads it after.
+L10n.applyLanguageToFrameworks()
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

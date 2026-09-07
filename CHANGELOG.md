@@ -9,6 +9,18 @@ milestones.
 
 ## [Unreleased]
 
+### Fixed
+
+- **App language now reaches macOS's own dialogs** — the in-app language
+  setting only ever swapped Fluxion's own strings, so everything macOS drew
+  for the app stayed in the system language: Sparkle's update dialogs, the
+  open panel's Cancel button and sidebar, the Dictation and Emoji items in the
+  Edit menu. An app set to 简体中文 on a Japanese system showed Chinese text
+  beside Japanese buttons in the same window. The selected language is now
+  pinned for the frameworks too (a language change still takes effect on
+  relaunch, as the preferences pane already said). "Follow macOS" leaves any
+  per-app language set in System Settings untouched.
+
 ## [1.6.1] - 2026-09-07
 
 ### Fixed
