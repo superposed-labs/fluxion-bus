@@ -73,7 +73,7 @@ extension NotchIslandView {
         guard !model.providers.isEmpty else { return .top }
         let anchor = model.providerAnchors[peekFocusIndex] ?? targetWidth / 2
         let placement = model.peekBubblePlacement(trayWidth: targetWidth, anchor: anchor)
-        let unit = placement.tailX / NotchDataModel.peekBubbleWidth
+        let unit = placement.tailX / model.peekBubbleWidth
         return UnitPoint(x: min(max(unit, 0), 1), y: 0)
     }
 
@@ -95,7 +95,7 @@ extension NotchIslandView {
         return CGRect(
             x: placement.x,
             y: model.peekHeight + NotchDataModel.peekBubbleGap,
-            width: NotchDataModel.peekBubbleWidth,
+            width: model.peekBubbleWidth,
             // The visible bubble only, not the band reserved for the tallest
             // one — a click in the empty part of the band is a click on the
             // desktop, not on the island. Reported by the bubble itself, since
@@ -134,7 +134,7 @@ extension NotchIslandView {
                 // the callout from a table of per-row constants was wrong three
                 // times running — every mismatch landed as dead space along the
                 // bottom edge, because the content is top-aligned.
-                .frame(width: NotchDataModel.peekBubbleWidth, alignment: .topLeading)
+                .frame(width: model.peekBubbleWidth, alignment: .topLeading)
                 .background(
                     PeekBubbleShape(
                         tailX: tailX,

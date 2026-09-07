@@ -9,6 +9,23 @@ milestones.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Notch peek callout clipped on displays without a notch** — the peek window
+  was sized to the collapsed strip, which on a notchless display hugs its
+  content at ~120pt, so the callout hanging below it was cut off ~34pt on each
+  side: squared-off corners, progress bars running into the window border, and
+  the provider's name sliced mid-word. The window is now sized to the widest
+  thing it draws.
+
+### Changed
+
+- **Notch peek callout width follows the display** — on a display without a
+  notch the callout is now 200pt wide instead of 236pt. The strip it hangs
+  from is only ~120pt there, so the wider callout read as a board bolted to a
+  badge; the rows need ~98pt, so nothing is crowded. Notched displays, where
+  the strip is wider than the callout, are unchanged at 236pt.
+
 ## [1.6.0] - 2026-09-06
 
 ### Added
