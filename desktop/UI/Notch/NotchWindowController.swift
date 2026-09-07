@@ -161,7 +161,16 @@ class NotchDataModel: ObservableObject {
     // stacked window rows read best in a column this wide, and a bubble
     // stretched to a 400pt strip pushes each row's label and value to opposite
     // ends of a line.
-    static let peekBubbleWidth: CGFloat = 236
+    //
+    // Two widths, because the callout is read against the strip it hangs from.
+    // Beside a 280-400pt notched strip, 236 reads as a column the island
+    // narrowed down to; under the ~120pt pill of a notchless display the same
+    // 236 is twice the width of its own anchor and overhangs it by ~58pt on
+    // each side, which reads as a board bolted to a badge. The rows need only
+    // ~98pt (measured: the widest is the reset line), so the difference is
+    // breathing room, not content.
+    static let peekBubbleWidthNotched: CGFloat = 236
+    static let peekBubbleWidthFloating: CGFloat = 200
 
     // Height follows the rows the focused provider actually has. A provider's
     // quota is not always "5h + weekly": Claude Max meters a model-scoped
@@ -280,6 +289,11 @@ class NotchDataModel: ObservableObject {
         hasNotch ? collapsedBase : collapsedWidthNoNotch
     }
 
+    /// The callout's width on the display the island is currently on.
+    var peekBubbleWidth: CGFloat {
+        hasNotch ? Self.peekBubbleWidthNotched : Self.peekBubbleWidthFloating
+    }
+
     /// Where the callout sits for a given slot, in the strip's coordinates.
     ///
     /// Centred on the slot, then kept inside the strip. Clamping is why the
@@ -288,7 +302,7 @@ class NotchDataModel: ObservableObject {
     /// than the bubble there is nothing to clamp against, so it simply
     /// overhangs evenly.
     func peekBubblePlacement(trayWidth: CGFloat, anchor: CGFloat) -> (x: CGFloat, tailX: CGFloat) {
-        let width = Self.peekBubbleWidth
+        let width = peekBubbleWidth
         let x: CGFloat
         if trayWidth <= width {
             x = (trayWidth - width) / 2
@@ -496,7 +510,7 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
         let bubble = CGRect(
             x: cardLeft + placement.x,
             y: stripBottom - NotchDataModel.peekBubbleGap - bubbleHeight,
-            width: NotchDataModel.peekBubbleWidth,
+            width: model.peekBubbleWidth,
             height: NotchDataModel.peekBubbleGap + bubbleHeight
         )
         return bubble.contains(point)
@@ -1204,8 +1218,22 @@ class NotchWindowController: NSWindowController, NSWindowDelegate {
             )
             let upgrade = model.isUpgradingBackend ? NotchDataModel.upgradeCaptionHeight : 0
             let trayHeight = (hasNotch ? safeAreaTop : 32) + upgrade
+            // The window must hold the widest thing drawn in it, which is not
+            // always the strip. The callout is a fixed-width block centred
+            // under the tray; on a notched display the tray is wider than it is
+            // and the strip decides, but on a notchless one the tray hugs a
+            // ~120pt pill and the callout overhangs it on both sides. Sized to
+            // the strip alone, the window then sliced the callout off at both
+            // edges — squared-off corners, bars running to the border, and the
+            // provider's name cut mid-word. The local hasNotch is used because
+            // model.hasNotch is not published until updateWindowFrame, which
+            // runs after this.
+            let bubbleWidth = hasNotch
+                ? NotchDataModel.peekBubbleWidthNotched
+                : NotchDataModel.peekBubbleWidthFloating
+            let contentWidth = model.usesBubblePeek ? max(w, bubbleWidth) : w
             return NSSize(
-                width: w + Self.peekMarginW,
+                width: contentWidth + Self.peekMarginW,
                 height: trayHeight + model.peekBubbleBandHeight + Self.peekMarginH
             )
         case .expanded:
