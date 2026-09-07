@@ -596,6 +596,9 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
             alert.alertStyle = .warning
             alert.messageText = L10n.tr("preferences.python_missing.title")
             alert.informativeText = L10n.tr("preferences.python_missing.message", pythonBin)
+            // Name the button. AppKit's implicit one is drawn in the system
+            // language, which is the mismatch this change exists to remove.
+            alert.addButton(withTitle: L10n.tr("preferences.ok"))
             alert.runModal()
             return
         }
@@ -1201,6 +1204,10 @@ class PreferencesWindow: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSSear
     @objc func languageChanged() {
         let next = selectedAppLanguage()
         UserDefaults.standard.set(next, forKey: L10n.languageDefaultsKey)
+        // Written now rather than at the next launch: the relaunch button below
+        // restarts the app immediately, and the new process reads this key
+        // before it reaches our own.
+        L10n.applyLanguageToFrameworks(next)
         UserDefaults.standard.synchronize()
         languageRestartNotice?.isHidden = (next == initialAppLanguage)
 
