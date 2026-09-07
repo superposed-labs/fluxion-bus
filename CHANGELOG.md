@@ -9,6 +9,8 @@ milestones.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-09-07
+
 ### Fixed
 
 - **App language now reaches macOS's own dialogs** — the in-app language
@@ -493,7 +495,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.4.1...v1.5.0
