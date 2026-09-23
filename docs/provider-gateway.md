@@ -485,10 +485,11 @@ Runtime filtering keeps turns running; it does not fix the config. A policy with
 fluxion-provider check-models
 ```
 
-It exits non-zero only when a CLI's catalog is readable and does not list a configured id. Everything else exits zero, so a scheduled run does not cry wolf:
+It exits non-zero for actionable findings, such as a readable CLI catalog that does not list a model used by a role. Everything else exits zero, so a scheduled run does not cry wolf:
 
 - a catalog it could not read at all — CLI missing, slow, mid-upgrade — is reported as unverified
 - no routing config means the gateway was never set up, so there is nothing to check
+- a retired id that no role uses is reported as a note, since it cannot affect a routed task
 
 `doctor` runs the same check but also fails on a bound port and on a missing config, both correct when you are about to start a gateway and both wrong for an unattended run. `check-models` is the form to automate.
 
@@ -500,7 +501,7 @@ fluxion-provider check-models --notify
 
 `--notify` hands findings to the Fluxion desktop app, which delivers them through Notification Center like every other Fluxion notification. A scheduled job should not call `osascript` itself: that arrives styled as a generic script alert, attributed to whatever ran it.
 
-An unchanged finding notifies **once a day** however often the job runs, so the interval controls detection latency, not noise — a finding stays true until someone fixes it, and re-sending it every cycle is how a notification channel gets muted. A changed finding notifies immediately; a check that comes back clean rearms, so the same finding recurring later is reported again rather than swallowed as a repeat. Each run logs which file the record went to: only the desktop app's own data directory is watched, and a CLI run from a second checkout resolves a different one.
+An actionable finding notifies once when it first appears. The same finding does not send daily reminders; a changed finding notifies immediately, and a clean check rearms it if the problem later returns. A configured model that no role uses remains visible as a note in the command output but does not trigger a desktop notification. Each run logs which file the record went to: only the desktop app's own data directory is watched, and a CLI run from a second checkout resolves a different one.
 
 Settings come from the environment or `.env`, both read by every `fluxion-provider` subcommand — so a switch set in `.env` applies to unattended runs too:
 

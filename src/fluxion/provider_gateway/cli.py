@@ -189,6 +189,15 @@ def _check_models(args: argparse.Namespace) -> int:
     catalog_problems, notes = codex_catalog.report(settings.codex_catalog_drift)
     routing_problems, routing_notes = _model_catalog_report(routing)
     notes.extend(routing_notes)
+    # An unused configured id cannot affect a task. Show it to the operator
+    # without turning every unattended run into a failure or desktop alert.
+    unused_models = [
+        problem for problem in routing_problems if problem.endswith("(no role routes to it)")
+    ]
+    routing_problems = [
+        problem for problem in routing_problems if not problem.endswith("(no role routes to it)")
+    ]
+    notes.extend(unused_models)
     problems = routing_problems + catalog_problems
     for note in notes:
         print(f"ok   {note}")
@@ -334,7 +343,7 @@ _NOTIFY_KEY = "check-models"
 
 
 def _notify_findings(problems: list[str], has_routing_problem: bool) -> None:
-    """Hand the findings to the desktop app, at most once per finding per day.
+    """Hand new or changed actionable findings to the desktop app once.
 
     Naming which of the two subjects fired matters more than listing every line:
     a retired model id and a stale catalog snapshot are fixed in different files,
@@ -352,7 +361,12 @@ def _notify_findings(problems: list[str], has_routing_problem: bool) -> None:
     body = "\n".join(problems[:3])
     fingerprint = hashlib.sha256("\n".join(sorted(problems)).encode()).hexdigest()[:16]
     result = macos_notify.queue_throttled(
-        data_dir, _NOTIFY_KEY, title, body, fingerprint=fingerprint
+        data_dir,
+        _NOTIFY_KEY,
+        title,
+        body,
+        fingerprint=fingerprint,
+        repeat_after_hours=None,
     )
     # Name the file. Only the desktop app's own data directory is watched, and a
     # CLI run from a second checkout resolves a different one — the notification

@@ -82,11 +82,23 @@ def _verify_with(routing, *live_models: str, error: str):
     )
 
 
-def test_a_retired_model_fails_the_check(run_check, capsys):
+def test_a_routed_retired_model_fails_the_check(run_check, capsys):
+    config_file = cli.GatewaySettings.load().config_file
+    config = json.loads(config_file.read_text())
+    config["policies"]["balanced"]["candidates"] = ["local_agy:gemini-retired"]
+    config_file.write_text(json.dumps(config))
+
     assert run_check("gemini-live") == 1
     err = capsys.readouterr().err
     assert "local_agy:gemini-retired" in err
     assert "fallback" in err, "the operator must be told a fallback will not cover this"
+
+
+def test_an_unused_retired_model_is_only_a_note(run_check, capsys):
+    assert run_check("gemini-live") == 0
+    captured = capsys.readouterr()
+    assert "local_agy:gemini-retired" in captured.out
+    assert captured.err == ""
 
 
 def test_a_healthy_config_passes(run_check):
@@ -161,8 +173,12 @@ def test_notify_names_the_subject_that_fired(run_check, tmp_path, monkeypatch):
     (record,) = _records(tmp_path)
     assert "catalog" in record["title"]
 
-    # A routing finding on top of it takes the title.
+    # A routed model finding on top of it takes the title.
     macos_notify.clear_throttle(tmp_path, cli._NOTIFY_KEY)
+    config_file = cli.GatewaySettings.load().config_file
+    config = json.loads(config_file.read_text())
+    config["policies"]["balanced"]["candidates"] = ["local_agy:gemini-retired"]
+    config_file.write_text(json.dumps(config))
     assert run_check("gemini-live", notify=True) == 1
     assert "retired" in _records(tmp_path)[-1]["title"]
 
@@ -179,6 +195,31 @@ def test_a_clean_check_notifies_nothing_and_rearms(run_check, tmp_path, monkeypa
     assert run_check("gemini-live", "gemini-retired", notify=True) == 0
     assert len(_records(tmp_path)) == 1
     assert not (tmp_path / "runtime" / f"notify-{cli._NOTIFY_KEY}.json").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="notification signal file is macOS-only")
+def test_an_unused_retired_model_does_not_notify(run_check, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_data_dir", lambda: tmp_path)
+
+    assert run_check("gemini-live", notify=True) == 0
+    assert _records(tmp_path) == []
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="notification signal file is macOS-only")
+def test_a_routed_retired_model_notifies_once(run_check, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_data_dir", lambda: tmp_path)
+    config_file = cli.GatewaySettings.load().config_file
+    config = json.loads(config_file.read_text())
+    config["policies"]["balanced"]["candidates"] = ["local_agy:gemini-retired"]
+    config_file.write_text(json.dumps(config))
+
+    assert run_check("gemini-live", notify=True) == 1
+    state = tmp_path / "runtime" / f"notify-{cli._NOTIFY_KEY}.json"
+    stale = json.loads(state.read_text())
+    stale["notified_at"] = "2020-01-01T00:00:00+00:00"
+    state.write_text(json.dumps(stale))
+    assert run_check("gemini-live", notify=True) == 1
+    assert len(_records(tmp_path)) == 1
 
 
 def test_dotenv_reaches_the_unattended_check(tmp_path, monkeypatch, capsys):

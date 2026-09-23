@@ -69,6 +69,23 @@ def test_an_unchanged_finding_is_repeated_after_the_interval(tmp_path):
     assert result == macos_notify.QUEUED
 
 
+def test_repeat_can_be_disabled_for_persistent_findings(tmp_path):
+    macos_notify.queue_throttled(
+        tmp_path, "k", "t", "b", fingerprint="abc", repeat_after_hours=None
+    )
+    state = tmp_path / "runtime" / "notify-k.json"
+    stale = datetime.now(UTC) - timedelta(days=30)
+    state.write_text(json.dumps({"fingerprint": "abc", "notified_at": stale.isoformat()}))
+
+    assert (
+        macos_notify.queue_throttled(
+            tmp_path, "k", "t", "b", fingerprint="abc", repeat_after_hours=None
+        )
+        == macos_notify.SUPPRESSED
+    )
+    assert len(records(tmp_path)) == 1
+
+
 def test_clearing_lets_a_returning_finding_notify_again(tmp_path):
     macos_notify.queue_throttled(tmp_path, "k", "t", "b", fingerprint="abc")
     macos_notify.clear_throttle(tmp_path, "k")
