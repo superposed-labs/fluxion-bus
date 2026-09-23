@@ -202,6 +202,7 @@ class ClaudeUsageProbe:
         credit_window = self._probe_credits_window(credential, data)
         if credit_window is not None:
             windows.append(credit_window)
+        resets = self._map_resets(data)
         # The usage endpoint omits the plan; the credential carries it (e.g. "pro").
         account = self._cred_sub_type or self._account_label(data)
         if not windows:
@@ -211,6 +212,7 @@ class ClaudeUsageProbe:
                 account_label=account,
                 fetched_at=_now_iso(),
                 detail="usage endpoint returned no recognizable windows",
+                resets=resets,
             )
         return ProviderUsage(
             provider="claude",
@@ -218,6 +220,7 @@ class ClaudeUsageProbe:
             account_label=account,
             windows=windows,
             fetched_at=_now_iso(),
+            resets=resets,
         )
 
     def _track_credential(self, credential: _ClaudeCredential) -> None:
@@ -238,8 +241,9 @@ class ClaudeUsageProbe:
         )
 
     def _fetch(self, token: str) -> dict[str, Any]:
+        url = f"{CLAUDE_USAGE_URL}?cedar_ember=1&skip_spend=1"
         req = urllib.request.Request(
-            CLAUDE_USAGE_URL,
+            url,
             method="GET",
             headers={
                 "Authorization": f"Bearer {token}",
@@ -408,6 +412,91 @@ class ClaudeUsageProbe:
             expires_at=expires_at,
             enabled=enabled,
         )
+
+    @staticmethod
+    def _map_resets(data: dict[str, Any]) -> dict[str, Any] | None:
+        obj = data.get("cedar_ember")
+        if not isinstance(obj, dict):
+            obj = data.get("juniper_tide")
+        if not isinstance(obj, dict):
+            return None
+
+        grants = obj.get("grants")
+        if isinstance(grants, list) and grants:
+            avail_count = 0
+            expiries: list[int] = []
+            credits_out: list[dict[str, Any]] = []
+            now_ts = datetime.now(UTC).timestamp()
+
+            for g in grants:
+                if not isinstance(g, dict):
+                    continue
+                gid = g.get("id")
+                paused = g.get("paused") is True
+                resets_left = g.get("resets_left")
+                if not isinstance(resets_left, int):
+                    resets_left = 1 if g.get("usable_now") else 0
+                if not paused and resets_left > 0:
+                    avail_count += resets_left
+
+                status = "available" if (not paused and resets_left > 0) else "spent"
+                ends_at = g.get("ends_at")
+                if isinstance(gid, str):
+                    credit_info = {
+                        "id": gid,
+                        "status": status,
+                        "label": g.get("label"),
+                        "granted_at": g.get("starts_at"),
+                        "expires_at": ends_at,
+                        "clears": g.get("clears", []),
+                    }
+                    credits_out.append(credit_info)
+
+                if not paused and resets_left > 0 and isinstance(ends_at, str):
+                    try:
+                        expiry_ts = datetime.fromisoformat(
+                            ends_at.replace("Z", "+00:00")
+                        ).timestamp()
+                        remaining_ms = int(max(0.0, expiry_ts - now_ts) * 1000)
+                        expiries.append(remaining_ms)
+                    except Exception:
+                        pass
+
+            expiries.sort()
+            return {
+                "count": avail_count,
+                "expiries": expiries,
+                "credits": credits_out,
+            }
+
+        # Fallback for juniper_tide format if arm is reset and available is True
+        if obj.get("available") is True and obj.get("arm") == "reset":
+            next_avail = obj.get("next_available_at") or obj.get("weekly_resets_at")
+            expiries = []
+            if isinstance(next_avail, str):
+                try:
+                    expiry_ts = datetime.fromisoformat(
+                        next_avail.replace("Z", "+00:00")
+                    ).timestamp()
+                    remaining_ms = int(max(0.0, expiry_ts - datetime.now(UTC).timestamp()) * 1000)
+                    expiries.append(remaining_ms)
+                except Exception:
+                    pass
+            count = obj.get("resets_per_week")
+            count_int = int(count) if isinstance(count, (int, float)) and count >= 1 else 1
+            return {
+                "count": count_int,
+                "expiries": expiries,
+                "credits": [
+                    {
+                        "id": "juniper_tide",
+                        "status": "available",
+                        "expires_at": next_avail,
+                    }
+                ],
+            }
+
+        return None
 
     def _map_windows(self, data: dict[str, Any]) -> list[UsageWindow]:
         windows: list[UsageWindow] = []

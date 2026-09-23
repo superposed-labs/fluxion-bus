@@ -32,6 +32,7 @@ from fluxion.config.settings.parsing import (
     _resolve_data_dir,
 )
 from fluxion.i18n import normalize_locale, normalize_locale_mode
+from fluxion.usage.probes._common import resolve_claude_user_agent
 
 
 @dataclass(frozen=True)
@@ -364,10 +365,8 @@ class Settings:
             usage_providers=_parse_usage_providers(
                 os.environ.get("FLUXION_USAGE_PROVIDERS", "claude,codex,antigravity")
             ),
-            claude_code_user_agent=os.environ.get(
-                "FLUXION_CLAUDE_CODE_USER_AGENT", "claude-code/2.0.0"
-            ).strip()
-            or "claude-code/2.0.0",
+            claude_code_user_agent=os.environ.get("FLUXION_CLAUDE_CODE_USER_AGENT", "").strip()
+            or resolve_claude_user_agent(),
             claude_usage_token=os.environ.get("FLUXION_CLAUDE_USAGE_TOKEN", "").strip(),
             claude_usage_keychain=_parse_bool(
                 os.environ.get("FLUXION_CLAUDE_USAGE_KEYCHAIN"), default=False

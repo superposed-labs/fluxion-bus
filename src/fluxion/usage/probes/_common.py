@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +18,45 @@ CLAUDE_OAUTH_API_BASE = "https://api.anthropic.com"
 CLAUDE_OAUTH_BETA = "oauth-2025-04-20"
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+_DETECTED_CLAUDE_UA: str | None = None
+
+
+def resolve_claude_user_agent() -> str:
+    """Returns the User-Agent matching the locally installed Claude Code CLI,
+    or falls back to a modern CLI user-agent that Anthropic accepts for features
+    like cedar_ember limit resets.
+    """
+    global _DETECTED_CLAUDE_UA
+    if _DETECTED_CLAUDE_UA is not None:
+        return _DETECTED_CLAUDE_UA
+
+    env_ua = os.environ.get("FLUXION_CLAUDE_CODE_USER_AGENT") or os.environ.get(
+        "FLUXION_CLAUDE_USER_AGENT"
+    )
+    if env_ua and env_ua.strip():
+        _DETECTED_CLAUDE_UA = env_ua.strip()
+        return _DETECTED_CLAUDE_UA
+
+    try:
+        res = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            match = re.search(r"(\d+\.\d+\.\d+)", res.stdout)
+            if match:
+                _DETECTED_CLAUDE_UA = f"claude-cli/{match.group(1)} (external, cli)"
+                return _DETECTED_CLAUDE_UA
+    except Exception:
+        pass
+
+    _DETECTED_CLAUDE_UA = "claude-cli/2.1.280 (external, cli)"
+    return _DETECTED_CLAUDE_UA
+
 
 # Codex talks to the ChatGPT backend; `/wham/usage` returns the live rate-limit
 # status that the Codex app shows. API-key auth uses `/api/codex/usage` instead.
@@ -58,7 +100,7 @@ def _normalize_reset(value: Any) -> str | None:
 @dataclass
 class ProbeConfig:
     http_timeout_sec: float = 6.0
-    claude_user_agent: str = "claude-code/2.0.0"
+    claude_user_agent: str = field(default_factory=resolve_claude_user_agent)
     claude_usage_token: str = ""
     claude_credentials_path: Path = field(
         default_factory=lambda: Path.home() / ".claude" / ".credentials.json"

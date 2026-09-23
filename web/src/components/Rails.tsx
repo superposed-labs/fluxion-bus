@@ -259,8 +259,8 @@ function QuotaMeters({ quota }: { quota: ProviderUsage | undefined }): JSX.Eleme
     );
   }
 
-  // Read-only resets status for Codex
-  const resets = quota.provider === "codex" && quota.resets && quota.resets.count > 0 ? quota.resets : null;
+  // Read-only resets status (Codex rate-limit credits, Claude limit reset cards)
+  const resets = quota.resets && quota.resets.count > 0 ? quota.resets : null;
   let rc = null;
   if (resets && quota.fetched_at) {
     const fetchedTime = new Date(quota.fetched_at).getTime();

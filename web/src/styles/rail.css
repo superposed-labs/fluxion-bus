@@ -286,7 +286,7 @@
 .excard[data-ex="claude"] .quota-tag { color: var(--ex-claude); background: var(--mix-ex-claude-tag); border-color: var(--mix-ex-claude-tag-border); }
 .excard[data-ex="antigravity"] .quota-tag { color: var(--ex-antigravity); background: var(--mix-ex-antigravity-tag); border-color: var(--mix-ex-antigravity-tag-border); }
 
-/* Codex reset-credit reserve — read-only status line under the meters */
+/* Reset-credit reserve — read-only status line under the meters */
 .quota-resets {
   display: flex;
   align-items: center;
@@ -296,6 +296,7 @@
   color: var(--ex-codex);
   margin-top: 1px;
 }
+.excard[data-ex="claude"] .quota-resets { color: var(--ex-claude); }
 .quota-resets .qr-ico { font-size: 10.5px; line-height: 1; }
 .quota-resets .qr-v { color: var(--fg-1); font-variant-numeric: tabular-nums; }
 .quota-resets .qr-v em { color: var(--fg-3); font-style: normal; letter-spacing: 0.04em; }

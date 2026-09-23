@@ -665,6 +665,58 @@ def test_claude_prepaid_credits_prioritizes_amount_over_balance_credits():
     assert ClaudeUsageProbe._map_credits_window({"balance_credits": True}, enabled=True) is None
 
 
+def test_claude_maps_cedar_ember_resets(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 20.0, "resets_at": "2026-06-02T10:00:00Z"},
+        "cedar_ember": {
+            "eligible": True,
+            "grants": [
+                {
+                    "id": "opus55-launch-promax-20260921",
+                    "label": "Claude Opus 5.5 launch: one usage-limit reset for Pro and Max",
+                    "resets_total": 1,
+                    "resets_left": 1,
+                    "starts_at": "2026-09-22T16:00:00+00:00",
+                    "ends_at": "2026-10-22T16:00:00+00:00",
+                    "clears": ["five_hour", "seven_day"],
+                    "usable_now": True,
+                }
+            ],
+            "next_grant_id": "opus55-launch-promax-20260921",
+        },
+    }
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    cfg = ProbeConfig(claude_usage_token="tok-123")
+    usage = ClaudeUsageProbe(cfg).probe()
+
+    assert usage.status == STATUS_OK
+    assert usage.resets is not None
+    assert usage.resets["count"] == 1
+    assert len(usage.resets["credits"]) == 1
+    assert usage.resets["credits"][0]["id"] == "opus55-launch-promax-20260921"
+    assert usage.resets["credits"][0]["status"] == "available"
+    assert usage.resets["credits"][0]["expires_at"] == "2026-10-22T16:00:00+00:00"
+    assert usage.resets["credits"][0]["clears"] == ["five_hour", "seven_day"]
+    assert len(usage.resets["expiries"]) == 1
+
+
+def test_claude_empty_or_ineligible_cedar_ember_returns_none(monkeypatch):
+    payload = {
+        "five_hour": {"utilization": 20.0, "resets_at": "2026-06-02T10:00:00Z"},
+        "cedar_ember": {
+            "eligible": False,
+            "ineligible_reason": "surface",
+            "grants": [],
+        },
+    }
+    monkeypatch.setattr(ClaudeUsageProbe, "_fetch", lambda self, token: payload)
+    cfg = ProbeConfig(claude_usage_token="tok-123")
+    usage = ClaudeUsageProbe(cfg).probe()
+
+    assert usage.status == STATUS_OK
+    assert usage.resets is None
+
+
 def test_claude_credits_failure_does_not_break_usage_windows(monkeypatch):
     payload = {
         "five_hour": {"utilization": 10.0, "resets_at": "2026-06-02T10:00:00Z"},

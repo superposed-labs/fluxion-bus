@@ -822,6 +822,20 @@ def _codex_resets(credits):
     ]
 
 
+def _claude_resets(credits):
+    """Claude snapshot carrying cedar_ember reset credits."""
+    avail = [c for c in credits if c.get("status") == "available"]
+    return [
+        ProviderUsage(
+            provider="claude",
+            status=STATUS_OK,
+            fetched_at=datetime.now(UTC).isoformat(),
+            windows=[],
+            resets={"count": len(avail), "expiries": [], "credits": credits},
+        )
+    ]
+
+
 def _grant_mocks(daemon, monkeypatch):
     import unittest.mock
 
@@ -887,6 +901,34 @@ def test_codex_credit_grant_notifications(tmp_path, monkeypatch):
     # Tick 3: nothing new -> no further alert.
     daemon.tick()
     m["_notify_slack"].assert_called_once()
+
+
+def test_claude_credit_grant_notifications(tmp_path, monkeypatch):
+    settings = types.SimpleNamespace(
+        data_dir=tmp_path,
+        notify_credit_grant=True,
+        slack_enabled=True,
+        telegram_enabled=True,
+        menu_slack_notify_refresh=True,
+        menu_telegram_notify_refresh=True,
+    )
+    daemon, _store, _runner, usage = _daemon(tmp_path, [], settings=settings)
+    m = _grant_mocks(daemon, monkeypatch)
+
+    # Tick 1: Baseline seed
+    usage.snapshot = _claude_resets([])
+    daemon.tick()
+    m["_notify_slack"].assert_not_called()
+
+    # Tick 2: Claude cedar_ember card lands
+    usage.snapshot = _claude_resets([_credit("opus55-launch-promax-20260921")])
+    daemon.tick()
+
+    m["_notify_slack"].assert_called_once()
+    m["_notify_telegram"].assert_called_once()
+    msg_args = m["_notify_slack"].call_args[0][0]
+    assert "Claude granted 1 reset credit" in msg_args
+    assert "1 now available" in msg_args
 
 
 def test_codex_credit_grant_detects_through_masking(tmp_path, monkeypatch):

@@ -745,7 +745,7 @@ extension NotchIslandView {
         provider: ProviderUsage,
         footerVisible: Bool
     ) -> some View {
-        let hasResets = provider.provider == "codex" && provider.resets != nil && (provider.resets?.count ?? 0) > 0
+        let hasResets = provider.resets != nil && (provider.resets?.count ?? 0) > 0
         let creditsWindow = provider.windows.first(where: { $0.key == "ai_credits" })
         let showFooter = footerVisible || hasResets || creditsWindow != nil
 
@@ -1229,7 +1229,7 @@ extension NotchIslandView {
             // squeezed it into a box and lost the chip's affordances. Keeps
             // the foot trio (Today/Cache/This week) identical across
             // subscription providers.
-            if provider.provider == "codex", let resets = provider.resets, resets.count > 0 {
+            if let resets = provider.resets, resets.count > 0 {
                 ResetChipView(
                     resets: resets,
                     brandColor: Color(visual.brandColor),

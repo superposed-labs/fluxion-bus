@@ -456,34 +456,38 @@ export function QuotaMonitorPanel({
           {monitor.notify_credit_grant && (
             <React.Fragment>
               {(() => {
-                const codexUsage = usage.find((x) => x.provider === "codex");
-                const resets = codexUsage?.resets && codexUsage.resets.count > 0 ? codexUsage.resets : null;
-                let rc = null;
-                if (resets && codexUsage?.fetched_at) {
-                  const fetchedTime = new Date(codexUsage.fetched_at).getTime();
+                const resetProviders = usage.filter((x) => x.resets && x.resets.count > 0);
+                if (!resetProviders.length) return null;
+                const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                return resetProviders.map((rp) => {
+                  const resets = rp.resets!;
+                  const fetchedTime = rp.fetched_at ? new Date(rp.fetched_at).getTime() : Date.now();
                   const nextRemaining = resets.expiries.slice().sort((a, b) => a - b)[0];
                   const next = nextRemaining != null ? fetchedTime + nextRemaining : null;
-                  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
                   const nd = next != null ? new Date(next) : null;
-                  rc = {
-                    count: resets.count,
-                    exp: nd ? MON[nd.getMonth()] + " " + nd.getDate() : null,
-                  };
-                }
-                if (!rc) return null;
-                return (
-                  <div className="grant-preview">
-                    <span className="gp-ico">{MI_GIFT}</span>
-                    <span className="gp-txt">
-                      {t(rc.count > 1 ? "monitor.creditGranted" : "monitor.creditGrantedOne", { count: rc.count })}
-                      {rc.exp && (
-                        <React.Fragment>
-                          {" "}· <b>{t("monitor.nearestExpires", { date: rc.exp })}</b>
-                        </React.Fragment>
-                      )}
-                    </span>
-                  </div>
-                );
+                  const providerName = rp.provider === "codex"
+                    ? "Codex"
+                    : rp.provider === "claude"
+                    ? "Claude"
+                    : rp.provider.toUpperCase();
+                  const exp = nd ? MON[nd.getMonth()] + " " + nd.getDate() : null;
+                  return (
+                    <div key={rp.provider} className="grant-preview">
+                      <span className="gp-ico">{MI_GIFT}</span>
+                      <span className="gp-txt">
+                        {t(resets.count > 1 ? "monitor.creditGranted" : "monitor.creditGrantedOne", {
+                          provider: providerName,
+                          count: resets.count,
+                        })}
+                        {exp && (
+                          <React.Fragment>
+                            {" "}· <b>{t("monitor.nearestExpires", { date: exp })}</b>
+                          </React.Fragment>
+                        )}
+                      </span>
+                    </div>
+                  );
+                });
               })()}
               <div className="act-foot">
                 <span className="act-foot-lbl">{t("monitor.sendTo")}</span>
