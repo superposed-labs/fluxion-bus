@@ -81,7 +81,7 @@ def queue_throttled(
     body: str,
     *,
     fingerprint: str,
-    repeat_after_hours: float = 24.0,
+    repeat_after_hours: float | None = 24.0,
 ) -> str:
     """Notify about a *standing* condition without repeating it every check.
 
@@ -90,6 +90,7 @@ def queue_throttled(
     every cycle — which is how a channel gets muted, taking the next real finding
     with it. `fingerprint` identifies the finding: a changed one always notifies,
     an unchanged one waits out `repeat_after_hours` so it is not forgotten either.
+    Pass None to notify only when the finding changes or returns after clearing.
 
     Notification history lives beside the other runtime state and is disposable:
     losing it costs one duplicate notification, which is why nothing here fails
@@ -107,6 +108,8 @@ def queue_throttled(
         last_seen, notified_at = None, None
 
     if last_seen == fingerprint and notified_at is not None:
+        if repeat_after_hours is None:
+            return SUPPRESSED
         age_hours = (now - notified_at).total_seconds() / 3600
         if age_hours < repeat_after_hours:
             return SUPPRESSED
