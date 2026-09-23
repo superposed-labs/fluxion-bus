@@ -59,11 +59,44 @@ export function UsageRail({ usage }: UsageRailProps): JSX.Element | null {
             ) : (
               <div className="quota-note">{p.detail || t("common.unavailable")}</div>
             )}
+            {(() => {
+              const rc = formatResetsInfo(p);
+              if (!rc) return null;
+              return (
+                <div
+                  className={"quota-resets" + (rc.soon ? " soon" : "")}
+                  title={t("rail.resetCreditsTitle") + (rc.exp ? t("rail.nearestExpires", { date: rc.exp }) : "")}
+                  style={{ padding: "4px 8px" }}
+                >
+                  <span className="qr-ico">⦾</span>
+                  <span className="qr-v">
+                    {rc.count} <em>{t("rail.resets")}</em>
+                  </span>
+                  {rc.exp && <span className="qr-exp">{t("rail.exp", { date: rc.exp })}</span>}
+                </div>
+              );
+            })()}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function formatResetsInfo(p: ProviderUsage) {
+  const resets = p.resets && p.resets.count > 0 ? p.resets : null;
+  if (!resets || !p.fetched_at) return null;
+  const fetchedTime = new Date(p.fetched_at).getTime();
+  const nextRemaining = resets.expiries.slice().sort((a, b) => a - b)[0];
+  const next = nextRemaining != null ? fetchedTime + nextRemaining : null;
+  const days = next != null ? Math.max(0, Math.round((next - Date.now()) / 86400e3)) : null;
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const nd = next != null ? new Date(next) : null;
+  return {
+    count: resets.count,
+    exp: nd ? MON[nd.getMonth()] + " " + nd.getDate() : null,
+    soon: days != null && days <= 7,
+  };
 }
 
 function visibleWindows(provider: ProviderUsage): UsageWindow[] {

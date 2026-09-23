@@ -63,7 +63,7 @@ final class RichMenuPanelView: NSView {
     private var hoverID: String?
     private var trackingAreaRef: NSTrackingArea?
     private var countdownTimer: Timer?
-    private var resetsChipRect: NSRect?
+    private var resetsChipRects: [String: NSRect] = [:]
     private let outerPad: CGFloat = 7
     private let innerPad: CGFloat = 10
     private let rowH: CGFloat = 30
@@ -142,7 +142,7 @@ final class RichMenuPanelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         actionHits.removeAll()
         hoverHits.removeAll()
-        resetsChipRect = nil
+        resetsChipRects.removeAll()
         drawBackground()
 
         var y: CGFloat = outerPad + 1
@@ -341,8 +341,8 @@ final class RichMenuPanelView: NSView {
         if p.provider == "antigravity", let credits = antigravityCredits(p) {
             drawCreditsChip(credits: credits, y: y)
         }
-        if p.provider == "codex", let resets = p.resets, resets.count > 0 {
-            drawResetsChip(resets: resets, y: y)
+        if let resets = p.resets, resets.count > 0 {
+            drawResetsChip(provider: p.provider, resets: resets, y: y)
         }
         y += 32
 
@@ -634,9 +634,11 @@ final class RichMenuPanelView: NSView {
     }
  
     private func drawResetsTooltipIfNeeded() {
-        guard hoverID == "resets-tooltip", let chipRect = resetsChipRect else { return }
-        guard let codex = providers.first(where: { $0.provider == "codex" }),
-              let resets = codex.resets, resets.count > 0 else { return }
+        guard let hoverID = hoverID, hoverID.hasPrefix("resets-tooltip-") else { return }
+        let providerKey = String(hoverID.dropFirst("resets-tooltip-".count))
+        guard let chipRect = resetsChipRects[providerKey] else { return }
+        guard let p = providers.first(where: { $0.provider == providerKey }),
+              let resets = p.resets, resets.count > 0 else { return }
         
         let exp = resets.expiries.sorted()
         let nextMs = exp.first ?? 0.0
@@ -808,7 +810,7 @@ final class RichMenuPanelView: NSView {
         draw(creditsLabel, x: rect.minX + 27 + creditsW + 10, y: rect.minY + 4, size: 9.5, weight: .semibold, color: muted)
     }
 
-    private func drawResetsChip(resets: ResetCredits, y: CGFloat) {
+    private func drawResetsChip(provider: String, resets: ResetCredits, y: CGFloat) {
         let availableText = L10n.tr("menu.resets.available.compact", resets.count)
         let availableW = width(availableText, size: 9.5, weight: .semibold)
         let labelText = L10n.tr("menu.resets.upper")
@@ -816,13 +818,14 @@ final class RichMenuPanelView: NSView {
         let chipW = ceil(8 + 11 + 8 + availableW + 8 + labelW + 8)
         let rect = NSRect(x: bounds.width - outerPad - innerPad - chipW, y: y + 6, width: chipW, height: 18)
         
-        resetsChipRect = rect
+        resetsChipRects[provider] = rect
+        let tooltipID = "resets-tooltip-\(provider)"
         
         // 1. Draw hover background behind text (if hovered)
-        drawHover(id: "resets-tooltip", rect: rect)
+        drawHover(id: tooltipID, rect: rect)
         
         // 2. Draw default background only if not hovered
-        if hoverID != "resets-tooltip" {
+        if hoverID != tooltipID {
             let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
             NSColor.black.withAlphaComponent(0.05).setFill()
             path.fill()

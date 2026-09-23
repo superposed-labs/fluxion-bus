@@ -296,13 +296,13 @@
 "notification.reminder_coverage.enable" = "オンにする";
 "notification.credit_expiry.title" = "クレジット失効間近";
 "preferences.credit_grant.title" = "クレジット付与時に通知";
-"preferences.credit_grant.desc" = "Codex は不定期に reset credits を配布します。上のリセット通知チャンネル経由で、新しいクレジットが届いた瞬間に通知します。Codex のみ。";
+"preferences.credit_grant.desc" = "Codex と Claude は不定期に reset credits を配布します。上のリセット通知チャンネル経由で、新しいクレジットが届いた瞬間に通知します。Codex と Claude に対応。";
 "preferences.credit_expiry.title" = "クレジット失効前に通知";
-"preferences.credit_expiry.desc" = "保持中クレジットが未使用のまま24時間以内に失効する場合に通知します。Codex のみ。";
+"preferences.credit_expiry.desc" = "保持中クレジットが未使用のまま24時間以内に失効する場合に通知します。Codex と Claude に対応。";
 "preferences.section.quota_monitor" = "クォータ監視";
 "preferences.section.auto_ping" = "Auto Ping";
 "preferences.section.reset_notifications" = "リセット通知";
-"preferences.section.credit_grants" = "クレジット付与（Codex）";
+"preferences.section.credit_grants" = "リセットクレジット（Codex · Claude）";
 
 "preferences.launch_login.title" = "ログイン時に起動";
 "preferences.launch_login.desc" = "Mac にログインした時に Fluxion Menu を自動的に開きます。";

@@ -258,12 +258,12 @@ class UsageService:
             if not is_auth_error and not is_stale:
                 return last_good
 
-        # Codex quota and reset credits come from independent endpoints. If
-        # only the optional reset-credit request failed, keep the last confirmed
+        # Quota and reset credits may come from independent endpoints or requests.
+        # If only the optional reset-credit request failed, keep the last confirmed
         # count while accepting the fresh quota windows. A successful response
         # with count=0 is represented by a non-nil resets payload and clears the
         # old value normally.
-        if provider == "codex" and usage.resets_fetch_failed:
+        if usage.resets_fetch_failed:
             previous = self._last_good.get(provider)
             if previous is not None and previous.resets is not None:
                 usage.resets = previous.resets

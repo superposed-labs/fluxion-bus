@@ -653,63 +653,80 @@ class SchedulerDaemon:
             log.warning("failed to persist credit state", exc_info=True)
 
     @staticmethod
-    def _codex_credits(usage: list[ProviderUsage]) -> list[dict[str, Any]] | None:
-        """Return the per-credit list from the Codex snapshot, or None.
+    def _provider_credits(usage: list[ProviderUsage]) -> dict[str, list[dict[str, Any]]]:
+        """Return per-provider credit lists from all ok snapshots with resets.credits."""
+        res: dict[str, list[dict[str, Any]]] = {}
+        for u in usage:
+            if u.status != "ok" or not u.resets:
+                continue
+            credits = u.resets.get("credits")
+            if isinstance(credits, list):
+                valid = [c for c in credits if isinstance(c, dict) and c.get("id")]
+                res[u.provider] = valid
+        return res
 
-        None means "no identity data to act on" (provider missing/errored, or an
-        older snapshot without the `credits` field).
-        """
-        codex_usage = next((u for u in usage if u.provider == "codex"), None)
-        if not codex_usage or codex_usage.status != "ok" or not codex_usage.resets:
-            return None
-        credits = codex_usage.resets.get("credits")
-        if not isinstance(credits, list):
-            return None
-        return [c for c in credits if isinstance(c, dict) and c.get("id")]
+    @staticmethod
+    def _codex_credits(usage: list[ProviderUsage]) -> list[dict[str, Any]] | None:
+        """Deprecated alias preserved for test backwards-compatibility."""
+        return SchedulerDaemon._provider_credits(usage).get("codex")
 
     def _check_credit_grant(self, usage: list[ProviderUsage]) -> None:
-        """Notify when Codex grants new reset credits.
+        """Notify when Codex or Claude grants new reset credits.
 
         Detection keys on each credit's stable id, not the available count: a
         count delta misses a grant that lands in the same poll a credit is
         consumed or expires, and under-counts simultaneous grants.
         """
-        credits = self._codex_credits(usage)
-        if credits is None:
+        provider_credits = self._provider_credits(usage)
+        if not provider_credits:
             return
 
-        current_ids = {str(c["id"]) for c in credits}
+        all_current_ids = {str(c["id"]) for creds in provider_credits.values() for c in creds}
 
         # Fresh install: seed the baseline silently so pre-existing held credits
         # don't fire a false "granted" alert on first run.
         if not self._credit_state_init:
-            self._seen_credit_ids = current_ids
+            self._seen_credit_ids = all_current_ids
             self._credit_state_init = True
             self._save_credit_state()
             return
 
-        new_credits = [
-            c
-            for c in credits
-            if str(c["id"]) not in self._seen_credit_ids and c.get("status") == "available"
-        ]
+        new_grants: list[tuple[str, list[dict[str, Any]], int]] = []
+        for provider, credits in provider_credits.items():
+            new_credits = [
+                c
+                for c in credits
+                if str(c["id"]) not in self._seen_credit_ids and c.get("status") == "available"
+            ]
+            if new_credits:
+                count = sum(1 for c in credits if c.get("status") == "available")
+                new_grants.append((provider, new_credits, count))
 
         # Mark every id we can see as known — including any granted+consumed
         # within one poll — so they never read as "new" on a later tick. Done
         # regardless of the notify setting, matching the prior baseline behavior.
-        if not current_ids <= self._seen_credit_ids:
-            self._seen_credit_ids |= current_ids
+        if not all_current_ids <= self._seen_credit_ids:
+            self._seen_credit_ids |= all_current_ids
             self._save_credit_state()
 
-        if not new_credits:
+        if not new_grants:
             return
 
-        log.info(
-            "credit grant detected: +%d new (ids=%s), %d available",
-            len(new_credits),
-            ", ".join(str(c["id"]) for c in new_credits),
-            sum(1 for c in credits if c.get("status") == "available"),
-        )
+        for provider, new_credits, count in new_grants:
+            provider_title = (
+                "Codex"
+                if provider == "codex"
+                else ("Claude" if provider == "claude" else provider.capitalize())
+            )
+            delta = len(new_credits)
+            log.info(
+                "%s credit grant detected: +%d new (ids=%s), %d available",
+                provider_title,
+                delta,
+                ", ".join(str(c["id"]) for c in new_credits),
+                count,
+            )
+
         if not getattr(self._settings, "notify_credit_grant", False):
             return
 
@@ -731,88 +748,92 @@ class SchedulerDaemon:
         ):
             return
 
-        delta = len(new_credits)
-        # Currently-available total, for the "now available" tail.
-        count = sum(1 for c in credits if c.get("status") == "available")
+        for provider, new_credits, count in new_grants:
+            provider_title = (
+                "Codex"
+                if provider == "codex"
+                else ("Claude" if provider == "claude" else provider.capitalize())
+            )
+            delta = len(new_credits)
+            msg = f"🎁 *[Fluxion Credit Grant]* {provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
 
-        msg = f"🎁 *[Fluxion Credit Grant]* Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
-
-        if notify_slack:
-            # Format a beautiful Block Kit layout for Slack.
-            blocks = [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"🎁 *[Fluxion Credit Grant]*\nCodex granted *{delta}* reset credit{'s' if delta > 1 else ''}.",
+            if notify_slack:
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"🎁 *[Fluxion Credit Grant]*\n{provider_title} granted *{delta}* reset credit{'s' if delta > 1 else ''}.",
+                        },
                     },
-                },
-                {
-                    "type": "section",
-                    "fields": [
-                        {"type": "mrkdwn", "text": f"*Available Resets:*\n✨ `{count}`"},
-                    ],
-                },
-                {
-                    "type": "context",
-                    "elements": [{"type": "mrkdwn", "text": "⚡ _Fluxion Credit Grant Monitor_"}],
-                },
-            ]
-            self._notify_slack(msg, blocks=blocks)
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Available Resets:*\n✨ `{count}`"},
+                        ],
+                    },
+                    {
+                        "type": "context",
+                        "elements": [
+                            {"type": "mrkdwn", "text": "⚡ _Fluxion Credit Grant Monitor_"}
+                        ],
+                    },
+                ]
+                self._notify_slack(msg, blocks=blocks)
 
-        if notify_telegram:
-            tg_text = (
-                "🎁 **[Fluxion Credit Grant]**\n"
-                f"Codex granted **{delta}** reset credit{'s' if delta > 1 else ''} · `{count}` now available."
-                "\n\n⚡ _Fluxion Credit Grant Monitor_"
-            )
-            self._notify_telegram(tg_text, kind="credit-grant")
+            if notify_telegram:
+                tg_text = (
+                    "🎁 **[Fluxion Credit Grant]**\n"
+                    f"{provider_title} granted **{delta}** reset credit{'s' if delta > 1 else ''} · `{count}` now available."
+                    "\n\n⚡ _Fluxion Credit Grant Monitor_"
+                )
+                self._notify_telegram(tg_text, kind="credit-grant")
 
-        if notify_qqbot:
-            qq_text = (
-                "🎁 [Fluxion Credit Grant]\n"
-                f"Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
-                "\n\n⚡ Fluxion Credit Grant Monitor"
-            )
-            self._notify_qqbot(qq_text, kind="credit-grant")
+            if notify_qqbot:
+                qq_text = (
+                    "🎁 [Fluxion Credit Grant]\n"
+                    f"{provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
+                    "\n\n⚡ Fluxion Credit Grant Monitor"
+                )
+                self._notify_qqbot(qq_text, kind="credit-grant")
 
-        if notify_feishu:
-            feishu_text = (
-                "🎁 [Fluxion Credit Grant]\n"
-                f"Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
-                "\n\n⚡ Fluxion Credit Grant Monitor"
-            )
-            self._notify_feishu(feishu_text, kind="credit-grant")
+            if notify_feishu:
+                feishu_text = (
+                    "🎁 [Fluxion Credit Grant]\n"
+                    f"{provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
+                    "\n\n⚡ Fluxion Credit Grant Monitor"
+                )
+                self._notify_feishu(feishu_text, kind="credit-grant")
 
-        if notify_wechat:
-            wechat_text = (
-                "🎁 [Fluxion Credit Grant]\n"
-                f"Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
-                "\n\n⚡ Fluxion Credit Grant Monitor"
-            )
-            self._notify_wechat(wechat_text, kind="credit-grant")
+            if notify_wechat:
+                wechat_text = (
+                    "🎁 [Fluxion Credit Grant]\n"
+                    f"{provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
+                    "\n\n⚡ Fluxion Credit Grant Monitor"
+                )
+                self._notify_wechat(wechat_text, kind="credit-grant")
 
-        if notify_line:
-            line_text = (
-                "🎁 [Fluxion Credit Grant]\n"
-                f"Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
-                "\n\n⚡ Fluxion Credit Grant Monitor"
-            )
-            self._notify_line(line_text, kind="credit-grant")
+            if notify_line:
+                line_text = (
+                    "🎁 [Fluxion Credit Grant]\n"
+                    f"{provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available."
+                    "\n\n⚡ Fluxion Credit Grant Monitor"
+                )
+                self._notify_line(line_text, kind="credit-grant")
 
-        if notify_macos:
-            self._notify_macos(
-                "Credit Grant",
-                f"Codex granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available.",
-            )
+            if notify_macos:
+                self._notify_macos(
+                    "Credit Grant",
+                    f"{provider_title} granted {delta} reset credit{'s' if delta > 1 else ''} · {count} now available.",
+                )
 
     def _check_credit_expiry(self, usage: list[ProviderUsage]) -> None:
         """Alert before a held reset credit lapses (≤24h out), deduped by id."""
         if not getattr(self._settings, "notify_credit_expiry", False):
             return
 
-        credits = self._codex_credits(usage)
-        if credits is None:
+        provider_credits = self._provider_credits(usage)
+        if not provider_credits:
             return
 
         notify_slack = self._should_notify_channel("slack")
@@ -837,97 +858,109 @@ class SchedulerDaemon:
         current_ids: set[str] = set()
         changed = False
 
-        for cred in credits:
-            cid = str(cred["id"])
-            current_ids.add(cid)
-            if cred.get("status") != "available":
-                continue
-            exp_dt = parse_iso(cred.get("expires_at"))
-            if exp_dt is None:
-                continue
-            remaining_sec = exp_dt.timestamp() - now_ts
-            # Alert once a credit is within 24h of lapsing, and not yet expired.
-            if not (0 < remaining_sec <= 86400):
-                continue
-            if cid in self._notified_expiry_ids:
-                continue
-            self._notified_expiry_ids.add(cid)
-            changed = True
+        for provider, credits in provider_credits.items():
+            provider_title = (
+                "Codex"
+                if provider == "codex"
+                else ("Claude" if provider == "claude" else provider.capitalize())
+            )
+            for cred in credits:
+                cid = str(cred["id"])
+                current_ids.add(cid)
+                if cred.get("status") != "available":
+                    continue
+                exp_dt = parse_iso(cred.get("expires_at"))
+                if exp_dt is None:
+                    continue
+                remaining_sec = exp_dt.timestamp() - now_ts
+                # Alert once a credit is within 24h of lapsing, and not yet expired.
+                if not (0 < remaining_sec <= 86400):
+                    continue
+                if cid in self._notified_expiry_ids:
+                    continue
+                self._notified_expiry_ids.add(cid)
+                changed = True
 
-            exp_str = exp_dt.strftime("%b %d")
-            hours_left = max(1, int(remaining_sec / 3600))
-            log.info("credit expiry warning: id=%s expires in ~%dh (%s)", cid, hours_left, exp_str)
-            msg = f"⚠️ *[Fluxion Credit Expiry]* A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
+                exp_str = exp_dt.strftime("%b %d")
+                hours_left = max(1, int(remaining_sec / 3600))
+                log.info(
+                    "%s credit expiry warning: id=%s expires in ~%dh (%s)",
+                    provider_title,
+                    cid,
+                    hours_left,
+                    exp_str,
+                )
+                msg = f"⚠️ *[Fluxion Credit Expiry]* A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
 
-            if notify_slack:
-                blocks = [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"⚠️ *[Fluxion Credit Expiry]*\nA Codex reset credit is about to expire in *{hours_left}* hour{'s' if hours_left > 1 else ''}!",
+                if notify_slack:
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"⚠️ *[Fluxion Credit Expiry]*\nA {provider_title} reset credit is about to expire in *{hours_left}* hour{'s' if hours_left > 1 else ''}!",
+                            },
                         },
-                    },
-                    {
-                        "type": "section",
-                        "fields": [
-                            {"type": "mrkdwn", "text": f"*Expiry Date:*\n📅 `{exp_str}`"},
-                        ],
-                    },
-                    {
-                        "type": "context",
-                        "elements": [
-                            {"type": "mrkdwn", "text": "⚡ _Fluxion Credit Expiry Alert_"}
-                        ],
-                    },
-                ]
-                self._notify_slack(msg, blocks=blocks)
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Expiry Date:*\n📅 `{exp_str}`"},
+                            ],
+                        },
+                        {
+                            "type": "context",
+                            "elements": [
+                                {"type": "mrkdwn", "text": "⚡ _Fluxion Credit Expiry Alert_"}
+                            ],
+                        },
+                    ]
+                    self._notify_slack(msg, blocks=blocks)
 
-            if notify_telegram:
-                tg_text = (
-                    "⚠️ **[Fluxion Credit Expiry]**\n"
-                    f"A Codex reset credit is about to expire in **{hours_left}** hour{'s' if hours_left > 1 else ''}! (Expires `{exp_str}`)"
-                    "\n\n⚡ _Fluxion Credit Expiry Alert_"
-                )
-                self._notify_telegram(tg_text, kind="credit-expiry")
+                if notify_telegram:
+                    tg_text = (
+                        "⚠️ **[Fluxion Credit Expiry]**\n"
+                        f"A {provider_title} reset credit is about to expire in **{hours_left}** hour{'s' if hours_left > 1 else ''}! (Expires `{exp_str}`)"
+                        "\n\n⚡ _Fluxion Credit Expiry Alert_"
+                    )
+                    self._notify_telegram(tg_text, kind="credit-expiry")
 
-            if notify_qqbot:
-                qq_text = (
-                    "⚠️ [Fluxion Credit Expiry]\n"
-                    f"A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
-                    "\n\n⚡ Fluxion Credit Expiry Alert"
-                )
-                self._notify_qqbot(qq_text, kind="credit-expiry")
+                if notify_qqbot:
+                    qq_text = (
+                        "⚠️ [Fluxion Credit Expiry]\n"
+                        f"A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
+                        "\n\n⚡ Fluxion Credit Expiry Alert"
+                    )
+                    self._notify_qqbot(qq_text, kind="credit-expiry")
 
-            if notify_feishu:
-                feishu_text = (
-                    "⚠️ [Fluxion Credit Expiry]\n"
-                    f"A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
-                    "\n\n⚡ Fluxion Credit Expiry Alert"
-                )
-                self._notify_feishu(feishu_text, kind="credit-expiry")
+                if notify_feishu:
+                    feishu_text = (
+                        "⚠️ [Fluxion Credit Expiry]\n"
+                        f"A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
+                        "\n\n⚡ Fluxion Credit Expiry Alert"
+                    )
+                    self._notify_feishu(feishu_text, kind="credit-expiry")
 
-            if notify_wechat:
-                wechat_text = (
-                    "⚠️ [Fluxion Credit Expiry]\n"
-                    f"A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
-                    "\n\n⚡ Fluxion Credit Expiry Alert"
-                )
-                self._notify_wechat(wechat_text, kind="credit-expiry")
+                if notify_wechat:
+                    wechat_text = (
+                        "⚠️ [Fluxion Credit Expiry]\n"
+                        f"A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
+                        "\n\n⚡ Fluxion Credit Expiry Alert"
+                    )
+                    self._notify_wechat(wechat_text, kind="credit-expiry")
 
-            if notify_line:
-                line_text = (
-                    "⚠️ [Fluxion Credit Expiry]\n"
-                    f"A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
-                    "\n\n⚡ Fluxion Credit Expiry Alert"
-                )
-                self._notify_line(line_text, kind="credit-expiry")
+                if notify_line:
+                    line_text = (
+                        "⚠️ [Fluxion Credit Expiry]\n"
+                        f"A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})"
+                        "\n\n⚡ Fluxion Credit Expiry Alert"
+                    )
+                    self._notify_line(line_text, kind="credit-expiry")
 
-            if notify_macos:
-                self._notify_macos(
-                    "Credit Expiring",
-                    f"A Codex reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})",
-                )
+                if notify_macos:
+                    self._notify_macos(
+                        "Credit Expiring",
+                        f"A {provider_title} reset credit is about to expire in {hours_left} hour{'s' if hours_left > 1 else ''}! (Expires {exp_str})",
+                    )
 
         # Drop ids for credits that are gone (expired/consumed) to bound growth.
         stale = self._notified_expiry_ids - current_ids

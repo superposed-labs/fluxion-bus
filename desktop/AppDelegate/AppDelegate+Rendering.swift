@@ -68,18 +68,20 @@ extension AppDelegate {
         }
 
         if let notch = notchWindowController {
-            let oldCodex = notch.model.providers.first(where: { $0.provider == "codex" })
-            let newCodex = providers.first(where: { $0.provider == "codex" })
-            if let oldResets = oldCodex?.resets, let newResets = newCodex?.resets {
-                if newResets.count > oldResets.count {
-                    notch.triggerCreditGrantFlash(delta: newResets.count - oldResets.count)
-                    // macOS native notification for credit grant (desktop-detected).
-                    if (envVals["FLUXION_MENU_MACOS_NOTIFY_REFRESH"] ?? "true").lowercased() != "false" {
-                        let delta = newResets.count - oldResets.count
-                        deliverLocalNotification(
-                            title: L10n.tr("notification.credit_grant.title"),
-                            body: "Codex granted \(delta) reset credit\(delta > 1 ? "s" : "") · \(newResets.count) now available."
-                        )
+            for p in providers {
+                let oldProvider = notch.model.providers.first(where: { $0.provider == p.provider })
+                if let oldResets = oldProvider?.resets, let newResets = p.resets {
+                    if newResets.count > oldResets.count {
+                        notch.triggerCreditGrantFlash(delta: newResets.count - oldResets.count)
+                        // macOS native notification for credit grant (desktop-detected).
+                        if (envVals["FLUXION_MENU_MACOS_NOTIFY_REFRESH"] ?? "true").lowercased() != "false" {
+                            let delta = newResets.count - oldResets.count
+                            let providerTitle = p.provider == "codex" ? "Codex" : (p.provider == "claude" ? "Claude" : p.provider.capitalized)
+                            deliverLocalNotification(
+                                title: L10n.tr("notification.credit_grant.title"),
+                                body: "\(providerTitle) granted \(delta) reset credit\(delta > 1 ? "s" : "") · \(newResets.count) now available."
+                            )
+                        }
                     }
                 }
             }
@@ -522,7 +524,7 @@ extension AppDelegate {
             if isCodexFiveHourTemporarilyUncapped(p) {
                 maxNameW = max(maxNameW, textWidth(L10n.tr("preferences.window.5h")))
             }
-            if p.provider == "codex", let resets = p.resets, resets.count > 0 {
+            if let resets = p.resets, resets.count > 0 {
                 maxNameW = max(maxNameW, textWidth(L10n.tr("menu.resets")))
             }
             for w in p.windows {
@@ -731,7 +733,7 @@ extension AppDelegate {
                 for w in p.windows {
                     addWindowItem(w, menuQuotaWindowLabel(w, provider: p.provider))
                 }
-                if p.provider == "codex", let resets = p.resets, resets.count > 0 {
+                if let resets = p.resets, resets.count > 0 {
                     let resetsItem = NSMenuItem()
                     resetsItem.isEnabled = true
                     

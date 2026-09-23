@@ -299,13 +299,13 @@
 "notification.reminder_coverage.enable" = "Turn on";
 "notification.credit_expiry.title" = "Credit Expiring";
 "preferences.credit_grant.title" = "Notify on credit grant";
-"preferences.credit_grant.desc" = "Codex hands out reset credits irregularly — ping the moment new ones land, via your Reset Notification channels above. Codex only.";
+"preferences.credit_grant.desc" = "Codex and Claude hand out reset credits irregularly — ping the moment new ones land, via your Reset Notification channels above. Supported for Codex and Claude.";
 "preferences.credit_expiry.title" = "Alert before a credit expires";
-"preferences.credit_expiry.desc" = "Remind me when a held credit is ≤24h from lapsing unused. Codex only.";
+"preferences.credit_expiry.desc" = "Remind me when a held reset credit is ≤24h from lapsing unused. Supported for Codex and Claude.";
 "preferences.section.quota_monitor" = "Quota Monitor";
 "preferences.section.auto_ping" = "Auto Ping";
 "preferences.section.reset_notifications" = "Reset Notifications";
-"preferences.section.credit_grants" = "Credit Grants (Codex)";
+"preferences.section.credit_grants" = "Reset Credits (Codex · Claude)";
 
 "preferences.launch_login.title" = "Launch at Login";
 "preferences.launch_login.desc" = "Automatically open Fluxion Menu when you log in to your Mac.";
