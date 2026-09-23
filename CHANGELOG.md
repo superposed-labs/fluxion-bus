@@ -9,6 +9,27 @@ milestones.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-23
+
+### Added
+
+- **Claude rate-limit reset support** — Fluxion now probes cedar_ember
+  grants via the Claude CLI's OAuth usage endpoint, monitors reset and
+  expiry across all notification channels, and surfaces Claude resets in
+  the web console, Notch island, and menu bar alongside existing Codex
+  quota views.
+
+### Fixed
+
+- **Repeated model check alerts suppressed** — the provider gateway no
+  longer fires duplicate macOS notifications for the same model-check
+  result on consecutive runs.
+
+### Changed
+
+- **Model prices** — refreshed the bundled price snapshot with Opus 5.5,
+  GPT-6 Sol, GPT-6 Luna, and fast.opus-5-5.
+
 ## [1.6.2] - 2026-09-07
 
 ### Fixed
@@ -495,7 +516,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.5.0...v1.6.0
