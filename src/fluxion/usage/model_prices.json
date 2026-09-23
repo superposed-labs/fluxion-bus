@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-06",
+  "updated_at": "2026-09-23",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
     "claude-fable-5-1": {
@@ -25,6 +25,12 @@
       "provider": "claude",
       "rates": [
         { "effective_date": "2026-06-13", "observed": "2026-06-13", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Mythos 5, limited availability) — same rate card as Fable 5" }
+      ]
+    },
+    "claude-opus-5-5": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-09-22", "observed": "2026-09-23", "in": 4.0, "out": 20.0, "cw": 5.0, "cw1h": 8.0, "cr": 0.2, "source": "Anthropic docs (Opus 5.5, launched 2026-09-22): $4/$20, cache reads are 0.05x input ($0.20/MTok) instead of 0.1x; 5m cache writes 1.25x ($5.0), 1h cache writes 2x ($8.0)" }
       ]
     },
     "claude-opus-5": {
@@ -61,6 +67,46 @@
             "short_max": 272000,
             "short": { "in": 10.0, "out": 50.0, "cw": 12.5, "cr": 1.0 },
             "long": { "in": 20.0, "out": 75.0, "cw": 25.0, "cr": 2.0 }
+          }
+        }
+      ]
+    },
+    "gpt-6-sol": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-09-22",
+          "observed": "2026-09-23",
+          "in": 2.0,
+          "out": 10.0,
+          "cw": 2.5,
+          "cr": 0.2,
+          "source": "OpenAI docs + changelog (GPT-6 Sol released 2026-09-22): $2.0/$10.0, cache write is 1.25x input ($2.50), cache read is 0.1x ($0.20); context tier from billed input: <=272k short, >272k long",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 2.0, "out": 10.0, "cw": 2.5, "cr": 0.2 },
+            "long": { "in": 4.0, "out": 15.0, "cw": 5.0, "cr": 0.4 }
+          }
+        }
+      ]
+    },
+    "gpt-6-luna": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-09-22",
+          "observed": "2026-09-23",
+          "in": 0.1,
+          "out": 0.5,
+          "cw": 0.125,
+          "cr": 0.01,
+          "source": "OpenAI docs + changelog (GPT-6 Luna released 2026-09-22): $0.10/$0.50, cache write is 1.25x input ($0.125), cache read is 0.1x ($0.01); context tier from billed input: <=272k short, >272k long",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 0.1, "out": 0.5, "cw": 0.125, "cr": 0.01 },
+            "long": { "in": 0.2, "out": 0.75, "cw": 0.25, "cr": 0.02 }
           }
         }
       ]
@@ -356,6 +402,9 @@
     }
   },
   "fast": {
+    "opus-5-5": [
+      { "effective_date": "2026-09-22", "observed": "2026-09-23", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.4, "source": "Anthropic docs Fast mode (Opus 5.5 $8/$40), available from the 2026-09-22 launch; caching multipliers apply on top of fast input (5m cw 1.25x $10, 1h cw 2x $16, cr 0.05x $0.40)" }
+    ],
     "opus-5": [
       { "effective_date": "2026-07-24", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs Fast mode (Opus 5 $10/$50), available from the 2026-07-24 launch, the same day Fast mode was removed from Opus 4.7; caching multipliers apply on top of fast input" }
     ],
@@ -378,6 +427,9 @@
     ],
     "mythos": [
       { "effective_date": "2026-06-13", "observed": "2026-07-15", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Mythos 5, limited availability) — same rate card as Fable 5; short-alias 'mythos' resolves here" }
+    ],
+    "opus-5-5": [
+      { "effective_date": "2026-09-22", "observed": "2026-09-23", "in": 4.0, "out": 20.0, "cw": 5.0, "cw1h": 8.0, "cr": 0.2, "source": "Anthropic docs (Opus 5.5, launched 2026-09-22); cache read 0.05x input ($0.20/MTok). Checked before generic 'opus' so dated build ids or short aliases do not inherit Opus 5's $5/$25 rate." }
     ],
     "opus": [
       { "effective_date": "2026-06-10", "observed": "2026-07-25", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.6-4.8 and Opus 5, all flat $5/$25); deprecated Opus 4/4.1 ($15/$75) pinned in models" }
@@ -444,6 +496,21 @@
           "short": { "in": 4.0, "out": 20.0, "cw": 5.0, "cr": 0.4 },
           "long": { "in": 8.0, "out": 30.0, "cw": 10.0, "cr": 0.8 }
         }
+      },
+      {
+        "effective_date": "2026-09-22",
+        "observed": "2026-09-23",
+        "in": 2.0,
+        "out": 10.0,
+        "cw": 2.5,
+        "cr": 0.2,
+        "source": "OpenAI docs + changelog (2026-09-22: GPT-6 Sol released at $2.0/$10.0, ~50% cheaper than GPT-5.6 Sol).",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 2.0, "out": 10.0, "cw": 2.5, "cr": 0.2 },
+          "long": { "in": 4.0, "out": 15.0, "cw": 5.0, "cr": 0.4 }
+        }
       }
     ],
     "terra": [
@@ -507,6 +574,21 @@
           "short_max": 272000,
           "short": { "in": 0.2, "out": 1.2, "cw": 0.25, "cr": 0.02 },
           "long": { "in": 0.4, "out": 1.8, "cw": 0.5, "cr": 0.04 }
+        }
+      },
+      {
+        "effective_date": "2026-09-22",
+        "observed": "2026-09-23",
+        "in": 0.1,
+        "out": 0.5,
+        "cw": 0.125,
+        "cr": 0.01,
+        "source": "OpenAI docs + changelog (2026-09-22: GPT-6 Luna released at $0.10/$0.50, ~50% cheaper than GPT-5.6 Luna).",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 0.1, "out": 0.5, "cw": 0.125, "cr": 0.01 },
+          "long": { "in": 0.2, "out": 0.75, "cw": 0.25, "cr": 0.02 }
         }
       }
     ],
