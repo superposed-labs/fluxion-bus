@@ -219,6 +219,104 @@ extension AppDelegate {
         isServiceDaemonRunning("fluxion-gateway")
     }
 
+    /// Whether startServicesIfNeeded() starts the venv service `name`. Shared
+    /// with restartStaleSessionServices() so a stale service is only stopped
+    /// when something will bring it back.
+    func isAutostartEnabled(_ name: String) -> Bool {
+        func flag(_ key: String, _ fallback: String) -> Bool {
+            (envVals[key] ?? fallback).lowercased() == "true"
+        }
+        switch name {
+        case "fluxion-web":
+            return flag("FLUXION_MENU_AUTOSTART_WEB", "true")
+        case "fluxion-scheduler":
+            return flag("FLUXION_SCHEDULER_ENABLED", "true")
+                && flag("FLUXION_MENU_AUTOSTART_SCHEDULER", "true")
+        case "fluxion-gateway":
+            // Gates the whole messaging gateway (all channels), not just Slack.
+            return flag("FLUXION_MENU_AUTOSTART_GATEWAY", "false")
+        case "fluxion-provider":
+            // Off unless asked for, like the messaging gateway and for a sharper
+            // reason: this one runs a local agent CLI for whatever request
+            // arrives, so an unattended start spends subscription quota.
+            // Enabling it is the user saying they have pointed Codex at it.
+            return flag("FLUXION_PROVIDER_ENABLED", "false")
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Stale Login Session
+
+    /// Wall-clock start time of `pid`, from the kernel's process table.
+    func processStartTime(pid: Int32) -> Date? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+        let tv = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(tv.tv_sec) + TimeInterval(tv.tv_usec) / 1_000_000)
+    }
+
+    /// When the current GUI login began: the start time of this user's
+    /// loginwindow, which is replaced on every logout/login.
+    func currentLoginSessionStart() -> Date? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_UID, Int32(bitPattern: getuid())]
+        var size = 0
+        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        // The table can grow between the size query and the read.
+        size += 16 * MemoryLayout<kinfo_proc>.stride
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+        guard sysctl(&mib, u_int(mib.count), &procs, &size, nil, 0) == 0 else { return nil }
+        let count = size / MemoryLayout<kinfo_proc>.stride
+
+        var newest: Date?
+        for var proc in procs.prefix(count) {
+            let name = withUnsafeBytes(of: &proc.kp_proc.p_comm) { raw in
+                String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+            guard name == "loginwindow" else { continue }
+            let tv = proc.kp_proc.p_un.__p_starttime
+            let start = Date(timeIntervalSince1970: TimeInterval(tv.tv_sec) + TimeInterval(tv.tv_usec) / 1_000_000)
+            if newest == nil || start > newest! { newest = start }
+        }
+        return newest
+    }
+
+    /// Stop this checkout's services that predate the current login so
+    /// startServicesIfNeeded() relaunches them here. A service that survives a
+    /// logout/login stays bound to the dead session: every `security` call it
+    /// spawns fails at XPC bootstrap, so Keychain-backed usage probes (Claude,
+    /// Antigravity) quietly report "no token" whenever that service is the one
+    /// probing — e.g. while the screen is off and this app polls slowly. The
+    /// app's own pgrep check would otherwise see it as running and keep it.
+    /// Only services with autostart on are touched, so nothing is stopped
+    /// without being restarted. Spawns ps, so call it off the main thread.
+    func restartStaleSessionServices() {
+        guard let sessionStart = currentLoginSessionStart() else { return }
+        let running = runningServiceProcesses()
+        var stale: [String] = []
+        for name in ["fluxion-scheduler", "fluxion-web", "fluxion-gateway", "fluxion-provider"]
+        where isAutostartEnabled(name) {
+            let binary = servicePattern(name)
+            let procs = running.filter { proc in
+                proc.command.contains(binary)
+                    && !oneShotServiceFlags.contains(where: { proc.command.contains($0) })
+            }
+            for proc in procs {
+                guard let started = processStartTime(pid: proc.pid), started < sessionStart else { continue }
+                NSLog("FluxionMenu: %@ (pid %d) predates this login session; restarting it",
+                      name, proc.pid)
+                stale.append(binary)
+                break
+            }
+        }
+        guard !stale.isEmpty else { return }
+        stopServices(patterns: stale)
+    }
+
     func startServicesIfNeeded() {
         let uiBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-web")
         let schedulerBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-scheduler")
@@ -226,17 +324,11 @@ extension AppDelegate {
         let providerBin = (repoPath as NSString).appendingPathComponent(".venv/bin/fluxion-provider")
         let uiPort = envVals["FLUXION_UI_PORT"] ?? "8765"
 
-        let autostartWeb = (envVals["FLUXION_MENU_AUTOSTART_WEB"] ?? "true").lowercased() == "true"
-        let schedulerEnabled = (envVals["FLUXION_SCHEDULER_ENABLED"] ?? "true").lowercased() == "true"
-        let autostartSched = schedulerEnabled && (envVals["FLUXION_MENU_AUTOSTART_SCHEDULER"] ?? "true").lowercased() == "true"
-        // Gates the whole messaging gateway (all channels), not just Slack.
-        let autostartGateway = (envVals["FLUXION_MENU_AUTOSTART_GATEWAY"] ?? "false").lowercased() == "true"
+        let autostartWeb = isAutostartEnabled("fluxion-web")
+        let autostartSched = isAutostartEnabled("fluxion-scheduler")
+        let autostartGateway = isAutostartEnabled("fluxion-gateway")
         let autostartLineTunnel = (envVals["FLUXION_LINE_ENABLED"] ?? "false").lowercased() == "true"
-        // Off unless asked for, like the messaging gateway and for a sharper
-        // reason: this one runs a local agent CLI for whatever request arrives,
-        // so an unattended start spends subscription quota. Enabling it is the
-        // user saying they have pointed Codex at it.
-        let autostartProvider = (envVals["FLUXION_PROVIDER_ENABLED"] ?? "false").lowercased() == "true"
+        let autostartProvider = isAutostartEnabled("fluxion-provider")
 
         if autostartWeb && FileManager.default.fileExists(atPath: uiBin) {
             // A terminating Uvicorn process can remain alive while waiting for
