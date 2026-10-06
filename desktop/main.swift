@@ -460,6 +460,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
                 // so a stale gateway/web (e.g. after switching repositories)
                 // can't keep stealing bot messages or holding the UI port.
                 self.terminateForeignServices()
+                // Services that outlived a logout/login can't reach the
+                // Keychain; relaunch them in this session.
+                self.restartStaleSessionServices()
                 self.startServicesIfNeeded()
                 DispatchQueue.main.async {
                     self.refresh(force: false)
