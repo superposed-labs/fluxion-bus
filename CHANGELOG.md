@@ -9,6 +9,32 @@ milestones.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-09
+
+### Fixed
+
+- **Codex usage no longer double-counted after Codex rewrote old
+  rollouts** — Codex rewrote existing session logs in place to add a new
+  field. Fluxion read the grown file as new turns and gave the same turns
+  new dedup keys, so long-lived installs counted part of their Codex
+  history twice. Dedup keys are now stable across such format changes,
+  and a file is only resumed where it left off when its earlier bytes are
+  unchanged. The update reparses usage history once, so the all-time Codex
+  total can come down slightly.
+- **Claude long-context tier counts cache writes** — Claude Haiku 5.5 is
+  priced by total prompt length, cache writes included; Fluxion left them
+  out when choosing the tier.
+
+### Changed
+
+- **Codex cache writes** — the usage console now reads Codex's
+  `cache_write_input_tokens` and prices it as cache creation, and the
+  GPT-5.6 "lower bound" notices are gone. Sessions signed in with a
+  ChatGPT plan report 0 cache writes.
+- **Model prices** — synced the bundled price snapshot with Claude
+  Sonnet 5.5 (including its 2026-10-07 cache-read price cut) and Claude
+  Haiku 5.5.
+
 ## [1.7.1] - 2026-10-06
 
 ### Fixed
@@ -530,7 +556,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.1...v1.6.2
