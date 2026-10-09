@@ -1,92 +1,95 @@
 #!/usr/bin/env bash
-# export.sh — render hero-demo.html to shareable video/gif.
+# export.sh — render hero-demo.html to out/hero.mp4 (1920×1080, 60fps, motion blur).
 #
-#   Website hero : out/hero.mp4  +  out/hero.webm   (full variant, ~21s loop)
-#   README       : out/hero.gif                     (compact variant, ~11s loop)
+# hero-demo.html is a pure function of time (window.__render(t)), so this steps
+# headless Chromium through every frame and pipes screenshots into ffmpeg.
+# Nothing is recorded in real time, so there are no dropped frames and every
+# export is identical. Motion blur comes from rendering SUB sub-frames across
+# a 180° shutter (half a frame) and averaging them.
 #
-# Records the animation with headless Chromium (Playwright), then transcodes
-# with ffmpeg. Deterministic: each variant is restarted (R) and captured for
-# exactly one loop with the on-screen controls hidden.
-#
-# One-time setup:
-#   brew install ffmpeg node          # or your platform's equivalent
+# One-time setup (kept out of the root project; node_modules/ is gitignored):
+#   brew install ffmpeg node
 #   npm i -D playwright && npx playwright install chromium
 #
-# Usage:  ./export.sh        (run from anywhere; paths are resolved to this dir)
+# Usage:  ./export.sh [fps] [sub]  (defaults 60 and 3; sub=1 is a fast draft)
+#         JOBS=4 ./export.sh       (parallel workers; default = performance cores − 2)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SRC="file://$PWD/hero-demo.html"
+FPS="${1:-60}"
+SUB="${2:-3}"
+SRC="file://$PWD/hero-demo.html?export=1"
 OUT="$PWD/out"
 mkdir -p "$OUT"
 
-# ── dependency checks ────────────────────────────────────────────────
 command -v ffmpeg >/dev/null || { echo "✗ ffmpeg not found → brew install ffmpeg"; exit 1; }
 command -v node   >/dev/null || { echo "✗ node not found → install Node.js"; exit 1; }
 node -e "require('playwright')" 2>/dev/null || {
   echo "✗ playwright not found → npm i -D playwright && npx playwright install chromium"; exit 1; }
 
-# ── 1) record both variants to webm ──────────────────────────────────
-# Bump W/H (and the ffmpeg scale below) for a higher-res master.
-node - "$SRC" "$OUT" <<'JS'
+# Split the timeline into JOBS contiguous chunks and render them in parallel,
+# one headless Chromium + ffmpeg per chunk, then concatenate the encoded parts.
+# Each output frame depends only on its own sub-frames, so chunk seams are exact.
+JOBS="${JOBS:-$(( $(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4) - 2 ))}"
+(( JOBS < 1 )) && JOBS=1
+TMP="$OUT/.parts"
+rm -rf "$TMP"; mkdir -p "$TMP"
+trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$TMP"' EXIT
+
+# playback length (story time plus the reading holds), as the page reports it
+TOTAL="$(node - "$SRC" "$FPS" <<'JS'
 const { chromium } = require('playwright');
-const [src, out] = process.argv.slice(2);
-const jobs = [
-  { name: 'full',    url: src,                     w: 1200, h: 640, ms: 17500 },
-  { name: 'compact', url: src + '?variant=compact', w: 1200, h: 500, ms: 9000 },
-];
+const [src, fps] = process.argv.slice(2);
 (async () => {
   const browser = await chromium.launch();
-  for (const j of jobs) {
-    const ctx = await browser.newContext({
-      viewport: { width: j.w * 2, height: j.h * 2 },
-      deviceScaleFactor: 2,
-      recordVideo: { dir: out, size: { width: j.w * 2, height: j.h * 2 } },
-    });
-    const page = await ctx.newPage();
-    await page.goto(j.url, { waitUntil: 'load' });
-    await page.addStyleTag({ content: '.controls{display:none !important} .stage{transform: scale(2); transform-origin: center;}' });
-    await page.evaluate(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r' }));
-    });
-    const video = page.video();
-    await page.waitForTimeout(j.ms);
-    await ctx.close();                 // finalizes the .webm
-    require('fs').renameSync(await video.path(), `${out}/hero-${j.name}.webm`);
-    console.log('  recorded', j.name);
+  const page = await browser.newPage();
+  await page.goto(src, { waitUntil: 'load' });
+  await page.evaluate(() => window.__ready);
+  console.log(Math.round(await page.evaluate(() => window.__DUR) * fps));
+  await browser.close();
+})();
+JS
+)"
+echo "→ rendering ${TOTAL} frames at ${FPS}fps × ${SUB} sub-frames on ${JOBS} workers"
+
+render_chunk() {  # $1 = first frame, $2 = end frame (exclusive), $3 = output file
+  node - "$SRC" "$FPS" "$SUB" "$1" "$2" <<'JS' | ffmpeg -y -loglevel error -f image2pipe -framerate "$((FPS * SUB))" -c:v png -i - \
+    -vf "tmix=frames=${SUB},select='eq(mod(n\\,${SUB})\\,$((SUB - 1)))',setpts=N/(${FPS}*TB)" -r "$FPS" \
+    -an -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p -tune animation "$3"
+const { chromium } = require('playwright');
+const [src, fps, sub, a, b] = process.argv.slice(2).map((v, i) => i ? +v : v);
+(async () => {
+  const browser = await chromium.launch();
+  // 1280×720 stage at 1.5× device scale → 1920×1080 frames
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1.5 });
+  await page.goto(src, { waitUntil: 'load' });
+  await page.evaluate(() => window.__ready);
+  for (let i = a; i < b; i++) {
+    for (let j = 0; j < sub; j++) {       // sub-frames spread over half a frame
+      await page.evaluate(t => window.__render(t), (i + .5 * j / sub) / fps);
+      process.stdout.write(await page.screenshot({ type: 'png' }));
+    }
   }
   await browser.close();
 })();
 JS
-
-# ── 2) transcode ─────────────────────────────────────────────────────
-echo "→ mp4 (website hero)"
-ffmpeg -y -loglevel error -i "$OUT/hero-full.webm" \
-  -an -c:v libx264 -pix_fmt yuv420p -crf 18 -movflags +faststart "$OUT/hero.mp4"
-
-echo "→ webm (smaller alt for the site)"
-ffmpeg -y -loglevel error -i "$OUT/hero-full.webm" \
-  -an -c:v libvpx-vp9 -b:v 0 -crf 30 "$OUT/hero.webm"
-
-# 2-pass palette gif (best size/quality for a mostly-dark UI)
-mkgif() { # <src.webm> <fps> <width> <out.gif>
-  ffmpeg -y -loglevel error -i "$1" \
-    -vf "fps=$2,scale=$3:-1:flags=lanczos,palettegen=stats_mode=diff" "$OUT/palette.png"
-  ffmpeg -y -loglevel error -i "$1" -i "$OUT/palette.png" \
-    -lavfi "fps=$2,scale=$3:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" "$4"
-  rm -f "$OUT/palette.png"
 }
-echo "→ gif (README, FULL story, 12fps @ 720w — size-capped)"
-mkgif "$OUT/hero-full.webm"    12 720 "$OUT/hero.gif"
-echo "→ gif (short alt, compact, 15fps @ 960w)"
-mkgif "$OUT/hero-compact.webm" 15 960 "$OUT/hero-compact.gif"
 
-echo
-echo "✓ done → $OUT"
-ls -lh "$OUT"/hero.mp4 "$OUT"/hero.webm "$OUT"/hero.gif "$OUT"/hero-compact.gif 2>/dev/null | awk '{print "  "$9"  "$5}'
-echo
-echo "Pick a README embed by the sizes above:"
-echo "  • video (recommended, tiny even for the full 21s — upload as a GitHub asset):"
-echo "        <video src=\"…/hero.mp4\" autoplay muted loop playsinline width=\"760\"></video>"
-echo "  • full gif (works via relative path everywhere): docs/hero/out/hero.gif"
-echo "  • if hero.gif is too big: use hero-compact.gif, or drop 12→10fps / 720→640w above."
+START=$SECONDS
+: > "$TMP/list.txt"
+for ((k = 0; k < JOBS; k++)); do
+  a=$(( TOTAL * k / JOBS )); b=$(( TOTAL * (k + 1) / JOBS ))
+  part="$TMP/part$k.mp4"
+  echo "file '$part'" >> "$TMP/list.txt"
+  render_chunk "$a" "$b" "$part" &
+done
+fail=0
+for pid in $(jobs -p); do wait "$pid" || fail=1; done
+(( fail )) && { echo "✗ a render worker failed"; exit 1; }
+
+ffmpeg -y -loglevel error -f concat -safe 0 -i "$TMP/list.txt" -c copy -movflags +faststart "$OUT/hero.mp4"
+echo "  rendered in $(( (SECONDS - START) / 60 ))m $(( (SECONDS - START) % 60 ))s"
+
+echo "✓ $(ls -lh "$OUT/hero.mp4" | awk '{print $5}')  →  $OUT/hero.mp4"
+echo "Publish it as a GitHub asset (drag-drop into a README edit on github.com)"
+echo "and paste the resulting user-attachments URL into README.md / README.*.md."

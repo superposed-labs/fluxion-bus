@@ -6,7 +6,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-https://github.com/user-attachments/assets/7ff8be14-f4e6-4bd9-9ceb-bbf425fafba3
+https://github.com/user-attachments/assets/10d83427-f363-4306-b1de-fa8ebef662ec
 
 _演示视频采用预置数据展示，仅用于功能说明，非实时录屏。_
 
