@@ -33,10 +33,6 @@ function fmtMoney(n: number): string {
   return "$" + n.toFixed(n >= 100 ? 0 : 2);
 }
 
-function fmtCost(n: number, lowerBound = false): string {
-  return `${lowerBound ? "≥ " : ""}${fmtMoney(n)}`;
-}
-
 // ── formatters ──────────────────────────────────────────────────────
 function fmtTok(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -75,10 +71,6 @@ function prettyModel(model: string | null): string {
     return tail ? `${base} ${tail}` : base;
   }
   return titleCase(model);
-}
-
-function hasUnreportedGpt56CacheWrites(model: UsageModelStat): boolean {
-  return model.provider === "codex" && /^gpt-5\.6(?:-|$)/i.test(model.model);
 }
 
 // ── component ───────────────────────────────────────────────────────
@@ -158,7 +150,6 @@ export function UsageStats({ billing, setTweak }: UsageStatsProps): JSX.Element 
   );
   const totals = data?.totals;
   const hasData = !!totals && totals.messages > 0;
-  const hasUnreportedCacheWrites = data?.by_model.some(hasUnreportedGpt56CacheWrites) ?? false;
 
   return (
     <div className="stats-main scroll" onMouseOver={showTip} onMouseOut={hideTip}>
@@ -201,21 +192,11 @@ export function UsageStats({ billing, setTweak }: UsageStatsProps): JSX.Element 
 
         {hasData && totals && view === "overview" && (
           <>
-            <Hero totals={totals} sub={sub} lowerBound={hasUnreportedCacheWrites} />
-            <StatStrip
-              data={data!}
-              sub={sub}
-              planMonthly={planMonthly}
-              lowerBound={hasUnreportedCacheWrites}
-            />
+            <Hero totals={totals} sub={sub} />
+            <StatStrip data={data!} sub={sub} planMonthly={planMonthly} />
             <ReconciliationStrip data={data!} />
             {sub && (
-              <PlansStrip
-                quota={quota}
-                planMonthly={planMonthly}
-                cost={totals.cost}
-                lowerBound={hasUnreportedCacheWrites}
-              />
+              <PlansStrip quota={quota} planMonthly={planMonthly} cost={totals.cost} />
             )}
             <Heatmap data={data!} />
           </>
@@ -224,11 +205,7 @@ export function UsageStats({ billing, setTweak }: UsageStatsProps): JSX.Element 
           <ModelsView models={data!.by_model} sub={sub} />
         )}
         {hasData && (
-          <CostNote
-            data={data!}
-            sub={sub}
-            lowerBound={hasUnreportedCacheWrites}
-          />
+          <CostNote data={data!} sub={sub} />
         )}
       </div>
     </div>
@@ -236,15 +213,7 @@ export function UsageStats({ billing, setTweak }: UsageStatsProps): JSX.Element 
 }
 
 // ── cost disclaimer / provenance footnote ───────────────────────────
-function CostNote({
-  data,
-  sub,
-  lowerBound,
-}: {
-  data: UsageHistory;
-  sub: boolean;
-  lowerBound: boolean;
-}): JSX.Element {
+function CostNote({ data, sub }: { data: UsageHistory; sub: boolean }): JSX.Element {
   const { t } = useI18n();
   const updated = data.prices_updated_at;
   const uncosted = data.totals.uncosted_tokens ?? 0;
@@ -259,7 +228,6 @@ function CostNote({
           {fmtTok(uncosted)} {t("usage.uncostedNote")}
         </span>
       )}
-      {lowerBound && <span className="warn">{t("usage.cacheWriteUnreported")}</span>}
     </div>
   );
 }
@@ -300,15 +268,7 @@ function ReconciliationStrip({
 }
 
 // ── hero ────────────────────────────────────────────────────────────
-function Hero({
-  totals,
-  sub,
-  lowerBound,
-}: {
-  totals: UsageHistoryTotals;
-  sub: boolean;
-  lowerBound: boolean;
-}): JSX.Element {
+function Hero({ totals, sub }: { totals: UsageHistoryTotals; sub: boolean }): JSX.Element {
   const { t } = useI18n();
   // The bar decomposes the headline number, so it carries all four components
   // — cache reads included. At a healthy hit rate they dominate it; that is the
@@ -330,8 +290,7 @@ function Hero({
           <span className="u">{t("usage.tokens")}</span>
         </div>
         <div className="hero-sub">
-          {lowerBound ? "≥ " : "≈ "}<b>{fmtMoney(totals.cost)}</b>{" "}
-          {lowerBound ? t("usage.lowerBound") : (sub ? t("usage.apiValueNote") : t("usage.spendNote"))}
+          ≈ <b>{fmtMoney(totals.cost)}</b> {sub ? t("usage.apiValueNote") : t("usage.spendNote")}
         </div>
         <div className="hero-fresh">
           <b>{fmtTok(totals.generated_tokens)}</b> {t("usage.freshLabel")}
@@ -342,7 +301,7 @@ function Hero({
               key={p.k}
               className={p.cls}
               style={{ flex: p.v }}
-              data-tip={`${p.k}: ${p.cls === "seg-cw" && lowerBound ? t("usage.notReported") : fmtTok(p.v)}`}
+              data-tip={`${p.k}: ${fmtTok(p.v)}`}
             />
           ))}
         </div>
@@ -351,11 +310,7 @@ function Hero({
             <span className="lg" key={p.k}>
               <span className="sw" style={{ background: p.sw }} />
               {p.k}
-              <span className="v">
-                {p.cls === "seg-cw" && lowerBound
-                  ? (p.v > 0 ? `≥ ${fmtTok(p.v)}` : t("usage.notReported"))
-                  : fmtTok(p.v)}
-              </span>
+              <span className="v">{fmtTok(p.v)}</span>
             </span>
           ))}
         </div>
@@ -390,12 +345,10 @@ function StatStrip({
   data,
   sub,
   planMonthly,
-  lowerBound,
 }: {
   data: UsageHistory;
   sub: boolean;
   planMonthly: number;
-  lowerBound: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const totals = data.totals;
@@ -407,15 +360,15 @@ function StatStrip({
   const costTile = sub
     ? {
         k: t("usage.apiValue"),
-        val: fmtCost(totals.cost, lowerBound),
-        ctx: <span>{lowerBound ? t("usage.lowerBound") : roi >= 1 ? `≈ ${roi.toFixed(roi >= 10 ? 0 : 1)}× ${t("usage.planPrice")}` : t("usage.inPlan")}</span>,
+        val: fmtMoney(totals.cost),
+        ctx: <span>{roi >= 1 ? `≈ ${roi.toFixed(roi >= 10 ? 0 : 1)}× ${t("usage.planPrice")}` : t("usage.inPlan")}</span>,
       }
     : {
         k: t("usage.estSpend"),
-        val: fmtCost(totals.cost, lowerBound),
+        val: fmtMoney(totals.cost),
         ctx: (
           <span>
-            {fmtCost(costPer1M, lowerBound)} {t("usage.per1MGen")}
+            {fmtMoney(costPer1M)} {t("usage.per1MGen")}
           </span>
         ),
       };
@@ -481,12 +434,10 @@ function PlansStrip({
   quota,
   planMonthly,
   cost,
-  lowerBound,
 }: {
   quota: ProviderUsage[];
   planMonthly: number;
   cost: number;
-  lowerBound: boolean;
 }): JSX.Element | null {
   const { t } = useI18n();
   const rows = quota.flatMap((p) => {
@@ -523,7 +474,7 @@ function PlansStrip({
       <span className="spacer" />
       {mult && (
         <span className="note">
-          {fmtCost(cost, lowerBound)} {t("usage.apiEquiv")} {lowerBound ? "≥" : "≈"} {mult}× {t("usage.planPrice")}
+          {fmtMoney(cost)} {t("usage.apiEquiv")} ≈ {mult}× {t("usage.planPrice")}
         </span>
       )}
     </div>
@@ -713,16 +664,11 @@ function ModelsView({
       </div>
       <div className="mrows">
         {sorted.map((m) => {
-          const cacheWriteUnreported = hasUnreportedGpt56CacheWrites(m);
           const segs = [
             {
               v: m.input_tokens,
               c: "var(--tk-input)",
-              k: cacheWriteUnreported
-                ? t("usage.inputMayIncludeWrites")
-                : m.provider === "codex"
-                  ? t("usage.uncachedInput")
-                  : t("usage.inputShort"),
+              k: m.provider === "codex" ? t("usage.uncachedInput") : t("usage.inputShort"),
             },
             { v: m.output_tokens, c: "var(--tk-output)", k: t("usage.outputShort") },
             ...(m.cache_creation_tokens > 0
@@ -787,8 +733,7 @@ function ModelsView({
                   <span><b>{m.sessions}</b> {t("usage.sess")}</span>
                   <span className="sep">·</span>
                   <span>
-                    <b>{fmtTok(m.input_tokens)}</b>{" "}
-                    {cacheWriteUnreported ? t("usage.inputMayIncludeWrites") : t("usage.inputShort")}
+                    <b>{fmtTok(m.input_tokens)}</b> {t("usage.inputShort")}
                   </span>
                   <span className="sep">·</span>
                   <span><b>{fmtTok(m.output_tokens)}</b> {t("usage.outputShort")}</span>
@@ -796,12 +741,6 @@ function ModelsView({
                     <>
                       <span className="sep">·</span>
                       <span><b>{fmtTok(cw)}</b> {t("usage.cacheWriteShort")}</span>
-                    </>
-                  )}
-                  {cacheWriteUnreported && (
-                    <>
-                      <span className="sep">·</span>
-                      <span className="warn">{t("usage.cacheWriteShort")} {t("usage.notReported")}</span>
                     </>
                   )}
                   <span className="sep">·</span>
@@ -828,7 +767,7 @@ function ModelsView({
                   <div className="lbl">{t("usage.totalShort")}</div>
                 </div>
                 <div className="m-num m-cost">
-                  <div className="big">{fmtCost(m.cost, cacheWriteUnreported)}</div>
+                  <div className="big">{fmtMoney(m.cost)}</div>
                   <div className="lbl">{t(sub ? "usage.apiValue" : "usage.estSpend")}</div>
                 </div>
               </div>

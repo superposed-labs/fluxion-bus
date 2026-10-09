@@ -190,7 +190,9 @@ def _rate_for_entry(e: UsageEntry, rate: dict[str, float] | None) -> dict[str, f
     long = context.get("long")
     if not isinstance(short, dict) or not isinstance(long, dict) or short_max <= 0:
         return rate
-    billed_input = e.billed_input_tokens_total or (e.input_tokens + e.cache_read_tokens)
+    billed_input = e.billed_input_tokens_total or (
+        e.input_tokens + e.cache_creation_tokens + e.cache_read_tokens
+    )
     return short if billed_input <= short_max else long
 
 
@@ -205,7 +207,9 @@ def _context_tier_for_entry(e: UsageEntry, rate: dict[str, float] | None) -> str
     short_max = int(context.get("short_max") or 0)
     if metric != "input_tokens_total" or short_max <= 0:
         return None
-    billed_input = e.billed_input_tokens_total or (e.input_tokens + e.cache_read_tokens)
+    billed_input = e.billed_input_tokens_total or (
+        e.input_tokens + e.cache_creation_tokens + e.cache_read_tokens
+    )
     return "short" if billed_input <= short_max else "long"
 
 

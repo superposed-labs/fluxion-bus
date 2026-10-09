@@ -143,7 +143,11 @@ def _claude_entry_from_line(line: str) -> UsageEntry | None:
         cache_creation_tokens=_int(usage.get("cache_creation_input_tokens")),
         cache_read_tokens=_int(usage.get("cache_read_input_tokens")),
         dedup_key=str(dedup_key),
+        # Anthropic splits the prompt into three disjoint counts, and its
+        # length-tiered pricing (Haiku 5.5's 100k threshold) counts all of
+        # them, cache writes included.
         billed_input_tokens_total=_int(usage.get("input_tokens"))
+        + _int(usage.get("cache_creation_input_tokens"))
         + _int(usage.get("cache_read_input_tokens")),
         cache_creation_1h_tokens=cache_1h,
         is_fast=is_fast,
@@ -202,6 +206,31 @@ def _parse_incremental(
         # committed state stays clean for when the line is later terminated.
         tail = parser(path, iter([tail_bytes.decode("utf-8", errors="replace")]), dict(state))
     return committed, tail, offset_holder[0]
+
+
+_ANCHOR_BYTES = 4096
+
+
+def _offset_anchor(path: Path, offset: int) -> str | None:
+    """Digest of the bytes just before `offset`, to check that a grown file was
+    really appended to before resuming a parse there.
+
+    A larger size alone is not proof: Codex has rewritten old rollouts in place
+    to add fields, which grows them too. Resuming at the old offset then kept
+    the turns parsed from the old bytes and read the shifted rewrite as new
+    turns. Any insertion before `offset` shifts the bytes in this window."""
+    if offset <= 0:
+        return ""
+    try:
+        with path.open("rb") as handle:
+            start = max(0, offset - _ANCHOR_BYTES)
+            handle.seek(start)
+            chunk = handle.read(offset - start)
+    except OSError:
+        return None
+    if len(chunk) != offset - start:
+        return None
+    return hashlib.sha1(chunk).hexdigest()
 
 
 def _collect_files(
@@ -285,8 +314,9 @@ def _collect_files(
                     entries.append(e)
             continue
 
-        # Append-only fast path: the file only grew, so resume from the cached
-        # offset/state and parse only the appended bytes.
+        # Append-only fast path: the file only grew and the bytes before the
+        # cached offset are unchanged, so resume from the cached offset/state
+        # and parse only the appended bytes.
         prev_cached_entries: list[dict[str, Any]] = []
         state: dict[str, Any] = {}
         start_offset = 0
@@ -294,6 +324,8 @@ def _collect_files(
             isinstance(cached, dict)
             and "offset" in cached
             and stat.st_size > cached.get("size", -1)
+            and cached.get("anchor") is not None
+            and cached.get("anchor") == _offset_anchor(path, int(cached["offset"]))
         ):
             start_offset = int(cached["offset"])
             prev_cached_entries = cached.get("entries", []) or []
@@ -314,6 +346,7 @@ def _collect_files(
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "offset": end_offset,
+                "anchor": _offset_anchor(path, end_offset),
                 "state": state,
                 "entries": prev_cached_entries + [_entry_to_cache(e) for e in committed],
                 "tail": [_entry_to_cache(e) for e in tail],
@@ -429,6 +462,26 @@ def _normalize_codex_model(raw: str) -> str:
     return billing_model_id("codex", raw)
 
 
+_CODEX_USAGE_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+def _codex_usage_signature(usage: dict[str, Any]) -> str:
+    """Stable identity for a Codex token-usage object, for dedup keys.
+
+    Built from a fixed field list with absent fields read as 0, not from the raw
+    JSON. Codex has rewritten old rollouts in place to add new zero-valued
+    fields (`cache_write_input_tokens`), and a raw-JSON digest gave the same turn
+    a new key, so the rewritten copy counted alongside the original."""
+    return ",".join(str(_int(usage.get(k))) for k in _CODEX_USAGE_FIELDS)
+
+
 def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) -> list[UsageEntry]:
     """Parse a Codex rollout log. Each `token_count` event carries that turn's
     `last_token_usage` (summing unique cumulative states reproduces the
@@ -542,11 +595,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             if not isinstance(last, dict):
                 continue
             total = info.get("total_token_usage")
-            total_signature = (
-                json.dumps(total, sort_keys=True, separators=(",", ":"))
-                if isinstance(total, dict)
-                else None
-            )
+            total_signature = _codex_usage_signature(total) if isinstance(total, dict) else None
             if total_signature is not None and total_signature == previous_total_signature:
                 continue
             ts = _parse_ts(event.get("timestamp"))
@@ -555,6 +604,13 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             previous_total_signature = total_signature
             input_total = _int(last.get("input_tokens"))
             cached = _int(last.get("cached_input_tokens"))
+            # A subset of `input_tokens`, like the cached part (Codex maps it
+            # from the API's `input_tokens_details.cache_write_tokens`, see
+            # openai/codex#33454). Sessions signed in with a ChatGPT plan have
+            # only ever been seen to report 0; API-key sessions report it.
+            cache_write = min(
+                _int(last.get("cache_write_input_tokens")), max(0, input_total - cached)
+            )
             output = _int(last.get("output_tokens"))
             total_tokens = _int(last.get("total_tokens"))
             # Compaction spends tokens but some rollouts expose only the total,
@@ -564,7 +620,7 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
             if pending_compaction and not (input_total or cached or output) and total_tokens > 0:
                 input_total = total_tokens
             if total_signature is not None and lineage:
-                turn_signature = json.dumps(last, sort_keys=True, separators=(",", ":"))
+                turn_signature = _codex_usage_signature(last)
                 digest = hashlib.sha1(f"{total_signature}|{turn_signature}".encode()).hexdigest()[
                     :20
                 ]
@@ -585,13 +641,9 @@ def _codex_line_parser(path: Path, lines: Iterable[str], state: dict[str, Any]) 
                     ts=ts,
                     model=model,
                     session_id=session_id or path.stem,
-                    input_tokens=max(0, input_total - cached),
+                    input_tokens=max(0, input_total - cached - cache_write),
                     output_tokens=output,
-                    # Codex 0.142.3 rollout TokenUsage omits GPT-5.6's API-level
-                    # cache_write_tokens field. Keep the existing numeric shape
-                    # for aggregation, but the Web UI treats GPT-5.6 cost as a
-                    # lower bound instead of interpreting this as an observed 0.
-                    cache_creation_tokens=0,
+                    cache_creation_tokens=cache_write,
                     cache_read_tokens=cached,
                     dedup_key=dedup_key,
                     billed_input_tokens_total=input_total,

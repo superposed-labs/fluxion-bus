@@ -571,6 +571,56 @@ def test_long_context_prices_from_billed_input_total(fixed_prices):
     assert out["by_model"][0]["cost"] == 0.88
 
 
+def test_claude_long_context_tier_counts_cache_writes(monkeypatch):
+    # Anthropic sizes a request by all of its input, cache writes included, so
+    # a prompt that crosses the threshold only through cache writes is long.
+    table = {
+        "models": {
+            "claude-haiku-5-5": {
+                "rates": [
+                    {
+                        "effective_date": "2025-01-01",
+                        "in": 0.1,
+                        "out": 0.5,
+                        "cw": 0.125,
+                        "cr": 0.01,
+                        "context_pricing": {
+                            "metric": "input_tokens_total",
+                            "short_max": 100_000,
+                            "short": {"in": 0.1, "out": 0.5, "cw": 0.125, "cr": 0.01},
+                            "long": {"in": 0.5, "out": 2.5, "cw": 0.625, "cr": 0.05},
+                        },
+                    }
+                ]
+            }
+        },
+        "families": {},
+        "providers": {},
+    }
+    monkeypatch.setattr(history.pricing, "_load_prices", lambda: table)
+    history._rates_for.cache_clear()
+    e = _claude_entry_from_line(
+        _assistant_line(
+            ts="2026-06-10T10:00:00Z",
+            model="claude-haiku-5-5",
+            input_tokens=10_000,
+            output_tokens=100_000,
+            cache_creation=20_000,
+            cache_read=80_000,
+        )
+    )
+    assert e is not None
+    assert e.billed_input_tokens_total == 110_000
+
+    out = aggregate([e], window="all", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+
+    # long:  10k × $0.5 + 100k out × $2.5 + 20k × $0.625 + 80k × $0.05 = $0.27
+    # (the short tier would be $0.05)
+    assert out["totals"]["cost"] == 0.27
+    assert out["totals"]["context_tier_breakdown"] == {"short": 0, "long": 1}
+    history._rates_for.cache_clear()
+
+
 def test_fast_flag_parsed_from_speed():
     line = json.dumps(
         {
@@ -1576,6 +1626,98 @@ def test_codex_fork_replay_dedups_against_parent(tmp_path: Path):
     got = store.aggregate("all", tz=UTC, now=now)
     reference = dict(payload)
     assert got == reference
+
+
+def _with_zero_cache_write_field(text: str) -> str:
+    """What Codex did to old rollouts: rewrite them in place, adding a zero
+    `cache_write_input_tokens` to every usage object. The file only grows."""
+    out = []
+    for raw in text.strip().split("\n"):
+        event = json.loads(raw)
+        info = (event.get("payload") or {}).get("info")
+        if isinstance(info, dict):
+            for key in ("last_token_usage", "total_token_usage"):
+                if isinstance(info.get(key), dict):
+                    info[key]["cache_write_input_tokens"] = 0
+        out.append(json.dumps(event))
+    return "\n".join(out) + "\n"
+
+
+def test_codex_rollout_rewritten_in_place_is_not_double_counted(tmp_path: Path):
+    from fluxion.usage.history.store import UsageStore
+
+    day = _codex_day(tmp_path)
+    sessions = tmp_path / "sessions"
+    f = day / "rollout-2026-07-20T10-00-00-s1.jsonl"
+    # Enough turns that the rewrite grows the file by several whole lines, so
+    # a resume at the old offset would re-read complete turns.
+    turns = [
+        {"ts": f"2026-07-20T10:{i:02d}:00.000Z", "input": 1000 + i, "cached": 400, "output": 50}
+        for i in range(40)
+    ]
+    original = _codex_rollout("sess-1", turns)
+    f.write_text(original, encoding="utf-8")
+    keys_before = {e.dedup_key for e in _parse_codex_file(f)}
+
+    cache: dict = {"version": 4, "files": {}}
+    collect_codex_entries(sessions, cache=cache)
+    store = UsageStore(tmp_path / "usage.db")
+    store.sync(projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC)
+
+    rewritten = _with_zero_cache_write_field(original)
+    assert len(rewritten) > len(original)
+    f.write_text(rewritten, encoding="utf-8")
+
+    # The added zero field does not change a turn's identity.
+    assert {e.dedup_key for e in _parse_codex_file(f)} == keys_before
+    # Neither scan path resumes at the stale offset of the rewritten file.
+    entries = collect_codex_entries(sessions, cache=cache)
+    assert sorted(e.dedup_key for e in entries) == sorted(keys_before)
+    store.sync(projects_dir=tmp_path / "none", sessions_dir=sessions, antigravity_dirs=(), tz=UTC)
+    now = datetime(2026, 7, 20, 23, tzinfo=UTC)
+    got = store.aggregate("all", tz=UTC, now=now)
+    assert got["totals"]["messages"] == len(turns)
+    assert got["totals"]["total_tokens"] == sum(t["input"] + t["output"] for t in turns)
+
+
+def test_codex_cache_writes_are_read_as_a_subset_of_input(tmp_path: Path):
+    f = _codex_day(tmp_path) / "rollout-2026-07-20T10-00-00-s1.jsonl"
+    usage = {
+        "input_tokens": 1000,
+        "cached_input_tokens": 600,
+        "cache_write_input_tokens": 300,
+        "output_tokens": 50,
+        "total_tokens": 1050,
+    }
+    f.write_text(
+        "\n".join(
+            [
+                _codex_meta_line("sess-1"),
+                json.dumps(
+                    {
+                        "type": "turn_context",
+                        "payload": {"type": "turn_context", "model": "gpt-6-sol"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-07-20T10:00:00.000Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {"last_token_usage": usage, "total_token_usage": usage},
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (e,) = _parse_codex_file(f)
+    assert (e.input_tokens, e.cache_creation_tokens, e.cache_read_tokens) == (100, 300, 600)
+    assert e.billed_input_tokens_total == 1000
+    assert e.total_tokens == 1050
 
 
 def test_compute_stats_merges_claude_codex_and_antigravity(tmp_path: Path):
