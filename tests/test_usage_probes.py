@@ -289,6 +289,21 @@ def test_codex_live_maps_credits(monkeypatch):
     assert by_key["ai_credits"].remaining == 50.0
 
 
+@pytest.mark.parametrize("balance", ["0", "0.00", "0E-10", ""])
+def test_codex_live_hides_empty_credit_balance(monkeypatch, balance):
+    # The live API has sent an empty balance as Decimal-style "0E-10", which a
+    # string comparison against "0" took for a real balance.
+    payload = dict(_LIVE_PAYLOAD)
+    payload["credits"] = {"has_credits": False, "balance": balance, "unlimited": False}
+
+    monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", None))
+    monkeypatch.setattr(CodexUsageProbe, "_http_get_json", lambda self, url, headers: payload)
+
+    usage = CodexUsageProbe(ProbeConfig(codex_usage_mode="live")).probe()
+    assert usage.status == STATUS_OK
+    assert "ai_credits" not in {w.key for w in usage.windows}
+
+
 def test_codex_live_uses_custom_base_url(monkeypatch):
     captured_urls = []
     monkeypatch.setattr(CodexUsageProbe, "_read_auth", lambda self: ("tok", None))

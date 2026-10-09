@@ -53,8 +53,6 @@
 "notch.now" = "now";
 "notch.error.upper" = "ERROR";
 "notch.on_credits" = "On credits";
-"notch.credits_ready" = "Credits ready · %@";
-"notch.credits_balance" = "Usage credits · %@";
 "notch.credits_title" = "Usage Credits";
 "notch.tokens_today.upper" = "TOTAL TODAY";
 "notch.cache_hit" = "%d%% cache hit";

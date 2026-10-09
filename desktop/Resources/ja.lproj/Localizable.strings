@@ -53,8 +53,6 @@
 "notch.now" = "今";
 "notch.error.upper" = "エラー";
 "notch.on_credits" = "クレジット使用中";
-"notch.credits_ready" = "クレジット利用可 · %@";
-"notch.credits_balance" = "利用クレジット · %@";
 "notch.credits_title" = "利用クレジット";
 "notch.tokens_today.upper" = "今日の合計トークン";
 "notch.cache_hit" = "%d%% キャッシュヒット";

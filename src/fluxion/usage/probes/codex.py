@@ -244,20 +244,16 @@ class CodexUsageProbe:
                     window_minutes=window_minutes,
                 )
             )
-        # Map Codex credits if present
+        # Map Codex credits if present. Compare the balance as a number: an
+        # empty balance has been sent as "0" and as Decimal-style "0E-10".
         credits = data.get("credits")
-        if isinstance(credits, dict) and (
-            credits.get("has_credits") or credits.get("balance", "0") != "0"
-        ):
+        if isinstance(credits, dict):
             try:
-                bal_str = credits.get("balance")
-                if bal_str:
-                    bal_val = float(bal_str)
-                    windows.append(
-                        UsageWindow(key="ai_credits", label="AI Credits", remaining=bal_val)
-                    )
-            except Exception:
-                pass
+                balance = float(credits["balance"]) if credits.get("balance") else None
+            except (TypeError, ValueError):
+                balance = None
+            if balance is not None and (credits.get("has_credits") or balance > 0):
+                windows.append(UsageWindow(key="ai_credits", label="AI Credits", remaining=balance))
 
         return windows
 
