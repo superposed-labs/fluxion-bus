@@ -780,6 +780,7 @@ extension NotchIslandView {
                 }
                 if hasResets, let resets = provider.resets {
                     ResetChipView(resets: resets, brandColor: Color(visual.brandColor), justGranted: model.justGranted)
+                        .padding(.top, creditsWindow == nil ? 0 : 6)
                 }
             }
         }
@@ -1217,8 +1218,7 @@ extension NotchIslandView {
                creditsWindow.remaining != nil {
                 UsageCreditsView(
                     window: creditsWindow,
-                    enabled: quota.creditsEnabled(for: provider),
-                    ledgerStyle: true
+                    enabled: quota.creditsEnabled(for: provider)
                 )
                 .padding(.top, 3)
             }
@@ -1924,7 +1924,6 @@ extension View {
 struct UsageCreditsView: View {
     let window: QuotaWindow
     let enabled: Bool
-    var ledgerStyle = false
     @State private var isHovering = false
     @State private var hoverWorkItem: DispatchWorkItem? = nil
 
@@ -1942,33 +1941,28 @@ struct UsageCreditsView: View {
     }
 
     var body: some View {
-        Group {
-            if ledgerStyle {
-                HStack(spacing: 6) {
-                    Image(systemName: "creditcard.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(tint)
-                    Text(L10n.tr("notch.credits_title"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
-                    Spacer(minLength: 8)
-                    Text(amount)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.88))
-                }
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: "creditcard.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(L10n.tr(
-                        enabled ? "notch.credits_ready" : "notch.credits_balance",
-                        amount
-                    ))
-                }
-                .font(.system(size: 9.5, weight: .bold))
-                .foregroundColor(tint)
+        // A label-…-value ledger row with the same type and spacing as
+        // ResetChipView, so the two line up when a column shows both.
+        HStack(alignment: .lastTextBaseline, spacing: 0) {
+            HStack(alignment: .center, spacing: 5) {
+                Image(systemName: "creditcard.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(tint)
+                    .frame(width: 11)
+                    .offset(y: -0.5)
+                Text(L10n.tr("notch.credits_title"))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(0.5))
             }
+            Spacer(minLength: 8)
+            Text(amount)
+                .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                .tracking(0.2)
+                .foregroundColor(.white.opacity(enabled ? 0.88 : 0.55))
+                .lineLimit(1)
         }
+        .padding(.horizontal, 2)
         .contentShape(Rectangle())
         .onHover { hovering in
             guard expiry != nil else { return }
@@ -2028,6 +2022,7 @@ struct ResetChipView: View {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(soon ? Color(NSColor.systemOrange) : brandColor)
+                        .frame(width: 11) // Same slot as UsageCreditsView's icon, so the labels line up
                         .offset(y: -0.5) // Visually center the icon with the cap-height of the text
                         .shadow(color: justGranted > 0 ? brandColor : Color.clear, radius: justGranted > 0 ? 3 : 0)
                     
