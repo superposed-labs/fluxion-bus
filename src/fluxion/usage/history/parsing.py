@@ -143,7 +143,11 @@ def _claude_entry_from_line(line: str) -> UsageEntry | None:
         cache_creation_tokens=_int(usage.get("cache_creation_input_tokens")),
         cache_read_tokens=_int(usage.get("cache_read_input_tokens")),
         dedup_key=str(dedup_key),
+        # Anthropic splits the prompt into three disjoint counts, and its
+        # length-tiered pricing (Haiku 5.5's 100k threshold) counts all of
+        # them, cache writes included.
         billed_input_tokens_total=_int(usage.get("input_tokens"))
+        + _int(usage.get("cache_creation_input_tokens"))
         + _int(usage.get("cache_read_input_tokens")),
         cache_creation_1h_tokens=cache_1h,
         is_fast=is_fast,

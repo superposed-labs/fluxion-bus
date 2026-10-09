@@ -37,7 +37,10 @@ from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 #
 # v12: `_normalize_codex_model` folds Codex colon effort overrides, so
 # `gpt-5.6-luna:high` shares a row (and a price) with `gpt-5.6-luna`.
-_CACHE_VERSION = 12
+#
+# v13: the Claude parser counts cache writes in `billed_input_tokens_total`,
+# the basis for Haiku 5.5's 100k long-context tier.
+_CACHE_VERSION = 13
 
 
 def _parse_usage_date(raw: str, fallback: date) -> date:

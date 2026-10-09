@@ -571,6 +571,56 @@ def test_long_context_prices_from_billed_input_total(fixed_prices):
     assert out["by_model"][0]["cost"] == 0.88
 
 
+def test_claude_long_context_tier_counts_cache_writes(monkeypatch):
+    # Anthropic sizes a request by all of its input, cache writes included, so
+    # a prompt that crosses the threshold only through cache writes is long.
+    table = {
+        "models": {
+            "claude-haiku-5-5": {
+                "rates": [
+                    {
+                        "effective_date": "2025-01-01",
+                        "in": 0.1,
+                        "out": 0.5,
+                        "cw": 0.125,
+                        "cr": 0.01,
+                        "context_pricing": {
+                            "metric": "input_tokens_total",
+                            "short_max": 100_000,
+                            "short": {"in": 0.1, "out": 0.5, "cw": 0.125, "cr": 0.01},
+                            "long": {"in": 0.5, "out": 2.5, "cw": 0.625, "cr": 0.05},
+                        },
+                    }
+                ]
+            }
+        },
+        "families": {},
+        "providers": {},
+    }
+    monkeypatch.setattr(history.pricing, "_load_prices", lambda: table)
+    history._rates_for.cache_clear()
+    e = _claude_entry_from_line(
+        _assistant_line(
+            ts="2026-06-10T10:00:00Z",
+            model="claude-haiku-5-5",
+            input_tokens=10_000,
+            output_tokens=100_000,
+            cache_creation=20_000,
+            cache_read=80_000,
+        )
+    )
+    assert e is not None
+    assert e.billed_input_tokens_total == 110_000
+
+    out = aggregate([e], window="all", tz=UTC, now=datetime(2026, 6, 10, 23, tzinfo=UTC))
+
+    # long:  10k × $0.5 + 100k out × $2.5 + 20k × $0.625 + 80k × $0.05 = $0.27
+    # (the short tier would be $0.05)
+    assert out["totals"]["cost"] == 0.27
+    assert out["totals"]["context_tier_breakdown"] == {"short": 0, "long": 1}
+    history._rates_for.cache_clear()
+
+
 def test_fast_flag_parsed_from_speed():
     line = json.dumps(
         {

@@ -58,7 +58,10 @@ from fluxion.usage.history.parsing import (
 # v7: the Codex parser does the same for colon effort overrides, so
 # `gpt-5.6-luna:high` shares a row (and a price) with `gpt-5.6-luna` instead of
 # missing its exact price key and falling through to the provider fallback.
-_SCHEMA_VERSION = 7
+#
+# v8: the Claude parser counts cache writes in `billed_input_tokens_total`
+# (`bi`), the basis for Haiku 5.5's 100k long-context tier.
+_SCHEMA_VERSION = 8
 
 
 def _local(ts: datetime, tz: timezone | None) -> datetime:
