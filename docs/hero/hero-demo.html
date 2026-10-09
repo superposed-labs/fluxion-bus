@@ -3,491 +3,1163 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content="Fluxion — delegate scoped tasks across Codex, Claude Code, and Antigravity through one local, self-hosted MCP server, with cross-provider quota monitoring." />
-<meta name="theme-color" content="#1d2025" />
-<title>Fluxion — Hero Demo (concept, dark v6)</title>
+<meta name="description" content="Fluxion — delegate scoped tasks across Codex, Claude Code, and Antigravity through one local MCP server, with cross-provider quota monitoring." />
+<meta name="theme-color" content="#08090c" />
+<title>Fluxion Hero Demo</title>
 <!--
-  Fluxion hero "semi-fake" demo animation — single self-contained file.
-  Vanilla HTML/CSS/JS. No build, no external assets. Open directly in a browser.
-  All data is fake/illustrative. No real keys / accounts / paths.
+  Fluxion hero demo — single self-contained file, no build, no dependencies.
+  All data on screen is staged and illustrative. No real keys, accounts, paths.
 
-  Fidelity from the real UI prototype (scratch "Fluxion (12)"/notch-island.jsx),
-  density curated for a hero:
-   • Notch = a true macOS Dynamic Island: ONE element that grows through three
-     states — collapsed (camera lens + breathing brand dots, no glow, reacts to
-     nothing) → peek (per-provider glance line, no EXT tag) → expanded (glass
-     panel with glowing quota rings, paged Remaining ⇄ Used today).
-   • Provider colors from the prototype: Claude #f0934e · Codex #a98bff ·
-     Antigravity(Gemini) #4d9fff · External pool #2fd4c4 · accent #f5a524.
-   • Any primary agent (app or CLI) delegates to any sub-agent over MCP; the call
-     is async (run_subagent → queued run id → get_task_status → get_task_result).
-     Here: Claude Code → Codex.
+  The piece is a pure function of time: render(t) sets every frame from t alone
+  (no CSS transitions, no timers), so it can be scrubbed, frozen, and exported
+  frame-by-frame (export.sh adds real motion blur by averaging sub-frames).
+  Times below are story time. Playback slows to a near-stop at a few reading
+  holds (see HOLDS), which stretches the 24s story to about 28s.
 
-  A11y: semantic <main>/<section>/<h1>, decorative animation is aria-hidden with an
-  sr-only summary, prefers-reduced-motion renders one static frame (no loop).
+    0.0  T1  "Stay in your agent."          kinetic type, word slams
+    1.5  T2  "Delegate to <slot>"           slot rolls Claude Code → Antigravity → Codex,
+                                            then "Codex" zooms through the camera
+    3.0  B   3D scene (flown into from T2)  Claude Code calls run_subagent twice; Codex and
+                                            Antigravity cards fly in on forked wires, work in
+                                            parallel, return; "+107 −5" stat slam
+    8.3  C   desktop → notch                one take: the camera pulls back until the chat window
+                                            sits on a Mac desktop, then dives into the notch. Ring
+                                            gauges sweep in → peek callout points at each provider
+                                            → panel opens, rings fill → Codex runs dry and resets
+                                            (notification + Auto-Ping) → pages to Used today
+   16.65 E   phone                          the reset banner flies off the Mac into a phone chat;
+                                            a task is sent from chat (Slack, Telegram, WeChat,
+                                            LINE, QQ, Feishu), runs on the Mac, and replies
+   19.55 D   logo reveal + install command  the bot's avatar spins up into the logo and the
+                                            card holds to the end. Playback opens on this same
+                                            frame (COVER), so it is the poster and the loop seam
 
-  Variants:  (default) website Hero ~21s  ·  ?variant=compact  README gif ~11s
-  Controls:  R = replay from clean start  ·  H = hide chrome (record mode)
+  URL params:  ?t=6.5  freeze at a playback time   ·   ?export=1  driven by export.sh
+  Keys:        Space pause/resume  ·  R restart  ·  H hide controls
+  prefers-reduced-motion renders one static frame.
 -->
 <style>
   :root{
-    --bg-0:#1d2025; --bg-1:#25282e; --bg-2:#2d3138; --bg-3:#363b44;
-    --line:#4b515c; --line-soft:#333840;
-    --fg-0:#f3f5f8; --fg-1:#c3c8d0; --fg-2:#8d96a5; --fg-3:#6d7583;
+    --bg:#08090c;
+    --win:#1a1c21; --win-2:#212329; --win-3:#2b2e36;
+    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
+    --fg-0:#f5f7fa; --fg-1:#c9ced6; --fg-2:#8f97a4; --fg-3:#5f6672;
     --accent:#f5a524; --accent-ink:#2b1a00;
-    /* provider colors + glows, from the notch prototype */
-    --claude:#f0934e; --claude-glow:rgba(255,157,77,.78);
-    --codex:#a98bff;  --codex-glow:rgba(165,135,255,.78);
-    --agy:#4d9fff;    --agy-glow:rgba(77,159,255,.78);
-    --ext:#2fd4c4;    --ext-glow:rgba(47,212,196,.7);
-    --grn:#34c759; --returned:#54d39b; --failed:#f26d5b;
-    --spring:cubic-bezier(.32,1.42,.5,1);
-    --ease:cubic-bezier(.22,1,.36,1);
-    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    --claude:#f0934e; --codex:#a98bff; --agy:#4d9fff; --ext:#2fd4c4;
+    --ok:#4fd18b; --del:#f26d5b;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,sans-serif;
   }
   *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0; font-family:var(--sans); color:var(--fg-1);
-    background:radial-gradient(120% 90% at 50% -10%, #23252c 0%, #16181d 60%, #0f1115 100%);
-    display:grid; place-items:center; min-height:100vh; overflow:hidden;
-  }
+  html,body{height:100%; margin:0}
+  body{background:#000; color:var(--fg-1); font-family:var(--sans); overflow:hidden;
+    -webkit-font-smoothing:antialiased; display:grid; place-items:center}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
-  /* ---------- macOS desktop ---------- */
-  .stage{width:min(980px,94vw); position:relative}
-  .desktop{
-    position:relative; border-radius:14px; overflow:hidden;
-    background:linear-gradient(160deg,#20242c,#181b21 55%,#141619 100%);
-    box-shadow:0 24px 60px -20px rgba(0,0,0,.7), 0 6px 18px -8px rgba(0,0,0,.5);
-    border:1px solid #2c313a; opacity:0; transform:scale(.985);
-    transition:opacity .5s var(--ease), transform .5s var(--ease);
-  }
-  .desktop.on{opacity:1; transform:none}
+  .stage{position:relative; width:1280px; height:720px; overflow:hidden; flex:none; background:var(--bg)}
+  .bg{position:absolute; inset:0; z-index:0}
+  .grain{position:absolute; inset:0; pointer-events:none; opacity:.08; mix-blend-mode:overlay; z-index:90;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+  .vignette{position:absolute; inset:0; pointer-events:none; z-index:80;
+    background:radial-gradient(110% 95% at 50% 45%, transparent 50%, rgba(0,0,0,.7) 100%)}
+  .scene{position:absolute; inset:0; opacity:0}
+  .w,.ch{display:inline-block; white-space:pre}
 
-  /* ---------- menu bar (center left empty for the island) ---------- */
-  .menubar{
-    position:relative; height:30px; display:flex; align-items:center; justify-content:space-between;
-    padding:0 14px; background:rgba(20,22,27,.55); backdrop-filter:saturate(1.2) blur(12px);
-    border-bottom:1px solid rgba(255,255,255,.05); font-size:12px; color:var(--fg-1); z-index:6;
-  }
-  .mb-left{display:flex; align-items:center; gap:15px}
-  .mb-left .app{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--fg-0)}
-  .mb-left .app img{width:15px;height:15px;display:block}
-  .mb-left .mi{color:var(--fg-2); font-weight:500}
-  .mb-right{display:flex; align-items:center; gap:12px}
-  .mb-right .clock{color:var(--fg-2); font-variant-numeric:tabular-nums}
+  /* ---------- T1 / T2 kinetic type ---------- */
+  .t1{display:flex; align-items:center; justify-content:center; z-index:20}
+  .t1 .line{font-size:128px; font-weight:820; letter-spacing:-4px; color:var(--fg-0); line-height:1.1}
+  .t1 .line .dot{color:var(--accent)}
+  .t2{display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:20}
+  .t2 .lead{font-size:64px; font-weight:700; letter-spacing:-2px; color:var(--fg-2)}
+  .slot{height:168px; overflow:hidden; margin-top:4px}
+  .slot-col{display:flex; flex-direction:column; align-items:center}
+  .slot-col div{height:168px; line-height:168px; font-size:150px; font-weight:840; letter-spacing:-6px; white-space:nowrap}
+  .flood{position:absolute; inset:0; z-index:25; opacity:0;
+    background:radial-gradient(70% 70% at 50% 50%, #6c55c9 0%, #2b2152 55%, #120e22 100%)}
 
-  /* ---------- Dynamic Island: one element, three states ---------- */
-  .island{
-    position:absolute; top:0; left:50%; transform:translateX(-50%);
-    width:300px; height:30px; background:#000; border-radius:0 0 16px 16px;
-    z-index:20; overflow:hidden; box-shadow:0 3px 10px rgba(0,0,0,.55), 0 0 0 .5px rgba(0,0,0,.9);
-    transition:width .52s var(--spring), height .52s var(--spring), border-radius .5s ease, background-color .42s ease, box-shadow .42s ease;
-  }
-  .island.peek{ width:392px; height:44px; }
-  .island.expanded{
-    width:452px; height:260px; background:rgba(20,20,24,.74);
-    backdrop-filter:blur(46px) saturate(1.7); -webkit-backdrop-filter:blur(46px) saturate(1.7);
-    border-radius:0 0 28px 28px;
-    box-shadow:0 28px 70px rgba(0,0,0,.62), inset 0 0 0 .5px rgba(255,255,255,.16), inset 0 1px 0 rgba(255,255,255,.22);
-  }
-  /* camera lens (physical notch dead-zone) — hidden when expanded */
-  .lens{position:absolute; left:50%; top:15px; transform:translate(-50%,-50%); width:9px; height:9px; border-radius:50%; z-index:6;
-    background:radial-gradient(circle at 35% 30%, #3c3c45 0%, #0a0a0c 62%); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.14); transition:opacity .3s ease}
-  .lens::after{content:""; position:absolute; inset:2.5px; border-radius:50%; background:rgba(120,140,200,.22)}
-  .island.expanded .lens{opacity:0}
+  /* ---------- B: 3D scene ---------- */
+  .space{position:absolute; inset:0; perspective:1500px; perspective-origin:50% 42%}
+  .rig{position:absolute; left:0; top:0; width:1280px; height:720px; transform-style:preserve-3d}
+  .floor{position:absolute; left:-1100px; top:640px; width:3480px; height:1600px; transform-origin:50% 0; transform:rotateX(84deg);
+    background-image:linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px);
+    background-size:80px 80px; -webkit-mask-image:radial-gradient(45% 50% at 50% 0%, #000 0%, transparent 100%); mask-image:radial-gradient(45% 50% at 50% 0%, #000 0%, transparent 100%)}
+  .sheen{position:absolute; inset:0; overflow:hidden; pointer-events:none; border-radius:inherit; z-index:5}
+  .sheen i{position:absolute; top:-20%; bottom:-20%; width:38%; transform:skewX(-18deg);
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.08) 45%, rgba(255,255,255,.14) 50%, rgba(255,255,255,.08) 55%, transparent)}
 
-  /* layers cross-fade */
-  .layer{position:absolute; inset:0; transition:opacity .26s ease}
-  .layer.hide{opacity:0; pointer-events:none}
-  .island.peek .l-col, .island.expanded .l-col{opacity:0}
-  .island .l-peek{opacity:0}
-  .island.peek .l-peek{opacity:1}
-  .island .l-exp{opacity:0}
-  .island.expanded .l-exp{opacity:1}
+  .chat{position:absolute; left:96px; top:92px; width:720px; height:560px; background:var(--win); border-radius:16px;
+    box-shadow:0 0 0 1px var(--line-2), 0 60px 120px -40px rgba(0,0,0,.9), 0 0 90px -30px rgba(240,147,78,.3); overflow:hidden; display:flex; flex-direction:column}
+  .tbar{height:42px; flex:none; display:flex; align-items:center; gap:14px; padding:0 16px; background:var(--win-2); border-bottom:1px solid var(--line)}
+  .lights{display:flex; gap:8px} .lights i{width:12px; height:12px; border-radius:50%}
+  .tbar .nm{font-size:14px; font-weight:700; color:var(--fg-0)}
+  .tbar .pth{margin-left:auto; font-family:var(--mono); font-size:12.5px; color:var(--fg-3)}
+  .cbody{flex:1; padding:24px 26px; display:flex; flex-direction:column; gap:14px}
+  .who{font-size:12px; font-weight:700; letter-spacing:.3px; margin-bottom:6px}
+  .u-msg{align-self:flex-end; text-align:right}
+  .u-msg .who{color:var(--fg-3)}
+  .u-msg .bb{display:inline-block; background:var(--win-3); color:var(--fg-0); font-size:19px; padding:11px 16px; border-radius:16px 16px 4px 16px; text-align:left; min-height:48px; white-space:pre}
+  .caret{display:inline-block; width:2px; height:20px; background:var(--fg-0); vertical-align:-3px; margin-left:1px}
+  .c-msg .who{color:var(--claude)}
+  .c-msg .bb{font-size:19px; line-height:1.45; color:var(--fg-1)}
+  .c-msg .bb em{font-style:normal; color:var(--codex); font-weight:650}
+  .trow{align-self:flex-start; display:inline-flex; align-items:center; gap:10px; font-family:var(--mono); font-size:15px; color:var(--fg-2);
+    background:#131418; border:1px solid var(--line-2); border-radius:10px; padding:8px 14px}
+  .trow .to{color:var(--codex); font-weight:650}
+  .trow .st{width:16px; height:16px; position:relative; display:grid; place-items:center}
+  .spin{position:absolute; inset:0; border-radius:50%; border:2px solid rgba(169,139,255,.25); border-top-color:var(--codex)}
+  .chk{color:var(--ok); font-weight:800; font-family:var(--sans); font-size:15px}
+  .cbar{display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--line-2); border-radius:12px; background:#16181c}
+  .cbar .lb{font-size:12px; font-weight:700; letter-spacing:.8px; color:var(--fg-3); margin-right:auto}
+  .cbar .ns{font-family:var(--mono); font-size:16px; font-weight:700}
+  .a{color:var(--ok)} .d{color:var(--del)}
+  .btn{font-size:14px; font-weight:700; padding:7px 14px; border-radius:9px}
+  .btn.ghost{color:var(--fg-1); border:1px solid var(--line-2)}
+  .btn.pri{color:var(--accent-ink); background:var(--accent)}
+  .cin{flex:none; padding:12px 16px; border-top:1px solid var(--line); background:var(--win-2)}
+  .cin div{border:1px solid var(--line-2); background:#131418; border-radius:10px; padding:10px 14px; font-size:14px; color:var(--fg-3)}
 
-  /* collapsed: quota % split onto both shoulders, straddling the camera */
-  .glance{position:absolute; top:15px; transform:translateY(-50%); display:flex; align-items:center; gap:11px}
-  .glance-l{left:16px} .glance-r{right:16px}
-  .gseg{display:flex; align-items:center; gap:5px; font-size:11.5px; font-weight:700; color:#fff; font-variant-numeric:tabular-nums}
-  .gseg .gd{width:7px; height:7px; border-radius:50%}
-  .gseg.claude .gd{background:var(--claude); box-shadow:0 0 7px 1px var(--claude-glow); animation:breathe 3.4s ease-in-out infinite}
-  .gseg.codex  .gd{background:var(--codex);  box-shadow:0 0 7px 1px var(--codex-glow);  animation:breathe 3.4s ease-in-out infinite .9s}
-  .gseg.agy    .gd{background:var(--agy);    box-shadow:0 0 7px 1px var(--agy-glow);    animation:breathe 3.4s ease-in-out infinite 1.8s}
-  @keyframes breathe{0%,100%{opacity:.5; transform:scale(.82)} 50%{opacity:1; transform:scale(1.12)}}
+  .card{position:absolute; left:868px; top:112px; width:336px; background:rgba(27,24,40,.97); border-radius:16px; overflow:hidden}
+  .card.ag{top:356px; background:rgba(19,27,44,.97)}
+  .card.ag .card-h i{background:var(--agy); box-shadow:0 0 10px rgba(77,159,255,.9)}
+  .card.ag .f .hl{background:rgba(77,159,255,.22)}
+  .trows{display:flex; flex-direction:column; gap:8px; align-items:flex-start}
+  .trow .to.ag, .c-msg .bb em.ag{color:var(--agy)}
+  .spin.ag{border-color:rgba(77,159,255,.25); border-top-color:var(--agy)}
+  .blabel .c3{color:var(--agy)}
+  .card-h{display:flex; align-items:center; gap:9px; padding:16px 18px 6px}
+  .card-h i{width:10px; height:10px; border-radius:50%; background:var(--codex); box-shadow:0 0 10px rgba(169,139,255,.9)}
+  .card-h b{font-size:17px; color:#fff}
+  .card-h span{font-size:13px; color:var(--fg-2)}
+  .pill{margin-left:auto; font-size:11px; font-weight:800; letter-spacing:.8px; padding:4px 9px; border-radius:20px; position:relative}
+  .ripple{position:absolute; inset:-2px; border-radius:20px; border:2px solid var(--ok); opacity:0}
+  .meta{padding:0 18px 14px; font-family:var(--mono); font-size:12.5px; color:var(--fg-3)}
+  .files{border-top:1px solid var(--line); padding:12px 18px; display:flex; flex-direction:column; gap:10px}
+  .f{display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:14.5px; color:var(--fg-1); position:relative}
+  .f .k{width:18px; height:18px; border-radius:5px; font-size:11px; font-weight:800; display:grid; place-items:center}
+  .f .k.m{background:rgba(245,165,36,.16); color:var(--accent)} .f .k.n{background:rgba(79,209,139,.16); color:var(--ok)}
+  .f .n2{margin-left:auto; font-size:13.5px}
+  .f .hl{position:absolute; inset:-4px -8px; border-radius:6px; background:rgba(169,139,255,.22); opacity:0}
+  .card-f{display:flex; align-items:center; padding:12px 18px 16px; border-top:1px solid var(--line); font-family:var(--mono); font-size:13px; color:var(--fg-2)}
+  .card-f .via{margin-left:auto; display:flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12.5px; font-weight:600}
+  .card-f .via img{width:14px; height:14px}
+  .wire{position:absolute; left:0; top:0; width:1280px; height:720px; pointer-events:none; overflow:visible}
 
-  /* peek: per-provider glance line (drops below the camera line) */
-  .l-peek{display:flex; align-items:center; justify-content:center; gap:13px; padding-top:19px}
-  .pseg{display:flex; align-items:center; gap:6px; color:rgba(255,255,255,.92); font-size:11.5px; font-variant-numeric:tabular-nums; white-space:nowrap}
-  .pseg .pd{width:7px; height:7px; border-radius:50%}
-  .pseg.claude .pd{background:var(--claude); box-shadow:0 0 6px var(--claude-glow)}
-  .pseg.codex  .pd{background:var(--codex);  box-shadow:0 0 6px var(--codex-glow)}
-  .pseg.agy    .pd{background:var(--agy);    box-shadow:0 0 6px var(--agy-glow)}
-  .pseg .pn{color:rgba(255,255,255,.55); font-weight:520}
-  .pseg .pp{font-weight:680}
-  .pseg .clk{color:rgba(255,255,255,.42); font-weight:600; font-size:11px}
-  .pdiv{width:.5px; height:14px; background:rgba(255,255,255,.18)}
+  .blabel{position:absolute; left:0; right:0; bottom:40px; text-align:center; z-index:30; font-size:36px; font-weight:780; letter-spacing:-1.2px; color:var(--fg-0)}
+  .blabel .c1{color:var(--claude)} .blabel .c2{color:var(--codex)}
+  .bshade{position:absolute; left:0; right:0; bottom:0; height:200px; z-index:29; background:linear-gradient(to top, rgba(8,9,12,.92), transparent)}
+  .stat{position:absolute; inset:0; z-index:40; display:flex; flex-direction:column; align-items:center; justify-content:center; opacity:0}
+  .stat .big{font-size:176px; font-weight:840; letter-spacing:-7px; line-height:1; font-variant-numeric:tabular-nums}
+  .stat .big .a{text-shadow:0 0 60px rgba(79,209,139,.45)} .stat .big .d{text-shadow:0 0 60px rgba(242,109,91,.4)}
+  .stat .sub{font-size:36px; font-weight:650; color:var(--fg-1); letter-spacing:-.8px; margin-top:18px}
+  .stat .sub b{color:var(--fg-0)}
 
-  /* expanded: glass panel with glowing rings */
-  .l-exp{display:flex; flex-direction:column; padding:22px 22px 12px}
-  .panel-head{display:flex; align-items:center; margin-bottom:6px}
-  .panel-head b{font-size:13px; color:#fff}
-  .panel-head .upd{margin-left:auto; font-size:10.5px; color:rgba(255,255,255,.5); display:flex; align-items:center; gap:6px}
-  .panel-head .upd .g{width:6px;height:6px;border-radius:50%;background:var(--grn); box-shadow:0 0 6px rgba(52,199,89,.8)}
-  .clip{flex:1; overflow:hidden}
-  .track{display:flex; width:200%; height:100%; transition:transform .45s var(--ease)}
-  .track.p2{transform:translateX(-50%)}
-  .page{width:50%; display:flex}
-  .col{flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding:8px 6px 0; position:relative}
-  .col + .col{border-left:.5px solid rgba(255,255,255,.09)}
-  .col-h{display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#fff; margin-bottom:10px}
-  .col-h .hd{width:8px;height:8px;border-radius:50%}
-  .col.claude .hd{background:var(--claude)} .col.codex .hd{background:var(--codex)} .col.agy .hd{background:var(--agy)}
-  /* rings */
-  .ring{position:relative; width:92px; height:92px}
-  .ring svg{width:92px; height:92px; transform:rotate(-90deg); display:block}
-  .ring .trk{fill:none; stroke:rgba(255,255,255,.10); stroke-width:8}
-  .ring .prg{fill:none; stroke-width:8; stroke-linecap:round; stroke-dasharray:276.46; stroke-dashoffset:276.46; transition:stroke-dashoffset 1s var(--spring)}
-  .ring .prg.inner{stroke-dasharray:194.78; stroke-dashoffset:194.78; stroke-width:7}
-  .col.claude .prg{stroke:var(--claude); filter:drop-shadow(0 0 5px var(--claude-glow))}
-  .col.codex  .prg{stroke:var(--codex);  filter:drop-shadow(0 0 5px var(--codex-glow))}
-  .col.agy    .prg{stroke:var(--agy);    filter:drop-shadow(0 0 5px var(--agy-glow))}
-  .col.agy    .prg.inner{stroke:var(--ext); filter:drop-shadow(0 0 5px var(--ext-glow))}
+  /* ---------- C: notch ---------- */
+  .screen{position:absolute; left:0; top:0; width:1280px; height:720px; transform-origin:0 0}
+  .wall{position:absolute; inset:0;
+    background:radial-gradient(70% 60% at 22% 30%, rgba(84,110,170,.30), transparent 70%),
+      radial-gradient(60% 60% at 88% 78%, rgba(169,139,255,.18), transparent 70%), linear-gradient(160deg,#171a22,#0e1014)}
+  .menubar{position:absolute; left:0; right:0; top:0; height:30px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 18px; background:rgba(10,11,14,.5); font-size:13px; color:var(--fg-1)}
+  .menubar .l{display:flex; gap:18px; align-items:center}
+  .menubar .l b{display:flex; gap:7px; align-items:center; color:var(--fg-0)}
+  .menubar .l b img{width:16px; height:16px}
+  .menubar .l span{color:var(--fg-2)}
+  .menubar .r{color:var(--fg-2)}
+  .notch{position:absolute; top:0; left:50%; transform:translateX(-50%); background:#000; z-index:20; overflow:hidden}
+  .lens{position:absolute; left:50%; top:15px; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #3c3c45 0%, #0a0a0c 62%)}
+  .glance{position:absolute; top:15px; transform:translateY(-50%); display:flex; gap:12px}
+  .glance.l{left:18px} .glance.r{right:18px}
+  .gs{display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; color:#fff}
+  .gs i{width:7px; height:7px; border-radius:50%}
+  /* expanded panel, mirroring NotchIslandView+Expanded (3 providers → 564pt wide) */
+  .panel{position:absolute; left:0; top:0; width:564px}
+  .ph{display:flex; align-items:center; gap:8px; padding:11px 16px 7px; font-size:12.5px; font-weight:700; color:rgba(255,255,255,.92)}
+  .ph .u{margin-left:auto; display:flex; align-items:center; gap:5px; font-size:11px; font-weight:400; color:rgba(255,255,255,.5)}
+  .ph .u i{width:5px; height:5px; border-radius:50%; background:#32d74b; box-shadow:0 0 3px rgba(50,215,75,.8)}
+  .ph .vd{width:.5px; height:13px; background:rgba(255,255,255,.13); margin-left:1px}
+  .ph svg{width:13px; height:13px; opacity:.6}
+  .pages{display:grid}
+  .pages > .pg{grid-area:1/1}
+  .cols{display:flex; padding:0 16px}
+  .col{flex:1; min-width:0; padding:0 8px; display:flex; flex-direction:column; position:relative}
+  .col + .col::before{content:""; position:absolute; left:0; top:20px; bottom:20px; width:.5px;
+    background:linear-gradient(transparent, rgba(255,255,255,.13) 18%, rgba(255,255,255,.13) 82%, transparent)}
+  .col-h{height:38px; display:flex; align-items:center; justify-content:center; gap:8px; font-size:13.5px; font-weight:700; color:#fff}
+  .col-h i{width:10px; height:10px; margin:5px; border-radius:50%; background:var(--c); box-shadow:0 0 3px var(--c)}
+  .ringbox{height:128px; display:grid; place-items:center}
+  .ring{position:relative; width:104px; height:104px}
+  .ring svg{width:104px; height:104px; transform:rotate(-90deg); display:block; overflow:visible}
+  .ring circle{fill:none}
+  .ring .trk{stroke:rgba(255,255,255,.10)}
+  .ring .prg{stroke-linecap:round}
+  .rst{position:absolute; inset:0; border-radius:50%; border:3px solid var(--codex); opacity:0; pointer-events:none}
   .ring-c{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center}
-  .ring-pct{font-size:23px; font-weight:720; letter-spacing:-.6px; line-height:1; color:#fff; font-variant-numeric:tabular-nums}
-  .ring-pct .u{font-size:13px; font-weight:600; opacity:.55; margin-left:1px}
-  .ring-sub{font-size:9px; font-weight:650; letter-spacing:.8px; text-transform:uppercase; color:rgba(255,255,255,.42); margin-top:3px}
-  .col-cd{margin-top:11px; font-size:10.5px; color:rgba(255,255,255,.55); font-weight:600}
-  .col-cd .clk{opacity:.7}
-  .ext-line{margin-top:6px; font-size:9.5px; color:rgba(255,255,255,.42); font-weight:600}
-  .ext-line .e{color:var(--ext)}
-  .resets{margin-top:8px; font-size:10px; color:rgba(255,255,255,.62); font-weight:600}
-  .resets .ic{color:var(--grn)}
-  /* tokens page */
-  .big{font-size:32px; font-weight:800; line-height:1.1; margin-top:2px}
-  .col.claude .big{color:var(--claude)} .col.codex .big{color:var(--codex)} .col.agy .big{color:var(--agy)}
-  .unit{font-size:9px; font-weight:700; letter-spacing:.6px; color:rgba(255,255,255,.4); margin-top:3px}
-  .io{font-size:12px; font-weight:700; color:rgba(255,255,255,.85); margin-top:14px}
-  .cache{font-size:10px; color:rgba(255,255,255,.4); margin-top:4px}
-  .apiv{font-size:11px; color:rgba(255,255,255,.6); margin-top:12px}
-  .panel-foot{display:flex; align-items:center; justify-content:center; position:relative; margin-top:8px; padding-top:9px; border-top:.5px solid rgba(255,255,255,.1)}
-  .panel-foot .oc{font-size:11.5px; font-weight:600; color:rgba(255,255,255,.82)}
-  .pager{position:absolute; right:0; display:flex; gap:5px}
-  .pager i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.3);transition:width .3s var(--ease), border-radius .3s var(--ease), background .3s var(--ease)}
-  .pager i.on{width:16px;border-radius:3px;background:rgba(255,255,255,.7)}
+  .ring-c b{font-size:27px; font-weight:700; letter-spacing:-.6px; color:#fff; font-variant-numeric:tabular-nums; line-height:1.05}
+  .ring-c b small{font-size:13px; font-weight:600; opacity:.55; margin-left:.5px; letter-spacing:0}
+  .ring-c span{font-size:9px; font-weight:700; letter-spacing:.8px; color:rgba(255,255,255,.42); margin-top:3px}
+  .ring.dual b{font-size:22px; color:var(--agy)} .ring.dual b small{font-size:11px}
+  .ring.dual span{color:rgba(77,159,255,.75); margin-top:2px}
+  .ring.dual .sec{font-size:9px; font-weight:700; letter-spacing:0; color:rgba(53,214,200,.62); margin-top:1px}
+  .ring.dual .sec em{font-style:normal; font-size:8px; letter-spacing:.2px; margin-right:3px}
+  .rows{padding:4px 0 6px; display:flex; flex-direction:column; gap:6px}
+  .qr{display:flex; align-items:baseline; font-size:9.5px; font-weight:600; letter-spacing:.8px; color:rgba(255,255,255,.48); white-space:nowrap}
+  .qr .qp{font-size:10px; font-weight:700; color:#fff; letter-spacing:0; margin-left:8px}
+  .tm{margin-left:auto; width:69px; display:flex; align-items:baseline; gap:4px; letter-spacing:0}
+  .tm svg{width:9px; height:9px; opacity:.75; align-self:center}
+  .tm b{font-size:11px; font-weight:600} .tm em{font-style:normal; font-size:11px; font-weight:600; opacity:.5; margin-left:-1px}
+  .qbar{height:3px; border-radius:2px; background:rgba(255,255,255,.10)}
+  .qbar i{display:block; height:100%; border-radius:2px; background:var(--c); box-shadow:0 0 3px var(--c)}
+  .ar{display:flex; flex-direction:column; gap:5px}
+  /* quotaFooterBand: Usage credits (UsageCreditsView) and reset credits (ResetChipView) */
+  .qfoot{border-top:.5px solid rgba(255,255,255,.08); margin-top:4px; padding-top:10px}
+  .credits{display:flex; justify-content:center; align-items:center; gap:5px; font-size:9.5px; font-weight:700; color:#32d74b}
+  .credits svg{width:11px; height:9px}
+  .resets{display:flex; align-items:center; gap:5px; padding:0 2px; font-size:9.5px; font-weight:600; letter-spacing:.5px; color:rgba(255,255,255,.5)}
+  .resets .ri{display:flex} .resets svg{width:9px; height:9px}
+  .resets .rn{margin-left:auto; letter-spacing:.2px; color:rgba(255,255,255,.55)}
+  .ar .qr{color:rgba(255,255,255,.58)}
+  .ar .tag{font-size:10.5px; font-weight:700; color:rgba(255,255,255,.54)}
+  .ar .wk{font-size:7.5px; font-weight:700; letter-spacing:.4px; padding:1px 4px; border-radius:4px; margin-left:5px; position:relative; top:-1px}
+  .ar .qp{color:rgba(255,255,255,.9)}
+  .tot{height:54px; margin-top:10px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px}
+  .tot b{font-size:32px; font-weight:700; line-height:1; color:var(--c); font-variant-numeric:tabular-nums}
+  .tot span{font-size:8.5px; font-weight:700; letter-spacing:1.2px; color:rgba(255,255,255,.36)}
+  .mets{display:flex; gap:6px; margin-top:10px}
+  .met{flex:1; display:flex; flex-direction:column; gap:3px}
+  .met span{font-size:8px; font-weight:600; letter-spacing:.45px; color:rgba(255,255,255,.38)}
+  .met b{font-size:11.5px; font-weight:700; color:rgba(255,255,255,.86); font-variant-numeric:tabular-nums}
+  .trend{margin-top:13px}
+  .trend .rule{height:.5px; background:rgba(255,255,255,.075); margin-bottom:10px}
+  .th{display:flex; align-items:baseline; font-size:8px; font-weight:600; letter-spacing:.35px; color:rgba(255,255,255,.4)}
+  .th b{margin-left:auto; font-size:10px; font-weight:700; letter-spacing:0; color:rgba(255,255,255,.76); font-variant-numeric:tabular-nums}
+  .bars{display:flex; gap:2px; margin-top:6px; position:relative}
+  .bars::before{content:""; position:absolute; left:0; right:0; top:27.5px; height:.5px; background:rgba(255,255,255,.09)}
+  .bcol{flex:1; display:flex; flex-direction:column; align-items:center; gap:4px}
+  .bwrap{height:28px; display:flex; align-items:flex-end}
+  .bwrap i{display:block; width:8px; border-radius:2px 2px 0 0; background:rgba(255,255,255,.22)}
+  .bcol span{font-size:9.5px; font-weight:500; color:rgba(255,255,255,.45)}
+  .bcol.today i{background:var(--c); box-shadow:0 0 3px color-mix(in srgb, var(--c) 45%, transparent)}
+  .bcol.today span{font-weight:700; color:var(--c)}
+  .pager{display:flex; justify-content:center; gap:4px; padding:2px 0}
+  .pager i{display:block; height:6px; border-radius:3px; margin:8px 3.5px}
+  .psep{height:.5px; background:rgba(255,255,255,.09); margin:7px 16px 0}
+  .pfoot{height:46px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:12px; font-weight:600; color:rgba(255,255,255,.72)}
+  .pfoot span{font-size:10px}
+  /* concave shoulders where the island meets the top edge (notchFlareRadius: 12) */
+  .wing{position:absolute; top:0; width:12px; height:12px; z-index:20}
+  .clabel{position:absolute; inset:0; z-index:30; font-size:62px; font-weight:820; letter-spacing:-2.4px; color:var(--fg-0); line-height:1.1}
+  .clabel span{position:absolute; left:0; right:0; top:545px; text-align:center; opacity:0}
+  .clabel #cl1{top:300px}
+  .clabel #cl2{top:612px}
+  .gs{padding:3px 5px; margin:0 -5px; border-radius:7px; font-size:11px}
+  .gg{width:12px; height:12px; overflow:visible}
+  .bubble{position:absolute; top:35px; width:236px; z-index:21; opacity:0; overflow:hidden}
+  .bshape{position:absolute; left:0; top:0; width:236px; height:400px; overflow:visible}
+  .bc{position:absolute; left:14px; right:14px; top:20px}
+  .bn{font-size:12.5px; font-weight:600; margin-bottom:6px}
+  .brow + .brow, .bsec + .brow{margin-top:9px}
+  .bsep + .bsec{margin-top:9px}
+  .brow + .bsep{margin-top:10px}
+  .bl{display:flex; justify-content:space-between; align-items:baseline}
+  .bl span{font-size:9.5px; font-weight:600; color:rgba(255,255,255,.5)}
+  .bl b{font-size:12.5px; font-weight:700; color:#fff; font-variant-numeric:tabular-nums}
+  .bar{height:3px; border-radius:2px; background:rgba(255,255,255,.16); margin-top:4px; overflow:hidden}
+  .bar i{display:block; height:100%; border-radius:2px}
+  .br{font-size:9.5px; font-weight:500; color:rgba(255,255,255,.5); margin-top:4px; font-variant-numeric:tabular-nums}
+  .bsec{font-size:9px; font-weight:700; letter-spacing:.4px}
+  .bsep{height:.5px; background:rgba(255,255,255,.09)}
 
-  /* ---------- notification banner ---------- */
-  .notif{
-    position:absolute; right:12px; top:38px; width:288px; z-index:11;
-    background:rgba(40,44,52,.9); backdrop-filter:blur(18px) saturate(1.3);
-    border:1px solid var(--line); border-radius:13px; padding:11px 12px;
-    box-shadow:0 20px 40px -18px rgba(0,0,0,.75); display:flex; gap:10px; align-items:flex-start;
-    opacity:0; transform:translateY(-10px) scale(.98); transition:opacity .4s var(--ease), transform .4s var(--ease);
-  }
-  .notif.on{opacity:1; transform:none}
-  .notif .ico{width:30px;height:30px;border-radius:8px;background:linear-gradient(160deg,#ffce6b,var(--accent));
-    display:grid;place-items:center;color:var(--accent-ink);font-size:15px;flex:none}
-  .notif .t{font-size:12.5px;font-weight:700;color:var(--fg-0)}
-  .notif .m{font-size:11.5px;color:var(--fg-2);line-height:1.35;margin-top:2px}
-  .notif .now{position:absolute;right:12px;top:10px;font-size:10px;color:var(--fg-3)}
+  /* quota-reset beat: the macOS banner (copy from scheduler/messages.py) and a reset ripple */
+  .banner{position:absolute; right:12px; top:40px; width:344px; z-index:25; display:flex; gap:10px; align-items:flex-start;
+    padding:11px 14px 12px 11px; border-radius:16px; background:rgba(44,46,54,.86); opacity:0;
+    box-shadow:0 0 0 .5px rgba(255,255,255,.16), 0 18px 40px -12px rgba(0,0,0,.8)}
+  .banner img{width:30px; height:30px; flex:none; margin-top:1px}
+  .banner .bt{flex:1; min-width:0}
+  .banner .bh{display:flex; font-size:13px; font-weight:700; color:#fff}
+  .banner .bh span{margin-left:auto; font-weight:500; color:rgba(255,255,255,.5); font-size:12px}
+  .banner .bb2{font-size:13px; color:rgba(255,255,255,.86); margin-top:2px; line-height:1.3}
+  .csub{position:absolute; left:0; right:0; top:618px; text-align:center; z-index:30; font-size:24px; font-weight:600;
+    letter-spacing:-.4px; color:var(--fg-1); opacity:0}
+  .csub b{color:var(--accent); font-weight:700}
 
-  /* ---------- desktop area ---------- */
-  .area{position:relative; padding:24px; height:470px}
-  body.compact .area{height:360px}
+  .win{position:absolute; left:370px; top:150px; width:720px; height:560px; transform-origin:0 0; transform:scale(.75); z-index:5}
+  .win .chat{left:0; top:0}
+  /* one-take hand-offs: the reset banner flies into the phone; the bot avatar becomes the end logo */
+  .fly{position:absolute; left:0; top:0; z-index:60; transform-origin:0 0; opacity:0; pointer-events:none}
+  .fly.banner{right:auto}
+  .flylogo{position:absolute; left:0; top:0; width:120px; height:120px; z-index:60; transform-origin:0 0; opacity:0;
+    filter:drop-shadow(0 0 18px rgba(8,181,244,.7))}
+  .pm.bot b{color:#fff}
 
-  /* ---------- primary agent: chat window ---------- */
-  .chat{height:100%; background:var(--bg-1); border:1px solid var(--line-soft); border-radius:12px; overflow:hidden;
-    box-shadow:0 18px 44px -18px rgba(0,0,0,.6); display:flex; flex-direction:column;
-    opacity:0; transform:translateY(10px); transition:opacity .45s var(--ease), transform .45s var(--ease)}
-  .chat.on{opacity:1; transform:none}
-  .cbar{height:34px; display:flex; align-items:center; gap:10px; padding:0 12px; background:var(--bg-2); border-bottom:1px solid var(--line-soft)}
-  .lights{display:flex; gap:8px}
-  .lights i{width:11px;height:11px;border-radius:50%;display:block}
-  .lights .r{background:var(--failed)} .lights .y{background:var(--accent)} .lights .g{background:var(--grn)}
-  .cbar .name{font-size:11.5px; color:var(--fg-1); font-weight:700}
-  .cbar .name .sub2{color:var(--fg-3); font-weight:500}
-  .cbar .mcp{margin-left:auto; display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--fg-2); font-weight:600}
-  .cbar .mcp .d{width:7px;height:7px;border-radius:50%;background:var(--grn); box-shadow:0 0 0 3px rgba(52,199,89,.16)}
-  .cbody{flex:1; padding:13px 16px; display:flex; flex-direction:column; gap:9px; overflow-y:auto; position:relative; scrollbar-width:none}
-  .cbody::-webkit-scrollbar{display:none}
+  /* ---------- E: phone ---------- */
+  .pspace{position:absolute; inset:0; perspective:1400px; perspective-origin:30% 50%}
+  .phone{position:absolute; left:150px; top:36px; width:330px; height:648px; border-radius:52px; background:#050506; padding:11px;
+    box-shadow:0 0 0 2px #2c2e35, 0 0 0 3px #0c0d10, 0 60px 120px -30px rgba(0,0,0,.95), 0 0 120px -20px rgba(77,159,255,.35)}
+  .pscr{position:relative; width:100%; height:100%; border-radius:42px; overflow:hidden; background:#0f1115; display:flex; flex-direction:column}
+  .island{position:absolute; left:50%; top:11px; width:96px; height:28px; margin-left:-48px; border-radius:16px; background:#000; z-index:3}
+  .psb{height:50px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:6px 28px 0; font-size:14px; font-weight:700; color:#fff}
+  .phd{flex:none; display:flex; align-items:center; gap:10px; padding:8px 16px 12px; border-bottom:1px solid var(--line)}
+  .phd img{width:36px; height:36px; border-radius:50%; background:#1b1e25; padding:5px}
+  .phd b{display:block; font-size:18px; color:#fff}
+  .phd span{font-size:13px; color:var(--ok)}
+  .pbody{flex:1; padding:16px 13px 18px; display:flex; flex-direction:column; justify-content:flex-end; gap:12px}
+  .pm{max-width:88%; font-size:19px; line-height:1.32; padding:11px 15px; border-radius:20px; opacity:0}
+  .pm.me{align-self:flex-end; background:#3b82f6; color:#fff; border-bottom-right-radius:5px}
+  .pm.bot{align-self:flex-start; background:#22252d; color:var(--fg-0); border-bottom-left-radius:5px}
+  .pm.st{display:flex; align-items:center; gap:9px; color:var(--fg-1); font-size:17px}
+  .pm.st .spin{position:relative; width:14px; height:14px; flex:none; border-color:rgba(77,159,255,.25); border-top-color:#4d9fff}
+  .pm .ok{color:var(--ok); font-weight:800}
+  .pm code{font-family:var(--mono); font-size:15.5px; color:#cfe1ff}
+  .pin{flex:none; margin:0 12px 14px; padding:10px 14px; border-radius:20px; border:1px solid var(--line-2); font-size:14px; color:var(--fg-3)}
+  .etext{position:absolute; left:590px; top:206px; width:640px}
+  .etext h2{margin:0; font-size:72px; font-weight:820; letter-spacing:-3px; line-height:1.04; color:var(--fg-0)}
+  .etext h2 .ac{color:#4d9fff}
+  .etext p{margin:20px 0 0; font-size:25px; font-weight:600; color:var(--fg-2); letter-spacing:-.4px}
+  .chans{display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; width:670px}
+  .chan{font-size:19px; font-weight:680; color:var(--fg-0); padding:9px 16px; border-radius:24px; box-shadow:0 0 0 1px var(--line-2); background:rgba(255,255,255,.04)}
 
-  .msg{opacity:0; transform:translateY(4px); transition:opacity .3s var(--ease), transform .3s var(--ease)}
-  .msg.on{opacity:1; transform:none}
-  .msg .role{font-size:10px; font-weight:700; letter-spacing:.3px; margin-bottom:4px}
-  .msg.user{align-self:flex-end; max-width:80%; text-align:right}
-  .msg.user .role{color:var(--fg-3)}
-  .msg.user .b{display:inline-block; background:var(--bg-3); color:var(--fg-0); font-size:13px; padding:8px 12px; border-radius:12px; border-bottom-right-radius:3px; text-align:left}
-  .msg.bot .role{color:var(--claude)}
-  .msg.bot .b{font-size:13px; color:var(--fg-1); line-height:1.5}
-  .msg.bot .b .kbd{color:var(--codex); font-weight:600}
+  /* ---------- D: end card ---------- */
+  .end{display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; z-index:20}
+  .logo-wrap{position:relative; width:120px; height:120px}
+  .logo-wrap img{width:120px; height:120px; position:relative; z-index:2}
+  .halo{position:absolute; left:50%; top:50%; width:120px; height:120px; margin:-60px 0 0 -60px; border-radius:50%; border:2px solid rgba(8,181,244,.8); opacity:0}
+  .glow{position:absolute; left:50%; top:50%; width:420px; height:420px; margin:-210px 0 0 -210px; border-radius:50%;
+    background:radial-gradient(circle, rgba(8,181,244,.32), rgba(7,91,255,.10) 40%, transparent 70%); opacity:0}
+  .end .nm{font-size:84px; font-weight:840; letter-spacing:-4px; color:var(--fg-0); margin-top:18px; line-height:1.05}
+  .end .tg{font-size:32px; font-weight:600; color:var(--fg-1); margin-top:14px; letter-spacing:-.6px}
+  .chips{display:flex; gap:14px; margin-top:26px}
+  .chip{display:flex; align-items:center; gap:10px; font-size:21px; font-weight:680; color:var(--fg-0); padding:11px 20px; border-radius:26px; box-shadow:0 0 0 1px var(--line-2); background:rgba(255,255,255,.04)}
+  .chip i{width:11px; height:11px; border-radius:50%}
+  .cta{margin-top:30px; font-family:var(--mono); font-size:20px; color:var(--fg-0); padding:13px 22px; border-radius:12px; background:rgba(255,255,255,.05); box-shadow:0 0 0 1px var(--line-2)}
+  .cta .pr{color:var(--accent)}
+  .end .ft{margin-top:18px; font-size:16px; color:var(--fg-3); font-family:var(--mono)}
 
-  /* collapsed tool-call row (how an agent really renders an MCP call) */
-  .trow{align-self:flex-start; display:inline-flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11.5px;
-    color:var(--fg-3); background:var(--bg-0); border:1px solid var(--line-soft); border-radius:8px; padding:5px 10px;
-    opacity:0; transform:translateY(3px); transition:opacity .3s var(--ease), transform .3s var(--ease)}
-  .trow.on{opacity:1; transform:none}
-  .trow .tname{color:var(--fg-2)} .trow .targ{color:var(--codex); font-weight:600} .trow .chev{color:var(--fg-3); margin-left:2px}
-  /* structured changes bar (Fluxion's own chrome — not agent prose) */
-  .prbar{display:flex; align-items:center; gap:10px; margin-top:10px; padding-top:9px; border-top:1px solid var(--line-soft);
-    opacity:0; transform:translateY(3px); transition:opacity .3s var(--ease), transform .3s var(--ease)}
-  .prbar.on{opacity:1; transform:none}
-  .prbar .lbl{margin-right:auto; font-size:9.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--fg-3)}
-  .prbar .stat{font-family:var(--mono); font-size:11px}
-  .prbar .stat .ad{color:var(--returned); font-weight:700} .prbar .stat .md{color:var(--failed); font-weight:700}
-  .prbar .btn{font-size:11px; font-weight:700; color:var(--accent-ink); background:var(--accent); padding:4px 11px; border-radius:7px}
-
-  /* mock chat input area at the bottom */
-  .cinput{padding:9px 12px; background:var(--bg-2); border-top:1px solid var(--line-soft); display:flex; align-items:center}
-  .cinput .ibox{flex:1; background:var(--bg-0); border:1px solid var(--line-soft); border-radius:8px; padding:6px 10px; font-size:11.5px; color:var(--fg-3); display:flex; align-items:center; justify-content:space-between}
-  .cinput .ibox .kbd{font-size:9.5px; background:var(--bg-2); border:1px solid var(--line); padding:1px 4px; border-radius:4px; color:var(--fg-2); font-family:var(--sans)}
-
-  /* ---------- IM overlay ---------- */
-  .im{position:absolute; right:42px; bottom:40px; width:224px; background:var(--bg-2);
-    border:1px solid var(--line); border-radius:12px; padding:10px; z-index:8;
-    box-shadow:0 16px 40px -16px rgba(0,0,0,.65); opacity:0; transform:translateY(12px); transition:opacity .4s var(--ease), transform .4s var(--ease)}
-  .im.on{opacity:1; transform:none}
-  .im .h{display:flex; align-items:center; gap:7px; font-size:11px; color:var(--fg-2); font-weight:600; margin-bottom:8px}
-  .im .h .tg{width:16px;height:16px;border-radius:50%;background:#2aabee;display:grid;place-items:center;color:#fff;font-size:9px}
-  .bub{max-width:82%; font-size:12px; padding:7px 10px; border-radius:12px; margin-bottom:6px; line-height:1.4; opacity:0; transform:translateY(4px); transition:opacity .3s var(--ease), transform .3s var(--ease)}
-  .bub.on{opacity:1; transform:none}
-  .bub.me{margin-left:auto; background:var(--accent); color:var(--accent-ink); border-bottom-right-radius:3px; font-weight:500}
-  .bub.bot2{background:var(--bg-0); color:var(--fg-1); border-bottom-left-radius:3px; font-family:var(--mono); font-size:11px}
-  .bub .rmark{color:var(--accent); font-weight:700}
-
-  /* ---------- tagline ---------- */
-  .tagline{position:absolute; left:0; right:0; bottom:12px; text-align:center; font-size:12px; font-weight:600;
-    color:var(--fg-2); letter-spacing:.4px; opacity:0; transition:opacity .5s var(--ease); z-index:4}
-  .tagline.on{opacity:1}
-  .tagline b{color:var(--fg-0)} .tagline .dot{color:var(--accent)}
-  .tagline .tagsub{display:block; margin-top:3px; font-size:10.5px; font-weight:500; letter-spacing:.2px; color:var(--fg-3)}
-
-  /* ---------- controls ---------- */
-  .controls{position:fixed; bottom:16px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:30}
-  .controls a,.controls button{font:inherit; font-size:12px; font-weight:600; color:var(--fg-2); text-decoration:none;
-    background:rgba(40,44,52,.85); border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; backdrop-filter:blur(8px)}
-  .controls a:hover,.controls button:hover{color:var(--fg-0)}
-  /* record mode fades the chrome (clean frame) but hover still recovers it —
-     so mouse users aren't trapped; H toggles it too */
-  body.record .controls{opacity:0; transition:opacity .3s var(--ease)}
-  body.record .controls:hover,
-  body.record .controls:focus-within{opacity:1}
-
-  @media (prefers-reduced-motion: reduce){ *{animation:none !important} }
+  .controls{position:fixed; bottom:14px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:100; transition:opacity .3s}
+  .controls button{font:600 12px var(--sans); color:var(--fg-2); background:rgba(30,32,38,.85); border:1px solid var(--line-2); border-radius:8px; padding:6px 12px; cursor:pointer}
+  .controls button:hover{color:var(--fg-0)}
+  body.record .controls,body.export .controls{opacity:0}
+  body.record .controls:hover{opacity:1}
 </style>
 </head>
 <body>
 <main>
-  <section class="stage" aria-labelledby="hero-title">
-    <h1 id="hero-title" class="sr-only">Fluxion — delegate scoped tasks across Codex, Claude Code, and Antigravity through one local MCP server</h1>
-    <p class="sr-only">Animated concept demo: a Claude Code chat delegates a task to a Codex sub-agent through Fluxion's MCP server. The call is asynchronous — dispatched, polled, then retrieved — and Codex edits three files and returns the result with one-click revert. Fluxion's macOS menu-bar app shows remaining quota and token usage for Claude, Codex, and Antigravity in a Dynamic-Island notch.</p>
+  <h1 class="sr-only">Fluxion — delegate scoped tasks across Codex, Claude Code, and Antigravity through one local MCP server</h1>
+  <p class="sr-only">Animated concept demo with staged data. In Claude Code, the user asks for retry logic in a messaging gateway. Claude splits the task between a Codex sub-agent and an Antigravity sub-agent, running in parallel through Fluxion's local MCP server; they change three files and the result comes back to Claude as a reviewable, revertible change set. Fluxion's macOS notch then shows remaining quota for Claude, Codex, and Antigravity; when Codex's window resets, Fluxion notifies and Auto-Pings to start the next one. Finally a task is sent from a phone chat and the Mac replies.</p>
 
-    <div class="desktop" id="desktop" aria-hidden="true">
+  <div class="stage" id="stage" aria-hidden="true">
+    <div class="bg" id="bg"></div>
 
-      <!-- menu bar -->
-      <div class="menubar">
-        <div class="mb-left"><span class="app"><img src="../../assets/brand/fluxion-logo.svg" alt="">Fluxion</span><span class="mi">File</span><span class="mi">Window</span><span class="mi">Help</span></div>
-        <div class="mb-right"><span class="clock">12:05</span></div>
-      </div>
+    <!-- T1 -->
+    <div class="scene t1" id="sT1"><div class="line" id="t1line">Stay in your agent<span class="dot">.</span></div></div>
 
-      <!-- Dynamic Island: collapsed → peek → expanded -->
-      <div class="island" id="island">
-        <div class="lens"></div>
+    <!-- T2 -->
+    <div class="scene t2" id="sT2">
+      <div class="lead" id="t2lead">Delegate to</div>
+      <div class="slot" id="slot"><div class="slot-col" id="slotcol">
+        <div style="color:var(--claude)">Claude Code</div>
+        <div style="color:var(--agy)">Antigravity</div>
+        <div style="color:var(--codex)" id="slotCodex">Codex</div>
+      </div></div>
+    </div>
+    <div class="flood" id="flood"></div>
 
-        <!-- collapsed: quota % split onto both shoulders -->
-        <div class="layer l-col">
-          <div class="glance glance-l"><span class="gseg claude"><span class="gd"></span>84%</span></div>
-          <div class="glance glance-r"><span class="gseg codex"><span class="gd"></span><span id="glCodex">61%</span></span><span class="gseg agy"><span class="gd"></span>62%</span></div>
-        </div>
-
-        <!-- peek: glance line (no EXT tag by default) -->
-        <div class="layer l-peek">
-          <span class="pseg claude"><span class="pd"></span><span class="pn">Claude</span><span class="pp">84%</span><span class="clk">◷ 2h11m</span></span>
-          <span class="pdiv"></span>
-          <span class="pseg codex"><span class="pd"></span><span class="pn">Codex</span><span class="pp" id="pkCodex">61%</span><span class="clk" id="pkCodexClk">◷ 4h45m</span></span>
-          <span class="pdiv"></span>
-          <span class="pseg agy"><span class="pd"></span><span class="pn">Antigravity</span><span class="pp">62%</span><span class="clk">◷ 1h20m</span></span>
-        </div>
-
-        <!-- expanded: glass panel with rings -->
-        <div class="layer l-exp">
-          <div class="panel-head"><b id="panelTitle">Remaining</b><span class="upd"><span class="g"></span>updated now</span></div>
-          <div class="clip">
-            <div class="track" id="track">
-              <!-- page 1: Remaining rings -->
-              <div class="page">
-                <div class="col claude">
-                  <div class="col-h"><span class="hd"></span>Claude</div>
-                  <div class="ring"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="44"/><circle class="prg" id="rClaude" cx="52" cy="52" r="44"/></svg>
-                    <div class="ring-c"><div class="ring-pct">84<span class="u">%</span></div><div class="ring-sub">5H LEFT</div></div></div>
-                  <div class="col-cd"><span class="clk">◷</span> 2h 11m</div>
-                </div>
-                <div class="col codex">
-                  <div class="col-h"><span class="hd"></span>Codex</div>
-                  <div class="ring"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="44"/><circle class="prg" id="rCodex" cx="52" cy="52" r="44"/></svg>
-                    <div class="ring-c"><div class="ring-pct" id="rCodexPct">61<span class="u">%</span></div><div class="ring-sub">5H LEFT</div></div></div>
-                  <div class="col-cd"><span class="clk">◷</span> <span id="rCodexCd">4h 45m</span></div>
-                  <div class="resets"><span class="ic">↻</span> reset · 1 available</div>
-                </div>
-                <div class="col agy">
-                  <div class="col-h"><span class="hd"></span>Antigravity</div>
-                  <div class="ring"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="44"/><circle class="trk" cx="52" cy="52" r="31"/><circle class="prg" id="rAgy" cx="52" cy="52" r="44"/><circle class="prg inner" id="rExt" cx="52" cy="52" r="31"/></svg>
-                    <div class="ring-c"><div class="ring-pct">62<span class="u">%</span></div><div class="ring-sub">GEMINI</div></div></div>
-                  <div class="col-cd"><span class="clk">◷</span> 1h 20m</div>
-                  <div class="ext-line">GEM 62% · <span class="e">EXT 41%</span></div>
-                </div>
-              </div>
-              <!-- page 2: Used today -->
-              <div class="page">
-                <div class="col claude"><div class="col-h"><span class="hd"></span>Claude</div><div class="big">1.4M</div><div class="unit">TOKENS TODAY</div><div class="io">142k in · 38k out</div><div class="cache">97% cache hit</div><div class="apiv">≈ $49.84 value</div></div>
-                <div class="col codex"><div class="col-h"><span class="hd"></span>Codex</div><div class="big">0.9M</div><div class="unit">TOKENS TODAY</div><div class="io">96k in · 24k out</div><div class="cache">95% cache hit</div><div class="apiv">≈ $1.42 value</div></div>
-                <div class="col agy"><div class="col-h"><span class="hd"></span>Antigravity</div><div class="big">1.1M</div><div class="unit">TOKENS TODAY</div><div class="io">120k in · 31k out</div><div class="cache">84% cache hit</div><div class="apiv">≈ $0.86 value</div></div>
-              </div>
-            </div>
-          </div>
-          <div class="panel-foot"><span class="oc">Open Console ↗</span><span class="pager"><i class="on" id="pg1"></i><i id="pg2"></i></span></div>
-        </div>
-      </div>
-
-      <!-- notification banner -->
-      <div class="notif" id="notif">
-        <div class="ico">◆</div>
-        <div><div class="t">Fluxion · Codex quota reset</div><div class="m">New window detected. Auto Ping sent to start it now.</div></div>
-        <span class="now">now</span>
-      </div>
-
-      <!-- primary agent chat (any agent, app or CLI — here: Claude Code → Codex) -->
-      <div class="area">
+    <!-- B -->
+    <div class="scene" id="sB">
+      <div class="space" id="space"><div class="rig" id="rig">
+        <div class="floor" id="floor"></div>
         <div class="chat" id="chat">
-          <div class="cbar">
-            <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
-            <span class="name">Claude Code</span>
+          <div class="sheen"><i id="sheenChat"></i></div>
+          <div class="tbar">
+            <div class="lights"><i style="background:#f26d5b"></i><i style="background:#f5a524"></i><i style="background:#34c759"></i></div>
+            <span class="nm">Claude Code</span><span class="pth">~/messaging-gateway</span>
           </div>
-          <div class="cbody" id="cbody">
-            <div class="msg user" id="m0"><div class="role">You</div><div class="b">add retry to the messaging gateway</div></div>
-            <div class="msg bot" id="m1"><div class="role">Claude</div><div class="b">I'll dispatch a <span class="kbd">Codex</span> sub-agent through Fluxion.</div></div>
-            <!-- tool calls render collapsed, the way an agent really shows them -->
-            <div class="trow" id="tr0">⚙ <span class="tname">fluxion · run_subagent</span> <span class="targ">→ codex</span><span class="chev">›</span></div>
-            <div class="msg bot" id="m1b"><div class="role">Claude</div><div class="b">Queued a Codex session (run <span class="kbd">4eee1833</span>). Polling for the result…</div></div>
-            <div class="trow" id="tr1">⚙ <span class="tname">fluxion · get_task_status, get_task_result</span><span class="chev">›</span></div>
-            <!-- brief prose result; the reviewable changes live in the structured bar below -->
-            <div class="msg bot" id="m2"><div class="role">Claude</div><div class="b">Codex finished in 48s — 3 files changed across the gateway retry path. I can open a PR.</div></div>
-            <div class="prbar" id="prbar"><span class="lbl">changes</span><span class="stat"><span class="ad">+79</span> <span class="md">−5</span></span><span class="btn">Create PR</span></div>
-          </div>
-          <div class="cinput">
-            <div class="ibox">
-              <span>Ask Claude Code a question...</span>
-              <kbd class="kbd">⌘K</kbd>
+          <div class="cbody">
+            <div class="u-msg" id="m0"><div class="who">You</div><div class="bb"><span id="typed"></span><span class="caret" id="caret"></span></div></div>
+            <div class="c-msg" id="m1"><div class="who">Claude</div><div class="bb">I'll split this: <em>Codex</em> on the retry logic, <em class="ag">Antigravity</em> on the tests.</div></div>
+            <div class="trows">
+              <div class="trow" id="tr0">⚙ fluxion · run_subagent <span class="to">→ codex</span><span class="st"><span class="spin"></span><span class="chk">✓</span></span></div>
+              <div class="trow" id="tr1">⚙ fluxion · run_subagent <span class="to ag">→ antigravity</span><span class="st"><span class="spin ag"></span><span class="chk">✓</span></span></div>
             </div>
+            <div class="c-msg" id="m2"><div class="who">Claude</div><div class="bb">Both finished — 3 files changed, tests passing. Ready for review.</div></div>
+            <div class="cbar" id="cb"><span class="lb">CHANGES</span><span class="ns"><span class="a">+107</span> <span class="d">−5</span></span><span class="btn ghost">Revert</span><span class="btn pri">Create PR</span></div>
+          </div>
+          <div class="cin"><div>Ask Claude Code…</div></div>
+        </div>
+
+        <svg class="wire" viewBox="0 0 1280 720">
+          <defs>
+            <linearGradient id="wg0" x1="0" x2="1"><stop offset="0" stop-color="#f0934e"/><stop offset="1" stop-color="#a98bff"/></linearGradient>
+            <linearGradient id="wg1" x1="0" x2="1"><stop offset="0" stop-color="#f0934e"/><stop offset="1" stop-color="#4d9fff"/></linearGradient>
+            <filter id="glowf" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <path class="wp" fill="none" stroke="url(#wg0)" stroke-width="2.5" stroke-linecap="round"/>
+          <path class="wp" fill="none" stroke="url(#wg1)" stroke-width="2.5" stroke-linecap="round"/>
+          <path class="pk" data-w="0" fill="none" stroke="#e6dcff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+          <path class="pk" data-w="0" fill="none" stroke="#e6dcff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+          <path class="pk" data-w="0" fill="none" stroke="#e6dcff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+          <path class="pk" data-w="1" fill="none" stroke="#d6e8ff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+          <path class="pk" data-w="1" fill="none" stroke="#d6e8ff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+          <path class="pk" data-w="1" fill="none" stroke="#d6e8ff" stroke-width="4" stroke-linecap="round" filter="url(#glowf)"/>
+        </svg>
+
+        <div class="card" id="card0">
+          <div class="sheen"><i></i></div>
+          <div class="card-h"><i></i><b>Codex</b><span>sub-agent</span><span class="pill"><span class="ripple"></span><span class="pilltx">RUNNING</span></span></div>
+          <div class="meta">run 4eee1833 · workspace-write</div>
+          <div class="files">
+            <div class="f"><span class="hl"></span><span class="k m">M</span>gateway/retry.py<span class="n2"><span class="a">+52</span></span></div>
+            <div class="f"><span class="hl"></span><span class="k m">M</span>gateway/client.py<span class="n2"><span class="a">+21</span> <span class="d">−5</span></span></div>
+          </div>
+          <div class="card-f"><span class="elapsed">0:00</span><span class="via"><img src="../../assets/brand/fluxion-logo.svg" alt="">via Fluxion MCP</span></div>
+        </div>
+        <div class="card ag" id="card1">
+          <div class="sheen"><i></i></div>
+          <div class="card-h"><i></i><b>Antigravity</b><span>sub-agent</span><span class="pill"><span class="ripple"></span><span class="pilltx">RUNNING</span></span></div>
+          <div class="meta">run 7b19c2e0 · workspace-write</div>
+          <div class="files">
+            <div class="f"><span class="hl"></span><span class="k n">A</span>tests/test_retry.py<span class="n2"><span class="a">+34</span></span></div>
+          </div>
+          <div class="card-f"><span class="elapsed">0:00</span><span class="via"><img src="../../assets/brand/fluxion-logo.svg" alt="">via Fluxion MCP</span></div>
+        </div>
+      </div></div>
+      <div class="bshade" id="bshade"></div>
+      <div class="blabel" id="blabel"><span class="c1">Claude</span> delegates. <span class="c2">Codex</span> and <span class="c3">Antigravity</span> do the work.</div>
+    </div>
+    <div class="stat" id="stat">
+      <div class="big" id="statbig"><span class="a">+107</span> <span class="d">−5</span></div>
+      <div class="sub" id="statsub"><b>3 files</b> from two agents, back in your chat. Review it. Revert it.</div>
+    </div>
+
+    <!-- C -->
+    <div class="scene" id="sC">
+      <div class="screen" id="screen">
+        <div class="wall"></div>
+        <div class="menubar">
+          <div class="l"><b><img src="../../assets/brand/fluxion-logo.svg" alt="">Fluxion</b><span>File</span><span>Edit</span><span>Window</span></div>
+          <div class="r">Tue 12:05</div>
+        </div>
+        <div class="wing" id="wingL"></div><div class="wing" id="wingR"></div>
+        <div class="notch" id="notch">
+          <div class="lens" id="lens"></div>
+          <div id="collapsed">
+            <div class="glance l"><span class="gs" id="slot0"><svg class="gg" viewBox="0 0 12 12" data-c="claude" data-p="84"></svg>84%</span></div>
+            <div class="glance r"><span class="gs" id="slot1"><svg class="gg" viewBox="0 0 12 12" data-c="codex" data-p="61"></svg>61%</span><span class="gs" id="slot2"><svg class="gg" viewBox="0 0 12 12" data-c="agy" data-p="62"></svg>62%</span></div>
+          </div>
+          <div class="panel" id="panel">
+            <div class="ph"><span id="ptitle">Remaining</span><span class="u"><i></i>Updated just now</span><span class="vd"></span><svg viewBox="0 0 16 16"><path fill="#fff" d="M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Zm6.3 3.7-.1-1.8 1.4-1.2-1.4-2.4-1.8.5-1.5-.9L10.5 1.4h-2.8l-.4 1.7-1.5.9-1.8-.5L2.6 5.9 4 7.1v1.8L2.6 10.1 4 12.5l1.8-.5 1.5.9.4 1.7h2.8l.4-1.7 1.5-.9 1.8.5 1.4-2.4Z" opacity=".9"/><circle cx="8" cy="8" r="1.6" fill="#000"/></svg></div>
+            <div class="pages"><div class="pg" id="page0"><div class="cols"><div class="col"><div class="col-h" style="--c:var(--claude)"><i></i>Claude</div><div class="ringbox"><div class="ring"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="48" stroke-width="8"/><circle class="prg" data-c="claude" data-p="84" data-col="0" cx="52" cy="52" r="48" stroke-width="8"/></svg><div class="ring-c"><b data-n="84">0<small>%</small></b><span>5H LEFT</span></div></div></div><div class="rows"><div class="qr">5-HOUR<span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b>2h</b><em>11m</em></span></div><div class="qr">WEEKLY<b class="qp">66%</b><span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b>4d</b><em>2h</em></span></div><div class="qbar" style="--c:var(--claude)"><i data-w="66"></i></div><div class="qfoot"><div class="credits"><svg viewBox="0 0 12 10"><rect x=".5" y=".5" width="11" height="9" rx="1.6" fill="currentColor"/><rect x=".5" y="2.6" width="11" height="1.6" fill="#000" opacity=".55"/></svg>Credits ready · $18.40</div></div></div></div><div class="col"><div class="col-h" style="--c:var(--codex)"><i></i>Codex</div><div class="ringbox"><div class="ring"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="48" stroke-width="8"/><circle class="prg" data-c="codex" data-p="61" data-col="1" cx="52" cy="52" r="48" stroke-width="8"/></svg><div class="rst" id="rst"></div><div class="ring-c"><b data-n="61">0<small>%</small></b><span>5H LEFT</span></div></div></div><div class="rows"><div class="qr">5-HOUR<span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b id="c5h">4h</b><em id="c5m">45m</em></span></div><div class="qr">WEEKLY<b class="qp">78%</b><span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b>3d</b><em>4h</em></span></div><div class="qbar" style="--c:var(--codex)"><i data-w="78"></i></div><div class="qfoot"><div class="resets"><span class="ri" style="color:var(--codex)"><svg viewBox="0 0 10 10"><path d="M2.2 3.3A3.4 3.4 0 1 1 1.6 5.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1.2 1.2v2.6h2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>RESETS<span class="rn">2 available</span></div></div></div></div><div class="col"><div class="col-h" style="--c:var(--agy)"><i></i>Antigravity</div><div class="ringbox"><div class="ring dual"><svg viewBox="0 0 104 104"><circle class="trk" cx="52" cy="52" r="48" stroke-width="8"/><circle class="prg" data-c="agy" data-p="62" data-col="2" cx="52" cy="52" r="48" stroke-width="8"/><circle class="trk" cx="52" cy="52" r="38" stroke-width="6"/><circle class="prg inner" data-c="ext" data-p="41" data-col="2" cx="52" cy="52" r="38" stroke-width="6"/></svg><div class="ring-c"><b data-n="62">0<small>%</small></b><span>GEM · 5H</span><div class="sec"><em>EXT</em>41%</div></div></div></div><div class="rows" style="gap:7px"><div class="ar"><div class="qr"><span class="tag">GEM</span><span class="wk" style="background:#4d9fff29; color:#4d9fffeb">WK</span><b class="qp">70%</b><span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b>5d</b><em>1h</em></span></div><div class="qbar" style="--c:#4d9fff"><i data-w="70"></i></div></div><div class="ar"><div class="qr"><span class="tag">EXT</span><span class="wk" style="background:#35d6c829; color:#35d6c8eb">WK</span><b class="qp">55%</b><span class="tm"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 2.6V5l1.6 1" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg><b>5d</b><em>1h</em></span></div><div class="qbar" style="--c:#35d6c8"><i data-w="55"></i></div></div></div></div></div></div>
+<div class="pg" id="page1"><div class="cols"><div class="col" style="--c:var(--claude)"><div class="col-h"><i></i>Claude</div><div class="tot"><b data-v="1.4">0</b><span>TOTAL TODAY</span></div><div class="mets"><div class="met"><span>CACHE HIT</span><b>97%</b></div><div class="met"><span>API VALUE</span><b>≈$21.40</b></div></div><div class="trend"><div class="rule"></div><div class="th">LAST 7 DAYS<b>7.4M</b></div><div class="bars"><div class="bcol"><div class="bwrap"><i data-v="0.9"></i></div><span>W</span></div><div class="bcol"><div class="bwrap"><i data-v="1.6"></i></div><span>T</span></div><div class="bcol"><div class="bwrap"><i data-v="1.1"></i></div><span>F</span></div><div class="bcol"><div class="bwrap"><i data-v="0.4"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="0.2"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="1.8"></i></div><span>M</span></div><div class="bcol today"><div class="bwrap"><i data-v="1.4"></i></div><span>T</span></div></div></div></div><div class="col" style="--c:var(--codex)"><div class="col-h"><i></i>Codex</div><div class="tot"><b data-v="0.9">0</b><span>TOTAL TODAY</span></div><div class="mets"><div class="met"><span>CACHE HIT</span><b>95%</b></div><div class="met"><span>API VALUE</span><b>≈$6.10</b></div></div><div class="trend"><div class="rule"></div><div class="th">LAST 7 DAYS<b>4.4M</b></div><div class="bars"><div class="bcol"><div class="bwrap"><i data-v="0.5"></i></div><span>W</span></div><div class="bcol"><div class="bwrap"><i data-v="0.7"></i></div><span>T</span></div><div class="bcol"><div class="bwrap"><i data-v="1.2"></i></div><span>F</span></div><div class="bcol"><div class="bwrap"><i data-v="0.3"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="0"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="0.8"></i></div><span>M</span></div><div class="bcol today"><div class="bwrap"><i data-v="0.9"></i></div><span>T</span></div></div></div></div><div class="col" style="--c:var(--agy)"><div class="col-h"><i></i>Antigravity</div><div class="tot"><b data-v="1.1">0</b><span>TOTAL TODAY</span></div><div class="mets"><div class="met"><span>CACHE HIT</span><b>84%</b></div><div class="met"><span>API VALUE</span><b>≈$4.80</b></div></div><div class="trend"><div class="rule"></div><div class="th">LAST 7 DAYS<b>3.9M</b></div><div class="bars"><div class="bcol"><div class="bwrap"><i data-v="0.3"></i></div><span>W</span></div><div class="bcol"><div class="bwrap"><i data-v="0.6"></i></div><span>T</span></div><div class="bcol"><div class="bwrap"><i data-v="0.9"></i></div><span>F</span></div><div class="bcol"><div class="bwrap"><i data-v="0.2"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="0.1"></i></div><span>S</span></div><div class="bcol"><div class="bwrap"><i data-v="0.7"></i></div><span>M</span></div><div class="bcol today"><div class="bwrap"><i data-v="1.1"></i></div><span>T</span></div></div></div></div></div></div></div>
+            <div class="pager"><i id="pg1"></i><i id="pg2"></i></div>
+            <div class="psep"></div>
+            <div class="pfoot">Open Console <span>↗</span></div>
           </div>
         </div>
+        <div class="bubble" id="bubble"><svg class="bshape"><path id="bpath" fill="#000"/></svg></div>
+        <div class="banner" id="banner"><img src="../../assets/brand/fluxion-logo.svg" alt="">
+          <div class="bt"><div class="bh">Fluxion Quota Reset<span>now</span></div>
+            <div class="bb2">💜 Codex 5h quota has reset — you're good to go</div></div></div>
+      </div>
+      <div class="clabel"><span id="cl1">Glance.</span><span id="cl2">Peek.</span><span id="cl3">Every quota.</span><span id="cl4">Every token, today.</span><span id="cl5">Reset? Caught.</span></div>
+      <div class="csub" id="csub">You get pinged · <b>Auto-Ping</b> starts the next window</div>
+    </div>
 
-        <!-- IM overlay -->
-        <div class="im" id="im">
-          <div class="h"><span class="tg">✈</span>Telegram · on the go</div>
-          <div class="bub me" id="b1">restart the staging worker</div>
-          <div class="bub bot2" id="b2">✓ done · worker up in 3.1s</div>
-          <div class="bub bot2" id="b3"><span class="rmark">◆</span> Codex quota reset · Auto Ping ✓</div>
+    <!-- E -->
+    <div class="scene" id="sE">
+      <div class="pspace"><div class="phone" id="phone"><div class="pscr">
+        <div class="island"></div>
+        <div class="psb"><span>12:41</span><span>●●●</span></div>
+        <div class="phd"><img id="pavatar" src="../../assets/brand/fluxion-logo.svg" alt=""><div><b>Fluxion</b><span>bot · online</span></div></div>
+        <div class="pbody">
+          <div class="pm bot" id="pmr">🔔 <b>Fluxion Quota Reset</b><br>💜 Codex 5h quota has reset — you're good to go</div>
+          <div class="pm me" id="pm0">Rerun the retry tests on staging</div>
+          <div class="pm bot st" id="pm1"><span class="spin" id="pspin"></span><span id="pst">Request received.</span></div>
+          <div class="pm bot" id="pm2"><span class="ok">✓</span> 14 passed. Fixed a flaky timeout in <code>tests/test_retry.py</code></div>
         </div>
-
-        <div class="tagline" id="tagline"><b>Local-first</b> <span class="dot">·</span> <b>Cross-provider</b> <span class="dot">·</span> <b>One MCP</b><span class="tagsub">no account · self-hosted on 127.0.0.1</span></div>
+        <div class="pin">Message</div>
+      </div></div></div>
+      <div class="etext">
+        <h2 id="eh"><span>From your phone,</span><br><span class="ac">too.</span></h2>
+        <p id="ep">Send a task from chat. It runs on your Mac.</p>
+        <div class="chans"><span class="chan">Slack</span><span class="chan">Telegram</span><span class="chan">WeChat</span><span class="chan">LINE</span><span class="chan">QQ</span><span class="chan">Feishu</span></div>
       </div>
     </div>
-  </section>
+
+    <!-- D -->
+    <div class="scene end" id="sD">
+      <div class="logo-wrap" id="logo"><div class="glow" id="glow"></div><div class="halo" id="halo"></div><img src="../../assets/brand/fluxion-logo.svg" alt=""></div>
+      <div class="nm" id="enm">Fluxion</div>
+      <div class="tg" id="etg">One local MCP for every coding agent.</div>
+      <div class="chips">
+        <span class="chip"><i style="background:var(--claude)"></i>Claude Code</span>
+        <span class="chip"><i style="background:var(--codex)"></i>Codex</span>
+        <span class="chip"><i style="background:var(--agy)"></i>Antigravity</span>
+      </div>
+      <div class="cta" id="ecta"><span class="pr">$</span> brew install --cask superposed-labs/tap/fluxion</div>
+      <div class="ft" id="eft">open source · runs on 127.0.0.1</div>
+    </div>
+
+    <div class="fly banner" id="fly"><img src="../../assets/brand/fluxion-logo.svg" alt="">
+      <div class="bt"><div class="bh">Fluxion Quota Reset<span>now</span></div>
+        <div class="bb2">💜 Codex 5h quota has reset — you're good to go</div></div></div>
+    <img class="flylogo" id="flylogo" src="../../assets/brand/fluxion-logo.svg" alt="">
+
+    <div class="grain"></div>
+    <div class="vignette"></div>
+  </div>
 </main>
 
-  <div class="controls" role="group" aria-label="Demo controls">
-    <button id="btnReplay" type="button" aria-label="Replay the animation from the start">↺ Replay</button>
-    <button id="btnRecord" type="button" aria-pressed="false" title="Hide chrome for recording — press H to toggle back">Record mode</button>
-    <a id="lnkVariant" href="?variant=compact" aria-label="Switch to the compact README variant">Compact ▸</a>
-  </div>
+<div class="controls" role="group" aria-label="Demo controls">
+  <button id="bPlay" type="button">Pause</button>
+  <button id="bRestart" type="button">↺ Restart</button>
+</div>
 
 <script>
 (() => {
+  const DUR = 23.6;
   const $ = s => document.querySelector(s);
+  const $$ = s => [...document.querySelectorAll(s)];
   const params = new URLSearchParams(location.search);
-  const COMPACT = params.get("variant") === "compact";
-  const SPEED_FACTOR = parseFloat(params.get("speed")) || 1.0;
+  const EXPORT = params.has("export");
+  const FREEZE = params.has("t") ? parseFloat(params.get("t")) : null;
   const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  document.body.classList.toggle("compact", COMPACT);
-  $("#lnkVariant").textContent = COMPACT ? "◂ Full" : "Compact ▸";
-  $("#lnkVariant").href = COMPACT ? "?" : "?variant=compact";
-  $("#lnkVariant").setAttribute("aria-label", COMPACT ? "Switch to the full website variant" : "Switch to the compact README variant");
+  if (EXPORT) document.body.classList.add("export");
 
-  const timers = [];
-  const at = (ms, fn) => timers.push(setTimeout(fn, ms));
-  const clearAll = () => { timers.forEach(clearTimeout); timers.length = 0; };
-  const on  = id => $(id).classList.add("on");
-  const off = id => $(id).classList.remove("on");
-  // keep the newest revealed line pinned near the bottom (chat follows output)
-  const pin = sel => { const c=$("#cbody"), el=typeof sel==="string"?$(sel):sel; if(!c||!el) return;
-    c.scrollTo({top:Math.max(0, el.offsetTop+el.offsetHeight-c.clientHeight+14), behavior:"smooth"}); };
+  // ---------- math ----------
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const lerp = (a, b, k) => a + (b - a) * k;
+  const p = (t, a, b) => clamp((t - a) / (b - a));
+  const expo = x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+  const cubic = x => 1 - Math.pow(1 - x, 3);
+  const inout = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  const expoIn = x => x <= 0 ? 0 : Math.pow(2, 10 * x - 10);
 
-  // ring offsets: r=44 → C≈276.46 (outer) ; r=31 → C≈194.78 (inner)
-  const CO = 276.46, CI = 194.78;
-  const setRing = (id, pct, C) => { $(id).style.strokeDashoffset = (C||CO)*(1-pct/100); };
-  const fillRings = () => { setRing("#rClaude",84); setRing("#rCodex",61); setRing("#rAgy",62); setRing("#rExt",41,CI); };
-  const emptyRings = () => { ["#rClaude","#rCodex","#rAgy"].forEach(id=>$(id).style.strokeDashoffset=CO); $("#rExt").style.strokeDashoffset=CI; };
-
-  const CORE = ["#desktop","#chat","#m0","#m1","#tr0","#m1b","#tr1","#m2","#prbar"];
-  function showStatic(){ CORE.forEach(on); $("#cbody").scrollTop = $("#cbody").scrollHeight; }
-
-  function schedule(){
-    return [
-      {tf:150,  tc:150,  fn:()=>on("#desktop")},
-      {tf:600,  tc:600,  fn:()=>on("#chat")},
-      {tf:1100, tc:1100, fn:()=>on("#m0")},
-      {tf:1500, tc:1500, fn:()=>{ on("#m1"); pin("#m1"); }},
-      {tf:1800, tc:1800, fn:()=>{ on("#tr0"); pin("#tr0"); }},           // used run_subagent (collapsed)
-      {tf:2100, tc:2100, fn:()=>{ on("#m1b"); pin("#m1b"); }},           // queued · polling
-      {tf:2500, tc:2500, fn:()=>{ on("#tr1"); pin("#tr1"); }},           // used status/result (collapsed)
-      {tf:2900, tc:2900, fn:()=>{ on("#m2"); pin("#m2"); }},             // brief prose result
-      {tf:3200, tc:3200, fn:()=>{ on("#prbar"); pin("#prbar"); }},       // structured changes bar
-      // --- full-only: notch collapsed(%) → expanded rings → page → reset ---
-      {tf:5300,  tc:null, fn:()=>{ $("#island").classList.add("expanded"); fillRings(); }},
-      {tf:6900,  tc:null, fn:()=>{ $("#track").classList.add("p2"); $("#panelTitle").textContent="Used today"; $("#pg1").classList.remove("on"); $("#pg2").classList.add("on"); }},
-      {tf:8200,  tc:null, fn:()=>{ $("#track").classList.remove("p2"); $("#panelTitle").textContent="Remaining"; $("#pg2").classList.remove("on"); $("#pg1").classList.add("on"); }},
-      {tf:8800,  tc:null, fn:()=>{ setRing("#rCodex",0); $("#rCodexPct").innerHTML='—'; $("#rCodexCd").textContent="reset now"; }},
-      {tf:9300,  tc:null, fn:()=>{ setRing("#rCodex",99); $("#rCodexPct").innerHTML='99<span class="u">%</span>'; $("#rCodexCd").textContent="4h 59m";
-                                   $("#pkCodex").textContent="99%"; $("#pkCodexClk").textContent="◷ 4h59m"; $("#glCodex").textContent="99%"; }},
-      // collapse the island BEFORE the notification, so they never overlap
-      {tf:10100, tc:null, fn:()=>$("#island").classList.remove("expanded")},
-      {tf:10600, tc:null, fn:()=>on("#notif")},
-      {tf:11100, tc:null, fn:()=>{ on("#im"); on("#b1"); }},
-      {tf:12100, tc:null, fn:()=>on("#b2")},
-      {tf:12600, tc:null, fn:()=>off("#notif")},
-      {tf:12900, tc:null, fn:()=>on("#b3")},   // the reset also lands in IM (one line)
-      // tagline + loop
-      {tf:13800, tc:6200,  fn:()=>on("#tagline")},
-      {tf:16500, tc:8200,  fn:reset},
-    ];
+  // the house motion: lift + blur + optional scale-from, with an optional exit
+  function show(el, t, t0, { d = .5, dy = 14, blur = 8, sc = 1, out = null, od = .3, ody = -8, osc = 1 } = {}) {
+    const i = expo(p(t, t0, t0 + d));
+    const o = out == null ? 0 : cubic(p(t, out, out + od));
+    const k = i * (1 - o);
+    el.style.opacity = k;
+    const s = lerp(sc, 1, i) * lerp(1, osc, o);
+    el.style.transform = `translateY(${(1 - i) * dy + o * ody}px) scale(${s})`;
+    const b = (1 - i) * blur + o * blur;
+    el.style.filter = b < .05 ? "none" : `blur(${b}px)`;
+    return k;
   }
-
-  function reset(){
-    clearAll();
-    [...CORE, "#notif","#im","#b1","#b2","#b3","#tagline"].forEach(s => $(s).classList.remove("on"));
-    $("#island").classList.remove("peek","expanded"); $("#track").classList.remove("p2");
-    $("#panelTitle").textContent="Remaining"; $("#pg1").classList.add("on"); $("#pg2").classList.remove("on");
-    $("#rCodexPct").innerHTML='61<span class="u">%</span>'; $("#rCodexCd").textContent="4h 45m";
-    $("#pkCodex").textContent="61%"; $("#pkCodexClk").textContent="◷ 4h45m"; $("#glCodex").textContent="61%";
-    emptyRings();
-    $("#cbody").scrollTop = 0;
-    void $("#desktop").offsetWidth;
-    play();
+  // split text nodes into word ("w") or character ("ch") spans
+  function split(el, cls) {
+    const walk = node => [...node.childNodes].forEach(n => {
+      if (n.nodeType === 3) {
+        const frag = document.createDocumentFragment();
+        const parts = cls === "ch" ? [...n.textContent] : n.textContent.split(/(\s+)/);
+        parts.forEach(w => {
+          if (!w) return;
+          if (cls === "w" && /^\s+$/.test(w)) { frag.append(w); return; }
+          const s = document.createElement("span"); s.className = cls; s.textContent = w; frag.append(s);
+        });
+        n.replaceWith(frag);
+      } else walk(n);
+    });
+    walk(el);
+    return [...el.querySelectorAll("." + cls)];
   }
+  const stagger = (ws, t, t0, step, o) => ws.forEach((w, i) => show(w, t, t0 + i * step, o));
+  const vis = (el, on) => { el.style.visibility = on ? "visible" : "hidden"; };
 
-  function play(){ schedule().forEach(step => { const t = COMPACT ? step.tc : step.tf; if(t==null) return; at(t / SPEED_FACTOR, step.fn); }); }
+  // ---------- fit ----------
+  const stage = $("#stage");
+  const fit = () => { stage.style.transform = `scale(${Math.min(innerWidth / 1280, innerHeight / 720)})`; };
+  addEventListener("resize", fit); fit();
 
-  $("#btnReplay").addEventListener("click", () => { if(!REDUCE) reset(); });
-  const toggleRecord = () => $("#btnRecord").setAttribute("aria-pressed", document.body.classList.toggle("record"));
-  $("#btnRecord").addEventListener("click", toggleRecord);
-  window.addEventListener("keydown", e => {
-    if((e.key==="r"||e.key==="R") && !REDUCE) reset();
-    if(e.key==="h"||e.key==="H") toggleRecord();
+  // ---------- setup ----------
+  const T1W = split($("#t1line"), "w");
+  const ETG = split($("#etg"), "w");
+  const ENM = split($("#enm"), "ch");
+  const BLW = split($("#blabel"), "w");
+  const EHW = split($("#eh"), "w");
+  const CHANS = $$(".chan");
+  const CHIPS = $$(".chip");
+  const USER = "Add retry to the messaging gateway";
+  const COLORS = { claude: "#f0934e", codex: "#a98bff", agy: "#4d9fff", ext: "#2fd4c4" };
+  const rings = $$(".prg").map(c => {
+    const C = 2 * Math.PI * +c.getAttribute("r");
+    c.style.stroke = COLORS[c.dataset.c];
+    c.style.strokeDasharray = C;
+    return { c, C, pct: +c.dataset.p, col: COLORS[c.dataset.c] };
+  });
+  const nums = $$(".ring-c b");
+  // collapsed-strip ring gauges (QuotaGauge "ring": 12pt, 1.5pt stroke, track = brand at 28%)
+  const gauges = $$(".gg").map(g => {
+    const col = COLORS[g.dataset.c], C = 2 * Math.PI * 5.25;
+    g.innerHTML = `<circle cx="6" cy="6" r="5.25" fill="none" stroke="${col}" stroke-opacity=".28" stroke-width="1.5"/>` +
+      `<circle cx="6" cy="6" r="5.25" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" transform="rotate(-90 6 6)" stroke-dasharray="${C}" stroke-dashoffset="${C}"/>`;
+    return { arc: g.lastChild, C, pct: +g.dataset.p };
   });
 
-  if(REDUCE) showStatic(); else play();
+  // peek callout contents, mirroring NotchIslandView+Peek: name, then 5-HOUR / WEEKLY rows
+  // (label + %, 3pt bar, reset line); Antigravity splits into GEM / EXT pool sections
+  const row = (label, pct, reset, col) =>
+    `<div class="brow"><div class="bl"><span>${label}</span><b>${pct}%</b></div><div class="bar"><i data-w="${pct}" style="background:${col}"></i></div><div class="br">Resets in ${reset}</div></div>`;
+  const PEEK = [
+    `<div class="bn" style="color:${COLORS.claude}">Claude</div>` + row("5-HOUR", 84, "2h 11m", COLORS.claude) + row("WEEKLY", 66, "4d 2h", COLORS.claude),
+    `<div class="bn" style="color:${COLORS.codex}">Codex</div>` + row("5-HOUR", 61, "4h 45m", COLORS.codex) + row("WEEKLY", 78, "3d 4h", COLORS.codex),
+    `<div class="bn" style="color:${COLORS.agy}">Antigravity</div><div class="bsec" style="color:${COLORS.agy}">GEM</div>` + row("5-HOUR", 62, "1h 20m", COLORS.agy) + row("WEEKLY", 70, "5d 1h", COLORS.agy) +
+      `<div class="bsep"></div><div class="bsec" style="color:#35d6c8">EXT</div>` + row("5-HOUR", 41, "3h 02m", "#35d6c8") + row("WEEKLY", 55, "5d 1h", "#35d6c8"),
+  ];
+  const bubble = $("#bubble");
+  const BC = PEEK.map(h => { const d = document.createElement("div"); d.className = "bc"; d.innerHTML = h; bubble.append(d); return d; });
+  // the callout points at the most urgent provider first, then is re-pointed slot by slot
+  const FOCUS = [[10.2, 1], [10.95, 2]];
+  const BUBBLE_X = 640 - 118;
+  let slotX = [], bodyH = [], OPENH = 340;
+
+  const rig = $("#rig"), wps = $$(".wp"), pks = $$(".pk");
+  // the two parallel runs: Antigravity is launched a beat later and returns first
+  const RUNS = [
+    { card: $("#card0"), row: $("#tr0"), rgb: "169,139,255", t0: 4.45, done: 6.7, secs: 48, files: 5.35, fly: [160, -60] },
+    { card: $("#card1"), row: $("#tr1"), rgb: "77,159,255",  t0: 4.62, done: 6.35, secs: 31, files: 5.55, fly: [160, 90] },
+  ];
+  const PK = 46;   // packet length along the wire
+  const wireLen = [0, 0];
+
+  // wire from the tool-call row to the card, in rig space (measured untransformed)
+  function measure() {
+    const sB = $("#sB"); sB.style.opacity = 1;
+    rig.style.transform = "none";
+    const wr = rig.getBoundingClientRect(), sc = wr.width / 1280;
+    RUNS.forEach((run, w) => {
+      run.card.style.transform = "none";
+      const r = run.row.getBoundingClientRect(), c = run.card.getBoundingClientRect();
+      const x0 = (r.right - wr.left) / sc + 6, y0 = (r.top + r.height / 2 - wr.top) / sc;
+      const x1 = (c.left - wr.left) / sc - 2, y1 = (c.top - wr.top) / sc + 30;
+      const mx = (x0 + x1) / 2;
+      const d = `M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1}`;
+      wps[w].setAttribute("d", d);
+      const ks = pks.filter(k => +k.dataset.w === w);
+      ks.forEach(k => k.setAttribute("d", d));
+      wireLen[w] = wps[w].getTotalLength();
+      wps[w].style.strokeDasharray = wireLen[w];
+      ks.forEach(k => k.style.strokeDasharray = `${PK} ${wireLen[w] + PK * 2}`);
+      // fold-back target: the card shrinks into the end of its tool-call row
+      run.home = [x0 - (c.left - wr.left) / sc - c.width / sc / 2, y0 - (c.top - wr.top) / sc - c.height / sc / 2];
+    });
+    sB.style.opacity = 0;
+
+    // notch slot centres and callout body heights, in screen space
+    const sC = $("#sC"), scr = $("#screen"), notch = $("#notch");
+    sC.style.opacity = 1; scr.style.transform = "none";
+    notch.style.width = "300px"; notch.style.height = "30px";
+    const sr = scr.getBoundingClientRect(), k = sr.width / 1280;
+    slotX = [0, 1, 2].map(i => { const r = $("#slot" + i).getBoundingClientRect(); return (r.left + r.width / 2 - sr.left) / k; });
+    bodyH = BC.map(c => c.getBoundingClientRect().height / k + 20 + 11);
+    OPENH = Math.ceil($("#panel").getBoundingClientRect().height / k);
+    sC.style.opacity = 0;
+  }
+
+  // the peek callout: a rounded body with an upward tail at tailX (PeekBubbleShape)
+  function calloutPath(w, h, tailX) {
+    const r = 13, th = 10, hw = 6, top = th, ax = clamp(tailX, r + hw, w - r - hw);
+    return `M${r},${top} H${ax - hw} L${ax},0 L${ax + hw},${top} H${w - r} A${r},${r} 0 0 1 ${w},${top + r}` +
+      ` V${h - r} A${r},${r} 0 0 1 ${w - r},${h} H${r} A${r},${r} 0 0 1 0,${h - r} V${top + r} A${r},${r} 0 0 1 ${r},${top} Z`;
+  }
+
+  // keyframe track: rows of [t, ...values], eased in-out between rows
+  function track(rows, t) {
+    if (t <= rows[0][0]) return rows[0].slice(1);
+    const last = rows[rows.length - 1];
+    if (t >= last[0]) return last.slice(1);
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = rows[i], b = rows[i + 1];
+      if (t >= a[0] && t < b[0]) { const k = inout(p(t, a[0], b[0])); return a.slice(1).map((v, j) => lerp(v, b[j + 1], k)); }
+    }
+  }
+  //  scene B camera:  t     cx   cy   scale  rotY  rotX
+  const CAMB = [
+    [3.00, 470, 300, 1.85,   0,  0],
+    [3.70, 480, 300, 1.55,  -5,  3],
+    [4.30, 520, 330, 1.30, -10,  5],
+    [5.10, 760, 300, 1.28, -18,  8],
+    [6.00, 760, 420, 1.28, -14,  6],
+    [6.90, 740, 360, 1.20, -11,  5],
+    [7.45, 470, 400, 1.22,  -5,  3],
+    [8.50, 470, 400, 1.30,  -2,  2],
+  ];
+  //  scene C camera:  t     cx   cy   scale   (cy = 360/scale keeps the notch on the top edge)
+  const CAMC = [
+    [9.60,  640, 106, 3.40],
+    [10.00, 640, 106, 3.40],
+    [10.55, 640, 189, 1.90],
+    [12.20, 640, 189, 1.90],
+    [12.80, 640, 258, 1.40],
+    [13.75, 640, 256, 1.41],
+    [14.35, 800, 262, 1.37],
+    [16.05, 800, 262, 1.39],
+    [16.65, 1096, 78, 2.60],   // push in on the reset banner, which then flies to the phone
+  ];
+  // the Claude Code window from scene B, parked on the desktop (screen space)
+  const WIN = { x: 370, y: 150, q: .75 };
+  function camC(t) {
+    // pull back from the chat window to the whole desktop (starts where CAMB ends) ...
+    if (t < 8.95) return track([[8.3, 470 * WIN.q + WIN.x - 96 * WIN.q, 400 * WIN.q + WIN.y - 92 * WIN.q, 1.3 / WIN.q], [8.95, 640, 360, 1]], t);
+    // ... then dive up into the notch, keeping it pinned to the top edge
+    if (t < 9.6) { const s = lerp(1, 3.4, inout(p(t, 8.95, 9.6))); return [640, 360 / s, s]; }
+    return track(CAMC, t);
+  }
+  // scene B camera that puts the chat window exactly where scene C's camera shows its desktop copy
+  const lockB = (cx, cy, s) => [96 - (WIN.x - cx) / WIN.q, 92 - (WIN.y - cy) / WIN.q, s * WIN.q];
+
+  function background(t) {
+    const a = 30 + 14 * Math.sin(t * .35), b = 70 + 12 * Math.cos(t * .3);
+    const tint = (t >= 1.5 && t < 3) ? "rgba(169,139,255,.20)" : "rgba(84,110,170,.20)";
+    $("#bg").style.background =
+      `radial-gradient(45% 50% at ${a}% 35%, ${tint}, transparent 70%),` +
+      `radial-gradient(40% 45% at ${b}% 75%, rgba(169,139,255,.13), transparent 70%),` +
+      `radial-gradient(35% 40% at 50% 110%, rgba(245,165,36,.07), transparent 70%), #08090c`;
+  }
+
+  // ---------- frame ----------
+  function renderStory(t) {
+    t = ((t % DUR) + DUR) % DUR;
+    background(t);
+
+    // ===== T1: "Stay in your agent." (0 – 1.5) =====
+    const sT1 = $("#sT1"), inT1 = t < 1.55; vis(sT1, inT1);
+    if (inT1) {
+      sT1.style.opacity = 1;
+      T1W.forEach((w, i) => show(w, t, .05 + i * .22, { d: .4, dy: 0, blur: 24, sc: 1.5 }));
+      const o = expoIn(p(t, 1.3, 1.5));
+      const line = $("#t1line");
+      line.style.transform = `scale(${1 + .08 * p(t, 0, 1.3) + o * 1.4})`;
+      line.style.opacity = 1 - o;
+      line.style.filter = o > .01 ? `blur(${o * 16}px)` : "none";
+    }
+
+    // ===== T2: "Delegate to" + slot roll; "Codex" zooms through (1.5 – 3.0) =====
+    const sT2 = $("#sT2"), inT2 = t >= 1.45 && t < 3.05; vis(sT2, inT2);
+    if (inT2) {
+      sT2.style.opacity = 1;
+      show($("#t2lead"), t, 1.5, { d: .35, dy: 20, blur: 10, out: 2.55, od: .15 });
+      const r1 = inout(p(t, 1.92, 2.12)), r2 = inout(p(t, 2.18, 2.38));
+      const col = $("#slotcol");
+      col.style.transform = `translateY(${-(r1 + r2) * 168}px)`;
+      const speed = Math.sin(Math.PI * p(t, 1.92, 2.12)) + Math.sin(Math.PI * p(t, 2.18, 2.38));
+      col.style.filter = speed > .02 ? `blur(${speed * 9}px)` : "none";
+      const si = expo(p(t, 1.55, 1.9)), slot = $("#slot");
+      slot.style.opacity = si;
+      slot.style.transform = `translateY(${(1 - si) * 40}px)`;
+      const z = expoIn(p(t, 2.6, 2.98));
+      slot.style.overflow = z > 0 ? "visible" : "hidden";
+      $("#slotCodex").style.transform = `scale(${1 + z * 22})`;
+      [...col.children].forEach(c => { if (c.id !== "slotCodex") c.style.opacity = z > 0 ? 0 : 1; });
+      $("#slotCodex").style.transformOrigin = "50% 52%";
+    }
+    $("#flood").style.opacity = cubic(p(t, 2.78, 2.98)) * (1 - cubic(p(t, 3.0, 3.45)));
+
+    // ===== B: 3D scene (3.0 – 9.0) =====
+    const sB = $("#sB"), inB = t >= 2.95 && t < 9.0; vis(sB, inB);
+    if (inB) {
+      sB.style.opacity = 1;
+      let [cx, cy, s, ry, rx] = track(CAMB, t);
+      // pull back: hand the camera over to scene C, so the window lands on the desktop
+      const lk = inout(p(t, 8.3, 8.8));
+      if (lk > 0) {
+        const L = lockB(...camC(t));
+        cx = lerp(cx, L[0], lk); cy = lerp(cy, L[1], lk); s = lerp(s, L[2], lk);
+        ry = lerp(ry, 0, lk); rx = lerp(rx, 0, lk);
+      }
+      // keep flying forward out of the "Codex" zoom: the whole rig arrives from depth
+      const fz = expo(p(t, 2.95, 3.8));
+      rig.style.transformOrigin = `${cx}px ${cy}px`;
+      rig.style.transform = `translateZ(${(1 - fz) * -1100}px) translate(${640 - cx}px, ${360 - cy}px) scale(${s}) rotateX(${rx}deg) rotateY(${ry}deg)`;
+      rig.style.opacity = clamp(fz * 2);
+      $("#floor").style.opacity = 1 - p(t, 8.3, 8.7);
+      // depth of field while the stat slams in
+      const dof = cubic(p(t, 7.5, 7.75)) * (1 - cubic(p(t, 8.2, 8.5)));
+      $("#space").style.filter = dof > .01 ? `blur(${dof * 9}px) brightness(${1 - dof * .55})` : "none";
+
+      $("#sheenChat").style.left = `${lerp(-60, 160, p(t, 3.05, 3.75))}%`;
+      show($("#m0"), t, 3.05, { d: .3, dy: 8, blur: 4 });
+      const n = Math.round(USER.length * p(t, 3.12, 3.62));
+      $("#typed").textContent = USER.slice(0, n);
+      $("#caret").style.opacity = (t > 3.05 && t < 3.8) ? 1 : 0;
+      show($("#m1"), t, 3.72, { d: .4, dy: 10, blur: 6 });
+
+      // both runs: a wire forks out to each card and light packets stream along it until it returns
+      RUNS.forEach((run, w) => {
+        const wk = expo(p(t, run.t0 - .1, run.t0 + .35));
+        wps[w].style.strokeDashoffset = wireLen[w] * (1 - wk);
+        wps[w].style.opacity = .75 * (1 - cubic(p(t, 7.0, 7.3)));
+        pks.filter(k => +k.dataset.w === w).forEach((k, i) => {
+          let ph, on;
+          const t1 = run.t0 + .4;
+          if (t < t1) { ph = wk; on = i === 0 && wk > 0 && wk < 1; }
+          else { const q = (t - t1 - i * .28) / .75; ph = q % 1; on = t < run.done + .1 && q > 0; }
+          k.style.opacity = on ? Math.sin(Math.PI * clamp(ph)) : 0;
+          k.style.strokeDashoffset = PK - ph * (wireLen[w] + PK);
+        });
+
+        // the card flies in from depth, works, then folds back into its tool-call row
+        const c = run.card, ck = expo(p(t, run.t0, run.t0 + .7)), back = inout(p(t, 6.95, 7.4));
+        c.style.opacity = clamp(ck * 1.5) * (1 - expoIn(p(t, 7.1, 7.4)));
+        c.style.transform =
+          `translate3d(${(1 - ck) * run.fly[0] + back * run.home[0]}px, ${(1 - ck) * run.fly[1] + back * run.home[1]}px, ${(1 - ck) * -700 - back * 120}px)` +
+          ` rotateY(${(1 - ck) * -38}deg) scale(${1 - back * .7})`;
+        const pulse = Math.exp(-Math.pow((t - run.t0 - .6) / .18, 2)) + .6 * Math.exp(-Math.pow((t - run.done) / .16, 2));
+        c.style.boxShadow = `0 0 0 1px rgba(${run.rgb},${.35 + .5 * pulse}), 0 40px 90px -30px rgba(0,0,0,.9), 0 0 ${70 + 80 * pulse}px -10px rgba(${run.rgb},${.28 + .4 * pulse})`;
+        c.querySelector(".sheen i").style.left = `${lerp(-60, 170, p(t, run.t0 + .45, run.t0 + 1.05))}%`;
+        c.querySelectorAll(".f").forEach((f, i) => {
+          const t0 = run.files + i * .38;
+          show(f, t, t0, { d: .3, dy: 8, blur: 4 });
+          f.querySelector(".hl").style.opacity = t >= t0 ? 1 - p(t, t0, t0 + .45) : 0;
+        });
+        const secs = Math.round(run.secs * cubic(p(t, run.t0 + .7, run.done)));
+        c.querySelector(".elapsed").textContent = `0:${String(secs).padStart(2, "0")}`;
+        const done = t >= run.done;
+        c.querySelector(".pilltx").textContent = done ? "RETURNED" : "RUNNING";
+        const pill = c.querySelector(".pill");
+        pill.style.color = done ? "#4fd18b" : `rgb(${run.rgb})`;
+        pill.style.background = done ? "rgba(79,209,139,.16)" : `rgba(${run.rgb},.16)`;
+        const rp = p(t, run.done, run.done + .4);
+        c.querySelector(".ripple").style.opacity = done ? 1 - rp : 0;
+        c.querySelector(".ripple").style.transform = `scale(${1 + rp * 1.2})`;
+
+        // its tool-call row: appears with the call, spins until the run returns, then checks
+        show(run.row, t, run.t0 - .4, { d: .4, dy: 10, blur: 6, sc: .92 });
+        const spin = run.row.querySelector(".spin"), chk = run.row.querySelector(".chk");
+        spin.style.opacity = done ? 0 : 1;
+        spin.style.transform = `rotate(${t * 420}deg)`;
+        const ok = expo(p(t, run.done + .05, run.done + .3));
+        chk.style.opacity = ok;
+        chk.style.transform = `scale(${.4 + .6 * ok})`;
+      });
+      show($("#m2"), t, 7.2, { d: .35, dy: 10, blur: 6 });
+      show($("#cb"), t, 7.35, { d: .35, dy: 10, blur: 6 });
+
+      $("#bshade").style.opacity = 1 - cubic(p(t, 7.5, 7.75));
+      stagger(BLW, t, 4.6, .07, { d: .45, dy: 18, blur: 10, out: 7.2, od: .25 });
+    }
+
+    // stat slam (7.6 – 8.4)
+    const stat = $("#stat"), inS = t >= 7.5 && t < 8.6; vis(stat, inS);
+    if (inS) {
+      stat.style.opacity = 1;
+      show($("#statbig"), t, 7.6, { d: .35, dy: 0, blur: 20, sc: 1.6, out: 8.2, od: .2, osc: 1.15 });
+      show($("#statsub"), t, 7.8, { d: .4, dy: 16, blur: 8, out: 8.2, od: .2 });
+    }
+
+    // ===== C: desktop → notch: strip → peek → rings → reset → used today (8.75 – 16.8) =====
+    const sC = $("#sC"), inC = t >= 8.7 && t < 16.85; vis(sC, inC);
+    if (inC) {
+      sC.style.opacity = cubic(p(t, 8.75, 8.95)) * (1 - cubic(p(t, 16.5, 16.8)));
+      const [cx, cy, s] = camC(t);
+      $("#screen").style.transform = `translate(${640 - cx * s}px, ${360 - cy * s}px) scale(${s})`;
+      // the parked chat window recedes once the notch takes over
+      const wd = cubic(p(t, 9.05, 9.6));
+      $("#win").style.filter = wd > 0 ? `brightness(${1 - .72 * wd}) blur(${3 * wd}px)` : "none";
+      const open = expo(p(t, 12.25, 12.8)) * (1 - inout(p(t, 16.05, 16.45)));
+      const notch = $("#notch");
+      const nw = lerp(300, 564, open);
+      notch.style.width = nw + "px";
+      notch.style.height = lerp(30, OPENH, open) + "px";
+      const rad = lerp(16, 30, open);
+      notch.style.borderRadius = `0 0 ${rad}px ${rad}px`;
+      const nbg = `rgb(${lerp(0, 17, open)},${lerp(0, 17, open)},${lerp(0, 22, open)})`;
+      notch.style.background = nbg;
+      // concave fillets on the shoulders, like BottomRoundedRectangle's flare
+      $("#wingL").style.left = (640 - nw / 2 - 12) + "px";
+      $("#wingR").style.left = (640 + nw / 2) + "px";
+      $("#wingL").style.background = `radial-gradient(circle 12px at 0 100%, transparent 11.5px, ${nbg} 12px)`;
+      $("#wingR").style.background = `radial-gradient(circle 12px at 100% 100%, transparent 11.5px, ${nbg} 12px)`;
+      notch.style.boxShadow = `0 ${30 * open}px ${80 * open}px rgba(0,0,0,${.7 * open}), 0 0 ${120 * open}px -20px rgba(120,140,255,${.3 * open}), inset 0 0 0 ${open > .01 ? .5 : 0}px rgba(255,255,255,.18)`;
+      $("#lens").style.opacity = 1 - clamp(open * 4);
+      $("#collapsed").style.opacity = 1 - clamp(open * 4);
+
+      // Codex's 5-hour window runs dry, then resets: drain (fast-forward) → snap back to 100
+      const RST = 14.4;
+      const drain = inout(p(t, 13.85, 14.35)), refill = expo(p(t, RST + .05, RST + .65));
+      const codexPct = t < RST ? 61 * (1 - drain) : 100 * refill;
+      const reset = t >= RST;
+
+      // collapsed strip: each ring gauge sweeps in, one by one (Codex reads 100% once it has reset)
+      gauges.forEach((g, i) => {
+        const f = expo(p(t, 9.3 + i * .18, 10.0 + i * .18));
+        g.arc.style.strokeDashoffset = g.C * (1 - f * (i === 1 && reset ? 100 : g.pct) / 100);
+      });
+      $("#slot1").lastChild.textContent = reset ? "100%" : "61%";
+
+      // peek: the callout grows out of its tail, then the tail is re-pointed slot by slot
+      let fi = 0;
+      for (let i = 0; i < FOCUS.length; i++) if (t >= FOCUS[i][0]) fi = i;
+      const peekOn = t >= FOCUS[0][0] && t < 11.7;
+      const tc = FOCUS[fi][0], cur = FOCUS[fi][1], prev = fi > 0 ? FOCUS[fi - 1][1] : cur;
+      // spring(response .34, damping .82) — a small overshoot, like the app's tail slide
+      const dt = t - tc, sp = 1 - Math.exp(-dt * 8.5) * (Math.cos(dt * 13) + .65 * Math.sin(dt * 13));
+      const tailX = lerp(slotX[prev], slotX[cur], fi > 0 ? sp : 1) - BUBBLE_X;
+      const h = lerp(bodyH[prev], bodyH[cur], fi > 0 ? expo(clamp(dt / .35)) : 1);
+      const e = expo(p(t, FOCUS[0][0], FOCUS[0][0] + .4)), x = cubic(p(t, 11.45, 11.65));
+      bubble.style.left = BUBBLE_X + "px";
+      bubble.style.opacity = peekOn ? e * (1 - x) : 0;
+      bubble.style.transformOrigin = `${tailX}px 0`;
+      bubble.style.transform = `scale(${lerp(.25, 1, e) * lerp(1, .94, x)})`;
+      bubble.style.height = h + "px";
+      $("#bpath").setAttribute("d", calloutPath(236, h, tailX));
+      BC.forEach((c, i) => {
+        const tIn = FOCUS.find(f => f[1] === i)?.[0] ?? 99;
+        const on = i === cur ? (fi > 0 ? clamp((dt - .1) / .16) : 1) : (i === prev && fi > 0 ? 1 - clamp(dt / .1) : 0);
+        c.style.opacity = on;
+        c.querySelectorAll(".bar i").forEach((bar, j) => {
+          bar.style.width = (+bar.dataset.w * expo(p(t, tIn + .08 + j * .06, tIn + .6 + j * .06))) + "%";
+        });
+      });
+      [0, 1, 2].forEach(i => {
+        const a = i === cur && peekOn ? (fi > 0 ? clamp(dt / .16) : e) : (i === prev && peekOn && fi > 0 ? 1 - clamp(dt / .16) : 0);
+        $("#slot" + i).style.background = `rgba(255,255,255,${.11 * a * (1 - x)})`;
+      });
+
+      // expanded: columns pop one by one, each ring sweeps and flares
+      const pc = clamp((open - .55) / .45);
+      $("#panel").style.opacity = pc;
+      $("#panel").style.transform = `translateY(${(1 - pc) * -12}px)`;
+      $$("#page0 .col").forEach((c, i) => {
+        const t0 = 12.65 + i * .22;
+        show(c, t, t0, { d: .45, dy: 18, blur: 10, sc: .8 });
+        c.querySelectorAll(".qbar i").forEach((b, j) => { b.style.width = (+b.dataset.w * expo(p(t, t0 + .25 + j * .08, t0 + .9 + j * .08))) + "%"; });
+      });
+      rings.forEach(r => {
+        const j = +r.c.dataset.col, inner = r.c.classList.contains("inner"), t0 = 12.75 + j * .22 + (inner ? .12 : 0);
+        const f = expo(p(t, t0, t0 + .8));
+        const codex = j === 1 && !inner && t >= 13.85;
+        r.c.style.strokeDashoffset = r.C * (1 - (codex ? codexPct : f * r.pct) / 100);
+        const flare = Math.exp(-Math.pow((t - t0 - .45) / .22, 2)) + (j === 1 ? 1.6 * Math.exp(-Math.pow((t - RST - .3) / .25, 2)) : 0);
+        r.c.style.filter = `drop-shadow(0 0 ${5 + 16 * flare}px ${r.col})`;
+      });
+      nums.forEach((b, i) => {
+        const f = expo(p(t, 12.75 + i * .22, 13.55 + i * .22));
+        b.firstChild.textContent = Math.round(i === 1 && t >= 13.85 ? codexPct : +b.dataset.n * f);
+      });
+      // countdown fast-forwards to zero, then a fresh 5-hour window
+      const mins = reset ? 299 : Math.round(285 * (1 - drain));
+      $("#c5h").textContent = `${Math.floor(mins / 60)}h`;
+      $("#c5m").textContent = `${mins % 60}m`;
+      const rk = p(t, RST, RST + .7);
+      $("#rst").style.opacity = reset && rk < 1 ? (1 - rk) * .9 : 0;
+      $("#rst").style.transform = `scale(${1 + cubic(rk) * .9})`;
+      // the reset notification slides in from the right edge like a macOS banner, and stays
+      // up until the camera pushes in on it and it lifts off toward the phone
+      const bi = expo(p(t, RST + .1, RST + .55));
+      const bn = $("#banner");
+      bn.style.opacity = t < FLY0 ? bi : 0;
+      bn.style.transform = `translateX(${(1 - bi) * 380}px)`;
+
+      // page to "Used today": the app crossfades pages with a 16pt slide; totals and 7-day bars rise
+      const pg = inout(p(t, 15.0, 15.3));
+      $("#page0").style.opacity = 1 - pg; $("#page0").style.transform = `translateX(${-16 * pg}px)`;
+      $("#page1").style.opacity = pg; $("#page1").style.transform = `translateX(${16 * (1 - pg)}px)`;
+      $("#ptitle").textContent = pg > .5 ? "Used today" : "Remaining";
+      $("#pg1").style.width = lerp(17, 6, pg) + "px"; $("#pg1").style.background = `rgba(255,255,255,${lerp(.9, .26, pg)})`;
+      $("#pg2").style.width = lerp(6, 17, pg) + "px"; $("#pg2").style.background = `rgba(255,255,255,${lerp(.26, .9, pg)})`;
+      $$("#page1 .col").forEach((c, i) => {
+        const t0 = 15.15 + i * .12;
+        const b = c.querySelector(".tot b");
+        b.textContent = (+b.dataset.v * expo(p(t, t0, t0 + .6))).toFixed(1) + "M";
+        const vs = [...c.querySelectorAll(".bwrap i")], peak = Math.max(...vs.map(v => +v.dataset.v));
+        vs.forEach((v, j) => {
+          const g = expo(p(t, t0 + .1 + j * .045, t0 + .6 + j * .045)), val = +v.dataset.v;
+          v.style.height = (val === 0 ? 1 : Math.max(j === 6 ? 5 : 3, 28 * val / peak)) * g + "px";
+        });
+      });
+
+      show($("#cl1"), t, 9.55, { d: .4, dy: 26, blur: 12, sc: 1.2, out: 10.15, od: .2 });
+      show($("#cl2"), t, 10.4, { d: .4, dy: 26, blur: 12, sc: 1.2, out: 11.45, od: .2 });
+      show($("#cl3"), t, 12.65, { d: .4, dy: 26, blur: 12, sc: 1.2, out: 13.7, od: .2 });
+      show($("#cl5"), t, 13.85, { d: .4, dy: 26, blur: 12, sc: 1.2, out: 14.95, od: .2 });
+      show($("#csub"), t, 14.55, { d: .45, dy: 14, blur: 8, out: 14.95, od: .2 });
+      show($("#cl4"), t, 15.2, { d: .4, dy: 26, blur: 12, sc: 1.2, out: 16.0, od: .2 });
+    }
+
+    // hand-off 1: the reset banner flies off the Mac and lands in the phone chat as the bot's message
+    const fly = $("#fly"), fk = p(t, FLY0, FLY0 + .6);
+    vis(fly, t >= FLY0 && t < FLY0 + .8);
+    if (t >= FLY0 && t < FLY0 + .8 && R.pmr) {
+      const k = inout(fk), A = R.banner, B = R.pmr;
+      const sx = lerp(A.w, B.w, k) / A.w0, x = lerp(A.x, B.x, k), y = lerp(A.y, B.y, k) - Math.sin(Math.PI * k) * 60;
+      fly.style.width = A.w0 + "px";
+      fly.style.transform = `translate(${x}px, ${y}px) scale(${sx}) rotate(${Math.sin(Math.PI * k) * -4}deg)`;
+      fly.style.opacity = 1 - cubic(p(t, FLY0 + .4, FLY0 + .56));
+      fly.style.filter = `drop-shadow(0 ${20 * Math.sin(Math.PI * k)}px 40px rgba(0,0,0,.6))`;
+    }
+
+    // ===== E: the phone — reset alert arrives, then a task is sent from chat (16.7 – 20.0) =====
+    const sE = $("#sE"), inE = t >= 16.65 && t < 20.1; vis(sE, inE);
+    if (inE) {
+      sE.style.opacity = 1;
+      const pk = expo(p(t, 16.7, 17.3)), po = expoIn(p(t, 19.7, 20.05));
+      const phone = $("#phone");
+      phone.style.opacity = clamp(pk * 1.6) * (1 - po);
+      phone.style.transform = `translateZ(${(1 - pk) * -600 + po * -300}px) translateY(${(1 - pk) * 80}px)` +
+        ` rotateY(${lerp(38, 12, pk) - 4 * p(t, 17.3, 19.7) + po * 20}deg) rotateX(${lerp(14, 3, pk)}deg)`;
+      phone.style.filter = po > .01 ? `blur(${po * 12}px)` : "none";
+      show($("#pmr"), t, FLY0 + .42, { d: .3, dy: 0, blur: 8, sc: .9 });
+      $("#pavatar").style.opacity = t >= LOGO0 ? 0 : 1;
+      show($("#pm0"), t, 17.6, { d: .35, dy: 14, blur: 6, sc: .9 });
+      show($("#pm1"), t, 17.95, { d: .35, dy: 14, blur: 6, sc: .9 });
+      // status message edits in place, like the gateway's elapsed-time updates
+      const el = Math.round(3 + 38 * p(t, 18.15, 18.8));
+      const done = t >= 18.85;
+      $("#pst").textContent = t < 18.15 ? "Request received." : done ? "Task completed." : `Processing your request (${el}s elapsed)…`;
+      $("#pspin").style.display = done ? "none" : "block";
+      $("#pspin").style.transform = `rotate(${t * 420}deg)`;
+      $("#pst").style.color = done ? "#4fd18b" : "";
+      show($("#pm2"), t, 18.95, { d: .4, dy: 14, blur: 6, sc: .9 });
+      const tx = { out: 19.55, od: .3 };
+      stagger(EHW, t, 17.3, .08, { d: .45, dy: 26, blur: 12, ...tx });
+      show($("#ep"), t, 17.7, { d: .45, dy: 14, blur: 8, ...tx });
+      CHANS.forEach((c, i) => show(c, t, 17.95 + i * .1, { d: .4, dy: 14, blur: 6, sc: .85, out: 19.55 + i * .02, od: .3 }));
+    }
+
+    // hand-off 2: the bot's avatar spins up into the end-card logo
+    const fl = $("#flylogo");
+    vis(fl, t >= LOGO0 && t < LOGO1 + .05);
+    if (t >= LOGO0 && t < LOGO1 + .05 && R.logo) {
+      const k = inout(p(t, LOGO0, LOGO1)), A = R.avatar, B = R.logo;
+      const w = lerp(A.w, B.w, k), x = lerp(A.x, B.x, k), y = lerp(A.y, B.y, k) - Math.sin(Math.PI * k) * 40;
+      fl.style.opacity = 1;
+      fl.style.transform = `translate(${x}px, ${y}px) scale(${w / 120})`;
+      fl.style.filter = `drop-shadow(0 0 ${8 + 30 * Math.sin(Math.PI * k)}px rgba(8,181,244,.8))`;
+    }
+
+    // ===== D: logo reveal (20.05 – 24), ends empty so the loop is seamless =====
+    const sD = $("#sD"), inD = t >= LOGO0; vis(sD, inD);
+    if (inD) {
+      sD.style.opacity = 1;
+      sD.style.transform = "none"; sD.style.filter = "none";
+      // no exit: the piece ends on this card, and playback opens on it too (see COVER)
+      const out = 99;
+      const landed = t >= LOGO1, lo = cubic(p(t, out, out + .45));
+      const logo = $("#logo");
+      logo.style.opacity = (landed ? 1 : 0) * (1 - lo);
+      logo.style.transform = `scale(${(1 + .03 * Math.sin((t - LOGO1) * 2)) * (1 + .12 * Math.exp(-(t - LOGO1) * 8) * (landed ? 1 : 0))})`;
+      logo.style.filter = "none";
+      const hp = p(t, LOGO1, LOGO1 + .8);
+      $("#halo").style.opacity = hp > 0 && hp < 1 ? 1 - hp : 0;
+      $("#halo").style.transform = `scale(${1 + hp * 3.2})`;
+      $("#glow").style.opacity = cubic(p(t, LOGO0 + .2, LOGO1 + .3)) * (1 - lo) * (.7 + .3 * Math.sin(t * 1.6));
+      stagger(ENM, t, 20.25, .045, { d: .45, dy: 30, blur: 14, out: out + .05, od: .4 });
+      stagger(ETG, t, 20.8, .05, { d: .45, dy: 16, blur: 8, out: out + .1, od: .4 });
+      CHIPS.forEach((c, i) => show(c, t, 21.3 + i * .12, { d: .45, dy: 16, blur: 8, sc: .85, out: out + .15, od: .4 }));
+      show($("#ecta"), t, 21.7, { d: .45, dy: 14, blur: 8, sc: .94, out: out + .2, od: .4 });
+      show($("#eft"), t, 21.95, { d: .45, dy: 10, blur: 6, out: out + .25, od: .4 });
+    }
+  }
+
+  // hand-off timings and the stage-space rects they fly between (measured once, below)
+  const FLY0 = 16.65, LOGO0 = 19.55, LOGO1 = 20.15;
+  const R = {};
+  function measureHandoffs() {
+    const st = stage.getBoundingClientRect(), k = st.width / 1280;
+    const rect = (el, t) => {
+      renderStory(t);
+      const r = el.getBoundingClientRect();
+      return { x: (r.left - st.left) / k, y: (r.top - st.top) / k, w: r.width / k };
+    };
+    R.banner = rect($("#banner"), FLY0 - .001); R.banner.w0 = 344;
+    R.pmr = rect($("#pmr"), FLY0 + .8);
+    R.avatar = rect($("#pavatar"), LOGO0 - .001);
+    R.logo = rect($("#logo").querySelector("img"), LOGO1 + Math.PI / 2);   // breathing scale is exactly 1 here
+  }
+  // park a copy of the finished chat window on scene C's desktop
+  function parkWindow() {
+    renderStory(8.25);
+    const w = $("#chat").cloneNode(true);
+    w.removeAttribute("id"); w.querySelectorAll("[id]").forEach(e => e.removeAttribute("id"));
+    const host = document.createElement("div"); host.className = "win"; host.id = "win"; host.append(w);
+    $("#screen").insertBefore(host, $("#notch"));
+  }
+
+  // ---------- drive ----------
+  let paused = false, t0 = performance.now(), held = 0;
+  // Holds: playback slows to a near-stop where there is something to read, and
+  // runs at full speed everywhere else, so moves keep their snap. The timings in
+  // this file are story time; the warp maps playback time onto it.
+  //   [story time, extra seconds]
+  const HOLDS = [
+    [6.85, .5],    // both sub-agents returned
+    [10.78, .5],   // peek: Codex
+    [11.30, .5],   // peek: Antigravity
+    [13.80, .7],   // rings filled, before Codex runs dry
+    [15.98, .8],   // used today: totals and 7-day bars
+    [19.45, .6],   // phone: the reply
+    [22.45, .8],   // end card: install command
+  ];
+  // Skips: story ranges playback jumps over. 11.65–12.22 is a beat with nothing on
+  // screen changing (the callout has closed, the camera is holding), so the jump
+  // is invisible; it keeps the notch section from running long.
+  const SKIPS = [[11.65, 12.22]];
+  const VMIN = .1, RAMP = .1;   // speed at the hold, story seconds spent ramping each way
+  const WARP = (() => {
+    // story speed v(τ): 1, easing down to VMIN around each hold and back up
+    const plateau = HOLDS.map(([s, e]) => [s, Math.max(0, (e - 2 * RAMP * (Math.log(1 / VMIN) / (1 - VMIN) - 1)) / (1 / VMIN - 1))]);
+    const v = tau => {
+      let m = 1;
+      for (const [s, pw] of plateau) {
+        const d = Math.abs(tau - s) - pw / 2;
+        if (d < RAMP) m = Math.min(m, d <= 0 ? VMIN : lerp(VMIN, 1, d / RAMP));
+      }
+      return m;
+    };
+    const step = .0005, story = [0], real = [0];
+    for (let tau = 0; tau < DUR; tau += step) {
+      const mid = tau + step / 2, skip = SKIPS.some(([a, b]) => mid > a && mid < b);
+      story.push(tau + step); real.push(real[real.length - 1] + (skip ? 0 : step / v(mid)));
+    }
+    return { story, real, dur: real[real.length - 1] };
+  })();
+  const REAL_DUR = WARP.dur;
+  function warp(t) {
+    t = ((t % REAL_DUR) + REAL_DUR) % REAL_DUR;
+    const { story, real } = WARP;
+    let lo = 0, hi = real.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (real[mid] <= t) lo = mid; else hi = mid; }
+    return lerp(story[lo], story[hi], (t - real[lo]) / (real[hi] - real[lo]));
+  }
+  // Cover: playback opens on the end card's last frame, so the first frame (what
+  // GitHub shows before play, and the frame a loop returns to) is the poster.
+  // After a beat the camera pushes through it into the opening title.
+  const COVER = .75;
+  function render(t) {
+    t = ((t % (REAL_DUR + COVER)) + REAL_DUR + COVER) % (REAL_DUR + COVER);
+    if (t >= COVER) { renderStory(warp(t - COVER)); return; }
+    renderStory(DUR - 1e-4);
+    const k = expoIn(p(t, .35, .75)), sD = $("#sD");
+    sD.style.transform = `scale(${1 + k * 1.8})`;
+    sD.style.filter = k > .01 ? `blur(${k * 18}px)` : "none";
+    sD.style.opacity = 1 - k;
+  }
+  window.__render = render;
+  window.__renderStory = renderStory;   // for checking a frame by its story time
+  window.__DUR = REAL_DUR + COVER;
+  const ready = (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { measure(); parkWindow(); measureHandoffs(); render(FREEZE ?? 0); });
+  window.__ready = ready;
+  ready.then(() => {
+    if (EXPORT) return;
+    if (REDUCE) { render(6.2); return; }
+    if (FREEZE != null) { render(FREEZE); return; }
+    const loop = now => { if (!paused) render((now - t0) / 1000); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  });
+  const restart = () => { t0 = performance.now(); held = 0; };
+  const toggle = () => {
+    paused = !paused;
+    if (paused) held = performance.now() - t0; else t0 = performance.now() - held;
+    $("#bPlay").textContent = paused ? "Play" : "Pause";
+  };
+  $("#bPlay").addEventListener("click", toggle);
+  $("#bRestart").addEventListener("click", restart);
+  addEventListener("keydown", e => {
+    if (e.key === " ") { e.preventDefault(); toggle(); }
+    if (e.key === "r" || e.key === "R") restart();
+    if (e.key === "h" || e.key === "H") document.body.classList.toggle("record");
+  });
 })();
 </script>
 </body>
