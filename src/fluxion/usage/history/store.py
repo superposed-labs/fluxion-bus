@@ -40,6 +40,7 @@ from fluxion.usage.history.parsing import (
     _claude_line_parser,
     _codex_line_parser,
     _dedupe_codex_paths,
+    _offset_anchor,
     _parse_incremental,
 )
 
@@ -60,7 +61,9 @@ from fluxion.usage.history.parsing import (
 # missing its exact price key and falling through to the provider fallback.
 #
 # v8: the Claude parser counts cache writes in `billed_input_tokens_total`
-# (`bi`), the basis for Haiku 5.5's 100k long-context tier.
+# (`bi`), the basis for Haiku 5.5's 100k long-context tier. Codex dedup keys
+# hash a fixed field list instead of raw JSON, Codex cache writes are read,
+# and `files.anchor` guards the append fast path against in-place rewrites.
 _SCHEMA_VERSION = 8
 
 
@@ -113,7 +116,7 @@ class UsageStore:
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY, provider TEXT NOT NULL,
-                mtime REAL, size INTEGER, offset INTEGER, state TEXT
+                mtime REAL, size INTEGER, offset INTEGER, state TEXT, anchor TEXT
             );
             CREATE TABLE IF NOT EXISTS entries (
                 dedup_key TEXT PRIMARY KEY, path TEXT NOT NULL, provider TEXT NOT NULL,
@@ -184,7 +187,9 @@ class UsageStore:
             # is then an in-memory dict hit, not a query per file (899+ of them).
             known = {
                 row[0]: row[1:]
-                for row in conn.execute("SELECT path, mtime, size, offset, state FROM files")
+                for row in conn.execute(
+                    "SELECT path, mtime, size, offset, state, anchor FROM files"
+                )
             }
             seen: set[str] = set()
             self._sync_lines(
@@ -332,13 +337,20 @@ class UsageStore:
                 continue
             key = str(path)
             seen.add(key)
-            cached = known.get(key)  # (mtime, size, offset, state)
+            cached = known.get(key)  # (mtime, size, offset, state, anchor)
             if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
                 continue  # unchanged
 
-            # Append-only fast path: the file only grew, so resume from the
-            # recorded offset/state and parse just the appended bytes.
-            if cached and cached[2] is not None and stat.st_size > cached[1]:
+            # Append-only fast path: the file only grew and the bytes before the
+            # recorded offset are unchanged (see `_offset_anchor`), so resume
+            # from the recorded offset/state and parse just the appended bytes.
+            if (
+                cached
+                and cached[2] is not None
+                and stat.st_size > cached[1]
+                and cached[4] is not None
+                and cached[4] == _offset_anchor(path, int(cached[2]))
+            ):
                 start_offset = int(cached[2])
                 state = json.loads(cached[3]) if cached[3] else {}
             else:
@@ -350,10 +362,19 @@ class UsageStore:
             # dedup_key upsert keeps that idempotent, so it is safe to insert here.
             self._upsert_entries(conn, path, committed + tail, tz)
             conn.execute(
-                "INSERT INTO files(path,provider,mtime,size,offset,state) VALUES(?,?,?,?,?,?) "
+                "INSERT INTO files(path,provider,mtime,size,offset,state,anchor) "
+                "VALUES(?,?,?,?,?,?,?) "
                 "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, "
-                "offset=excluded.offset, state=excluded.state",
-                (key, provider, stat.st_mtime, stat.st_size, end_offset, json.dumps(state)),
+                "offset=excluded.offset, state=excluded.state, anchor=excluded.anchor",
+                (
+                    key,
+                    provider,
+                    stat.st_mtime,
+                    stat.st_size,
+                    end_offset,
+                    json.dumps(state),
+                    _offset_anchor(path, end_offset),
+                ),
             )
 
     def _sync_antigravity(

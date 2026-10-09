@@ -39,7 +39,9 @@ from fluxion.usage.probes import CodexAccountUsage, CodexAccountUsageProbe
 # `gpt-5.6-luna:high` shares a row (and a price) with `gpt-5.6-luna`.
 #
 # v13: the Claude parser counts cache writes in `billed_input_tokens_total`,
-# the basis for Haiku 5.5's 100k long-context tier.
+# the basis for Haiku 5.5's 100k long-context tier. Codex dedup keys hash a
+# fixed field list instead of raw JSON, Codex cache writes are read, and each
+# file row records an `anchor` that guards the append fast path.
 _CACHE_VERSION = 13
 
 
