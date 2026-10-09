@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-10-06",
-  "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
+  "updated_at": "2026-10-09",
+  "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers, `100k` for Claude Haiku 5.5, whose prompt length also counts cache reads and writes). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
     "claude-fable-5-1": {
       "provider": "claude",
@@ -31,6 +31,34 @@
       "provider": "claude",
       "rates": [
         { "effective_date": "2026-09-22", "observed": "2026-09-23", "in": 4.0, "out": 20.0, "cw": 5.0, "cw1h": 8.0, "cr": 0.2, "source": "Anthropic docs (Opus 5.5, launched 2026-09-22): $4/$20, cache reads are 0.05x input ($0.20/MTok) instead of 0.1x; 5m cache writes 1.25x ($5.0), 1h cache writes 2x ($8.0)" }
+      ]
+    },
+    "claude-sonnet-5-5": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-09-28", "observed": "2026-10-09", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic (Sonnet 5.5, launched 2026-09-28 at Sonnet 5's rate card): $2/$10, 5m cache writes $2.50, 1h $4.00, cache read 0.1x ($0.20)" },
+        { "effective_date": "2026-10-07", "observed": "2026-10-09", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.1, "source": "Anthropic docs + @claudeai announcement (2026-10-07: Sonnet 5.5 cache reads halved to $0.10/MTok, 0.05x input); input/output/cache-write unchanged" }
+      ]
+    },
+    "claude-haiku-5-5": {
+      "provider": "claude",
+      "rates": [
+        {
+          "effective_date": "2026-10-07",
+          "observed": "2026-10-09",
+          "in": 0.1,
+          "out": 0.5,
+          "cw": 0.125,
+          "cw1h": 0.2,
+          "cr": 0.01,
+          "source": "Anthropic docs (Haiku 5.5, launched 2026-10-07): priced by prompt length — <=100k prompt tokens $0.10/$0.50, >100k $0.50/$2.50; prompt length counts all input tokens including cache reads and cache writes; cache writes 1.25x (5m) / 2x (1h), cache read 0.1x",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 100000,
+            "short": { "in": 0.1, "out": 0.5, "cw": 0.125, "cw1h": 0.2, "cr": 0.01 },
+            "long": { "in": 0.5, "out": 2.5, "cw": 0.625, "cw1h": 1.0, "cr": 0.05 }
+          }
+        }
       ]
     },
     "claude-opus-5": {
@@ -454,11 +482,33 @@
     "opus": [
       { "effective_date": "2026-06-10", "observed": "2026-07-25", "in": 5.0, "out": 25.0, "cw": 6.25, "cw1h": 10.0, "cr": 0.5, "source": "Anthropic docs (Opus 4.6-4.8 and Opus 5, all flat $5/$25); deprecated Opus 4/4.1 ($15/$75) pinned in models" }
     ],
+    "sonnet-5-5": [
+      { "effective_date": "2026-09-28", "observed": "2026-10-09", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic (Sonnet 5.5, launched 2026-09-28 at Sonnet 5's rate card). Checked before 'sonnet-5' so dated build ids or short aliases pick up the 2026-10-07 cache-read cut that Sonnet 5 did not get." },
+      { "effective_date": "2026-10-07", "observed": "2026-10-09", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.1, "source": "Anthropic (2026-10-07: Sonnet 5.5 cache reads halved to $0.10/MTok). Mirrors the models entry — both must move together when the price changes." }
+    ],
     "sonnet-5": [
       { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 2.0, "out": 10.0, "cw": 2.5, "cw1h": 4.0, "cr": 0.2, "source": "Anthropic docs (Sonnet 5; launched at an introductory $2/$10 rate, subsequently confirmed as the permanent standard price); checked before generic 'sonnet' so dated build ids don't inherit Sonnet 4.5/4.6 pricing" }
     ],
     "sonnet": [
       { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 3.0, "out": 15.0, "cw": 3.75, "cw1h": 6.0, "cr": 0.3, "source": "Anthropic docs (Sonnet 4.5/4.6; Sonnet 5 is pinned separately at the more specific 'sonnet-5' family)" }
+    ],
+    "haiku-5-5": [
+      {
+        "effective_date": "2026-10-07",
+        "observed": "2026-10-09",
+        "in": 0.1,
+        "out": 0.5,
+        "cw": 0.125,
+        "cw1h": 0.2,
+        "cr": 0.01,
+        "source": "Anthropic docs (Haiku 5.5, launched 2026-10-07). Checked before generic 'haiku' so dated build ids do not inherit Haiku 4.5's $1/$5 rate. Mirrors the models entry — both must move together when the price changes.",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 100000,
+          "short": { "in": 0.1, "out": 0.5, "cw": 0.125, "cw1h": 0.2, "cr": 0.01 },
+          "long": { "in": 0.5, "out": 2.5, "cw": 0.625, "cw1h": 1.0, "cr": 0.05 }
+        }
+      }
     ],
     "haiku": [
       { "effective_date": "2026-06-10", "observed": "2026-07-01", "in": 1.0, "out": 5.0, "cw": 1.25, "cw1h": 2.0, "cr": 0.1, "source": "Anthropic docs (Haiku 4.5)" }
