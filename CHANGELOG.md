@@ -9,6 +9,17 @@ milestones.
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-10-10
+
+### Fixed
+
+- **No more "Usage credits · 0" for Codex accounts without credits** —
+  the Codex usage API now sends an empty credit balance as `0E-10`, which
+  Fluxion read as a real balance. The balance is now compared as a number.
+- **Credits and reset rows line up in the notch** — the usage-credits line
+  now uses the same label-and-value layout as the reset-credits row below
+  it.
+
 ## [1.7.2] - 2026-10-09
 
 ### Fixed
@@ -556,7 +567,8 @@ Initial open-source release.
   `docs/` reference set (architecture, configuration, MCP, scheduler, quota, and
   usage statistics).
 
-[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/superposed-labs/fluxion-bus/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/superposed-labs/fluxion-bus/compare/v1.6.2...v1.7.0
