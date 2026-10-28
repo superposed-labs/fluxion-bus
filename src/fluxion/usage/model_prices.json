@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-09",
+  "updated_at": "2026-10-28",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers, `100k` for Claude Haiku 5.5, whose prompt length also counts cache reads and writes). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
     "claude-fable-5-1": {
@@ -135,6 +135,26 @@
             "short_max": 272000,
             "short": { "in": 2.0, "out": 10.0, "cw": 2.5, "cr": 0.1 },
             "long": { "in": 4.0, "out": 15.0, "cw": 5.0, "cr": 0.2 }
+          }
+        }
+      ]
+    },
+    "gpt-6.1-terra": {
+      "provider": "codex",
+      "rates": [
+        {
+          "effective_date": "2026-10-26",
+          "observed": "2026-10-28",
+          "in": 1.0,
+          "out": 5.0,
+          "cw": 1.25,
+          "cr": 0.05,
+          "source": "OpenAI official pricing + changelog (GPT-6.1 Terra released 2026-10-26): standard $1/$5 per MTok, cached input $0.05, 30m cache writes $1.25; >272k input tokens: $2/$7.50, cached input $0.10, 30m writes $2.50. https://developers.openai.com/api/docs/models/gpt-6.1-terra ; https://developers.openai.com/api/docs/changelog",
+          "context_pricing": {
+            "metric": "input_tokens_total",
+            "short_max": 272000,
+            "short": { "in": 1.0, "out": 5.0, "cw": 1.25, "cr": 0.05 },
+            "long": { "in": 2.0, "out": 7.5, "cw": 2.5, "cr": 0.1 }
           }
         }
       ]
@@ -595,6 +615,23 @@
           "short_max": 272000,
           "short": { "in": 2.0, "out": 10.0, "cw": 2.5, "cr": 0.1 },
           "long": { "in": 4.0, "out": 15.0, "cw": 5.0, "cr": 0.2 }
+        }
+      }
+    ],
+    "gpt-6.1-terra": [
+      {
+        "effective_date": "2026-10-26",
+        "observed": "2026-10-28",
+        "in": 1.0,
+        "out": 5.0,
+        "cw": 1.25,
+        "cr": 0.05,
+        "source": "OpenAI official pricing + changelog (GPT-6.1 Terra released 2026-10-26): standard $1/$5 per MTok, cached input $0.05, 30m cache writes $1.25; >272k input tokens: $2/$7.50, cached input $0.10, 30m writes $2.50. https://developers.openai.com/api/docs/models/gpt-6.1-terra ; https://developers.openai.com/api/docs/changelog",
+        "context_pricing": {
+          "metric": "input_tokens_total",
+          "short_max": 272000,
+          "short": { "in": 1.0, "out": 5.0, "cw": 1.25, "cr": 0.05 },
+          "long": { "in": 2.0, "out": 7.5, "cw": 2.5, "cr": 0.1 }
         }
       }
     ],
