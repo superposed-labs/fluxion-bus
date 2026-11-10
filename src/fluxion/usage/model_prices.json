@@ -1,8 +1,20 @@
 {
   "version": 1,
-  "updated_at": "2026-10-28",
+  "updated_at": "2026-11-10",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers, `100k` for Claude Haiku 5.5, whose prompt length also counts cache reads and writes). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
+    "claude-fable-5-2": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.2, "source": "Anthropic docs + release notes (Fable 5.2, launched 2026-11-09): $8/$40, 20% below 5.1; 5m cache writes $10, 1h $16, cache reads $0.20 (0.025x input). https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
+      ]
+    },
+    "claude-mythos-5-2": {
+      "provider": "claude",
+      "rates": [
+        { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.2, "source": "Anthropic docs + release notes (Mythos 5.2, launched 2026-11-09): $8/$40, 20% below 5.1; 5m cache writes $10, 1h $16, cache reads $0.20 (0.025x input). https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
+      ]
+    },
     "claude-fable-5-1": {
       "provider": "claude",
       "rates": [
@@ -470,6 +482,12 @@
     }
   },
   "fast": {
+    "fable-5-2": [
+      { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 16.0, "out": 80.0, "cw": 20.0, "cw1h": 32.0, "cr": 0.4, "source": "Anthropic docs + release notes (Fable 5.2, launched 2026-11-09): Fast mode $16/$80; cache writes 1.25x (5m) / 2x (1h), cache reads 0.025x fast input. https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
+    ],
+    "mythos-5-2": [
+      { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 16.0, "out": 80.0, "cw": 20.0, "cw1h": 32.0, "cr": 0.4, "source": "Anthropic docs + release notes (Mythos 5.2, launched 2026-11-09): Fast mode $16/$80; cache writes 1.25x (5m) / 2x (1h), cache reads 0.025x fast input. https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
+    ],
     "opus-5-5": [
       { "effective_date": "2026-09-22", "observed": "2026-09-23", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.4, "source": "Anthropic docs Fast mode (Opus 5.5 $8/$40), available from the 2026-09-22 launch; caching multipliers apply on top of fast input (5m cw 1.25x $10, 1h cw 2x $16, cr 0.05x $0.40)" }
     ],
@@ -484,11 +502,17 @@
     ]
   },
   "families": {
+    "fable-5-2": [
+      { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.2, "source": "Anthropic docs + release notes (Fable 5.2, launched 2026-11-09): $8/$40, 20% below 5.1; 5m cache writes $10, 1h $16, cache reads $0.20 (0.025x input). https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
+    ],
     "fable-5-1": [
       { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs (Fable 5.1; cache read 0.025x input, not 0.1x). Checked before the generic 'fable' so dated build ids like claude-fable-5-1-20260901 do not inherit Fable 5's $1.00 cache read." }
     ],
     "fable": [
       { "effective_date": "2026-06-10", "observed": "2026-07-15", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 1.0, "source": "Anthropic docs (Fable 5); short-alias 'fable' resolves here — full id claude-fable-5 is also pinned in models" }
+    ],
+    "mythos-5-2": [
+      { "effective_date": "2026-11-09", "observed": "2026-11-10", "in": 8.0, "out": 40.0, "cw": 10.0, "cw1h": 16.0, "cr": 0.2, "source": "Anthropic docs + release notes (Mythos 5.2, launched 2026-11-09): $8/$40, 20% below 5.1; 5m cache writes $10, 1h $16, cache reads $0.20 (0.025x input). https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-fable-and-mythos-5-2" }
     ],
     "mythos-5-1": [
       { "effective_date": "2026-09-01", "observed": "2026-09-06", "in": 10.0, "out": 50.0, "cw": 12.5, "cw1h": 20.0, "cr": 0.25, "source": "Anthropic docs (Mythos 5.1; cache read 0.025x input, not 0.1x). Checked before the generic 'mythos' so dated build ids do not inherit Mythos 5's $1.00 cache read." }
