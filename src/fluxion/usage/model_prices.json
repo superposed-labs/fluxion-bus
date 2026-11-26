@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-23",
+  "updated_at": "2026-11-26",
   "note": "Estimated API rates, USD per 1M tokens. cw = the model's default cache-write rate (Anthropic 5-minute TTL; GPT-5.6 uses its documented 30-minute-minimum write rate), cw1h = cache-write 1-hour TTL (Anthropic 2x input; absent => falls back to cw). OpenAI models before GPT-5.6 and Google have no additional per-token cache-write fee, so cw=in there; GPT-5.6 and later bill cache writes at 1.25x input. cr = cache-read (~1/10th input). Resolution: models (exact id) -> families (case-insensitive word-boundary substring) -> providers (fallback) -> $0. A turn flagged fast (usage.speed != standard, i.e. Anthropic Fast mode) resolves against the 'fast' section first (exact id then family) and only falls through to the standard tables if no fast rate exists. Cost is computed per turn at the rate in effect on its date, and Anthropic cache-write usage can be split by the 1h/5m token breakdown a consumer records. TWO DISTINCT DATES per rate: 'effective_date' = when this price took effect as far as we know (official change date when announced, else a best-effort floor = first-observed day); 'observed' = the day the number was read (provenance only). When a price CHANGES, ADD a new entry with the real effective_date; do not edit an existing entry's numbers. Models with multiple context tiers carry a `context_pricing` block; consumers select `short` vs `long` per request from the original billed input (`input_tokens_total`), using the provider threshold (`272k` for the GPT-5.4/5.5/5.6 and GPT-6 families, `200k` for Gemini Pro tiers, `100k` for Claude Haiku 5.5, whose prompt length also counts cache reads and writes). Anthropic/Gemini read from the official docs pricing pages; OpenAI (JS-rendered) read via a rendered browser fetch.",
   "models": {
     "claude-fable-5-2": {
@@ -453,6 +453,32 @@
         { "effective_date": "2026-06-11", "observed": "2026-06-13", "in": 1.75, "out": 14.0, "cw": 1.75, "cr": 0.175, "source": "OpenAI docs (Codex gpt-5.3-codex; the only Codex model, flat-priced — no long-context tier)" }
       ]
     },
+    "gemini-4-carbon": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-11-10", "observed": "2026-11-26", "in": 2.0, "out": 10.0, "cw": 2.0, "cr": 0.1, "source": "Gemini docs (Gemini 4 Carbon, released 2026-11-10): introductory pricing through November 30, 2026, unified 1M-token context window (no >200k tier), no per-token cache-write fee so cw=in. https://ai.google.dev/gemini-api/docs/pricing" },
+        { "effective_date": "2026-12-01", "observed": "2026-11-26", "in": 4.0, "out": 20.0, "cw": 4.0, "cr": 0.2, "source": "Gemini docs (Gemini 4 Carbon standard pricing starting December 1, 2026). https://ai.google.dev/gemini-api/docs/pricing" }
+      ]
+    },
+    "gemini-4-argon": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-10-13", "observed": "2026-11-26", "in": 2.0, "out": 10.0, "cw": 2.0, "cr": 0.1, "source": "Gemini docs (Gemini 4 Argon, released 2026-10-13): introductory pricing through November 30, 2026, unified 1M-token context window (no >200k tier), no per-token cache-write fee so cw=in. https://ai.google.dev/gemini-api/docs/pricing" },
+        { "effective_date": "2026-12-01", "observed": "2026-11-26", "in": 4.0, "out": 20.0, "cw": 4.0, "cr": 0.2, "source": "Gemini docs (Gemini 4 Argon standard pricing starting December 1, 2026). https://ai.google.dev/gemini-api/docs/pricing" }
+      ]
+    },
+    "gemini-4-neon": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-11-18", "observed": "2026-11-26", "in": 3.0, "out": 15.0, "cw": 3.0, "cr": 0.15, "source": "Gemini docs (Gemini 4 Neon, released 2026-11-18): unified 1M-token context window (no >200k tier), no per-token cache-write fee so cw=in. https://ai.google.dev/gemini-api/docs/pricing" }
+      ]
+    },
+    "gemini-4-hydrogen": {
+      "provider": "antigravity",
+      "rates": [
+        { "effective_date": "2026-11-12", "observed": "2026-11-26", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.075, "source": "Gemini docs (Gemini 4 Hydrogen, released 2026-11-12): unified 1M-token context window (no >200k tier), no per-token cache-write fee so cw=in. https://ai.google.dev/gemini-api/docs/pricing" }
+      ]
+    },
     "gemini-3.8-flash": {
       "provider": "antigravity",
       "rates": [
@@ -804,6 +830,20 @@
       { "effective_date": "2026-07-21", "observed": "2026-07-22", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.6 Flash); Gemini 3.5, 3, and 2.5 Flash remain pinned in models. Checked before 'gemini'." },
       { "effective_date": "2026-08-13", "observed": "2026-08-14", "in": 0.75, "out": 3.75, "cw": 0.75, "cr": 0.075, "source": "Gemini docs + release notes (Gemini 3.7 Flash GA introductory pricing through December 31, 2026; Gemini 3.6 Flash currently shares the same promotional rate). Older Flash versions remain pinned in models." },
       { "effective_date": "2027-01-01", "observed": "2026-08-14", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.15, "source": "Gemini docs (Gemini 3.7 and 3.6 Flash standard pricing starting January 1, 2027). Older Flash versions remain pinned in models." }
+    ],
+    "carbon": [
+      { "effective_date": "2026-11-10", "observed": "2026-11-26", "in": 2.0, "out": 10.0, "cw": 2.0, "cr": 0.1, "source": "Gemini docs (Gemini 4 Carbon, introductory pricing through November 30, 2026). Checked before 'gemini' so display/effort-suffixed names like 'Gemini 4 Carbon' resolve accurately." },
+      { "effective_date": "2026-12-01", "observed": "2026-11-26", "in": 4.0, "out": 20.0, "cw": 4.0, "cr": 0.2, "source": "Gemini docs (Gemini 4 Carbon standard pricing starting December 1, 2026)." }
+    ],
+    "argon": [
+      { "effective_date": "2026-10-13", "observed": "2026-11-26", "in": 2.0, "out": 10.0, "cw": 2.0, "cr": 0.1, "source": "Gemini docs (Gemini 4 Argon, introductory pricing through November 30, 2026). Checked before 'gemini' so display/effort-suffixed names like 'Gemini 4 Argon' resolve accurately." },
+      { "effective_date": "2026-12-01", "observed": "2026-11-26", "in": 4.0, "out": 20.0, "cw": 4.0, "cr": 0.2, "source": "Gemini docs (Gemini 4 Argon standard pricing starting December 1, 2026)." }
+    ],
+    "neon": [
+      { "effective_date": "2026-11-18", "observed": "2026-11-26", "in": 3.0, "out": 15.0, "cw": 3.0, "cr": 0.15, "source": "Gemini docs (Gemini 4 Neon). Checked before 'gemini' so display/effort-suffixed names like 'Gemini 4 Neon' resolve accurately." }
+    ],
+    "hydrogen": [
+      { "effective_date": "2026-11-12", "observed": "2026-11-26", "in": 1.5, "out": 7.5, "cw": 1.5, "cr": 0.075, "source": "Gemini docs (Gemini 4 Hydrogen). Checked before 'gemini' so display/effort-suffixed names like 'Gemini 4 Hydrogen' resolve accurately." }
     ],
     "gemini": [
       {
